@@ -278,3 +278,92 @@ class Body {
 ",
     )])
 );
+
+// JLS §9.6.4.5: a *field* declaration is a scope owner like any other, so the
+// annotation on the field covers its declared type — "the annotated
+// declaration or any of its parts" — while the sibling field's raw type
+// stands. javac:
+// ```text
+// Field.java:9: warning: [rawtypes] found raw type: List
+//     List control;
+//     ^
+//   missing type arguments for generic class List<E>
+// 1 warning
+// ```
+snapshot!(
+    field_scope_covers_its_own_type,
+    check_class_diagnostics(&[(
+        "/src/com/example/Field.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Field {
+    @SuppressWarnings(\"rawtypes\")
+    List suppressed;
+
+    List control;
+}
+",
+    )])
+);
+
+// JLS §9.6.4.5: a *constructor* declaration, likewise. javac:
+// ```text
+// Ctor.java:10: warning: [rawtypes] found raw type: List
+//     Ctor(List control, int other) {
+//          ^
+//   missing type arguments for generic class List<E>
+// 1 warning
+// ```
+snapshot!(
+    constructor_scope_covers_its_parameters,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctor.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Ctor {
+    @SuppressWarnings(\"rawtypes\")
+    Ctor(List suppressed) {
+    }
+
+    Ctor(List control, int other) {
+    }
+}
+",
+    )])
+);
+
+// JLS §9.6.4.5: the annotation on a *parameter* scopes that parameter's own
+// declared type — a narrower scope than the method's own annotation, which is
+// why it suppresses this parameter and leaves its neighbour's alone. javac:
+// ```text
+// Param.java:9: warning: [rawtypes] found raw type: List
+//     void n(List control) {
+//            ^
+//   missing type arguments for generic class List<E>
+// 1 warning
+// ```
+snapshot!(
+    parameter_scope_covers_its_own_type,
+    check_class_diagnostics(&[(
+        "/src/com/example/Param.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Param {
+    void m(@SuppressWarnings(\"rawtypes\") List suppressed) {
+    }
+
+    void n(List control) {
+    }
+}
+",
+    )])
+);

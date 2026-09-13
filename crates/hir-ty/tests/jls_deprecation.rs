@@ -559,3 +559,33 @@ class UseDecl extends Legacy {
         )]
     )
 );
+// JLS §9.6.4.5/[§8.9.1]: an enum constant is a declaration, and §9.6.4.5
+// scopes a suppression to "the annotated declaration or any of its parts" —
+// the constant's argument list is one of them. The grammar gives an
+// `ENUM_CONSTANT` no modifier list, so its annotations hang off the constant
+// itself; they nonetheless suppress within that constant and no sibling.
+// javac:
+// ```text
+// Cases.java:7: warning: [deprecation] Both in q has been deprecated
+//         B(new Both());
+//               ^
+// ```
+snapshot!(
+    enum_constant_scope,
+    check_body_diagnostic_spans(&both_fixture(
+        "\
+package q;
+
+class Cases {
+    enum E {
+        @SuppressWarnings(\"deprecation\")
+        A(new Both()),
+        B(new Both());
+
+        E(Object o) {
+        }
+    }
+}
+"
+    ))
+);

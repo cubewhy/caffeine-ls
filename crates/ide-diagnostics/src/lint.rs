@@ -137,14 +137,14 @@ pub(crate) fn is_suppressed(scopes: &[SuppressionScope], range: TextRange, key: 
 }
 
 /// Walks the tree carrying the keys in effect, extending them at each
-/// `MODIFIER_LIST` that names `@SuppressWarnings` and recording the annotated
-/// declaration's range.
+/// *declaration* that names `@SuppressWarnings` and recording its range.
 ///
-/// Every declaration's annotations hang off a `MODIFIER_LIST` child, whose
-/// parent is the declaration itself (`METHOD_DECL`, `FIELD_DECL`,
-/// `CLASS_DECL`, `LOCAL_VARIABLE_DECLARATION`, ...), so the parent's range is
-/// exactly the annotated declaration — the unit §9.6.4.5 scopes the
-/// suppression to.
+/// The scope owner is the declaration node itself (`METHOD_DECL`,
+/// `FIELD_DECL`, `CLASS_DECL`, `LOCAL_VARIABLE_DECLARATION`, `PARAMETER`,
+/// `ENUM_CONSTANT`, `MODULE_DECL`, ...), because §9.6.4.5 scopes a
+/// suppression to "the annotated declaration **or any of its parts**" — its
+/// whole source range. [`declaration_keys`] reads the annotations off it,
+/// wherever the grammar put them.
 fn collect(
     db: &dyn TyDatabase,
     file_id: FileId,
@@ -153,95 +153,120 @@ fn collect(
     out: &mut Vec<SuppressionScope>,
 ) {
     let mut keys = inherited.clone();
-    if node.kind() == J::MODIFIER_LIST {
-        let own = suppress_keys(db, file_id, node);
-        if !own.is_empty() {
-            keys.extend(own);
-            if let Some(declaration) = node.parent() {
-                out.push(SuppressionScope {
-                    range: declaration.text_range(),
-                    keys: keys.clone(),
-                });
-            }
-        }
+    let own = declaration_keys(db, file_id, node);
+    if !own.is_empty() {
+        keys.extend(own);
+        out.push(SuppressionScope {
+            range: node.text_range(),
+            keys: keys.clone(),
+        });
     }
     for child in node.children() {
         collect(db, file_id, &child, &keys, out);
     }
 }
 
-/// The keys named by every `@SuppressWarnings` annotation of one
-/// `MODIFIER_LIST`, as a set. An annotation of another type — including one
-/// that merely *spells* its name the same — names nothing; unrecognized
-/// strings are dropped ([JLS §9.6.4.5]).
-fn suppress_keys(
+/// The keys the `@SuppressWarnings` annotations written on the declaration
+/// `node` name — empty for a node that is not one.
+///
+/// A declaration's annotations are the `ANNOTATION` children of its
+/// `MODIFIER_LIST` child ([`grammar::modifiers`]), which is how every
+/// declaration but one is parsed. The exception is an *enum constant*
+/// ([§8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1)),
+/// whose grammar has no modifier list: its annotations are children of the
+/// `ENUM_CONSTANT` node itself, and they scope the constant exactly as a
+/// method's scope its own body.
+fn declaration_keys(
     db: &dyn TyDatabase,
     file_id: FileId,
-    modifier_list: &SyntaxNode<Lang>,
+    node: &SyntaxNode<Lang>,
 ) -> FxHashSet<LintKey> {
     let mut out = FxHashSet::default();
-    for annotation in modifier_list.children() {
-        if annotation.kind() != J::ANNOTATION {
-            continue;
+    if let Some(modifier_list) = node
+        .children()
+        .find(|child| child.kind() == J::MODIFIER_LIST)
+    {
+        for annotation in modifier_list.children() {
+            if annotation.kind() == J::ANNOTATION {
+                annotation_keys(db, file_id, &annotation, &mut out);
+            }
         }
-        // The annotation's written name is the first `QUALIFIED_NAME` of its
-        // node — the same node the item tree lowers the name from
-        // ([`hir_def::java::lower::walk::annotation_name_ref`]).
-        let Some(name_node) = annotation
-            .descendants()
-            .find(|node| node.kind() == J::QUALIFIED_NAME)
-        else {
-            continue;
-        };
-        if !is_suppress_warnings(db, file_id, &name_node) {
-            continue;
-        }
-        let Some(args) = annotation
-            .children()
-            .find(|child| child.kind() == J::ANNOTATION_ARGUMENT_LIST)
-        else {
-            // A marker `@SuppressWarnings` has no argument list; it names no
-            // warning, and `@SuppressWarnings` is not a marker annotation
-            // anyway ([§9.6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4)).
-            continue;
-        };
-        // §9.7.1 makes an element value an *expression*, so a key may be the
-        // value of a constant variable rather than a literal
-        // (`static final String K = "unchecked"; @SuppressWarnings(K)`), which
-        // javac honours. The type layer evaluates the argument list; only when
-        // it cannot read every element value does the lexical scan below stand
-        // in.
-        if let Some(values) =
-            hir_ty::java::annotation_value::suppress_warnings_values(db, file_id, &annotation)
-        {
-            out.extend(values.iter().filter_map(|value| LintKey::from_str(value)));
-            continue;
-        }
-        // The element is an array of `String` ([§9.6.4.5]), so the keys are
-        // the string literals of the argument list — either a lone literal
-        // (`@SuppressWarnings("unchecked")`, §9.7.1's single-element form) or
-        // the literals of an array initializer. No nested annotation can
-        // appear in a `String[]` element, so every string literal here is a
-        // key. A literal is a *token* of its `LITERAL` node, so the walk
-        // descends through tokens.
-        for literal in args
-            .descendants_with_tokens()
-            .filter_map(|element| element.into_token())
-            .filter(|token| token.kind() == J::STRING_LITERAL)
-        {
-            // The key is the literal's *value*: the token text is the source
-            // as written, so a `"\u0075nchecked"` names `unchecked` ([§3.3]).
-            let text = translate_unicode_escapes(literal.text());
-            if let Some(key) = text
-                .strip_prefix('"')
-                .and_then(|inner| inner.strip_suffix('"'))
-                .and_then(LintKey::from_str)
-            {
-                out.insert(key);
+    }
+    if node.kind() == J::ENUM_CONSTANT {
+        for annotation in node.children() {
+            if annotation.kind() == J::ANNOTATION {
+                annotation_keys(db, file_id, &annotation, &mut out);
             }
         }
     }
     out
+}
+
+/// Adds the keys one `@SuppressWarnings` annotation names. An annotation of
+/// another type — including one that merely *spells* its name the same —
+/// names nothing; unrecognized strings are dropped ([JLS §9.6.4.5]).
+fn annotation_keys(
+    db: &dyn TyDatabase,
+    file_id: FileId,
+    annotation: &SyntaxNode<Lang>,
+    out: &mut FxHashSet<LintKey>,
+) {
+    // The annotation's written name is the first `QUALIFIED_NAME` of its
+    // node — the same node the item tree lowers the name from
+    // ([`hir_def::java::lower::walk::annotation_name_ref`]).
+    let Some(name_node) = annotation
+        .descendants()
+        .find(|node| node.kind() == J::QUALIFIED_NAME)
+    else {
+        return;
+    };
+    if !is_suppress_warnings(db, file_id, &name_node) {
+        return;
+    }
+    let Some(args) = annotation
+        .children()
+        .find(|child| child.kind() == J::ANNOTATION_ARGUMENT_LIST)
+    else {
+        // A marker `@SuppressWarnings` has no argument list; it names no
+        // warning, and `@SuppressWarnings` is not a marker annotation
+        // anyway ([§9.6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4)).
+        return;
+    };
+    // §9.7.1 makes an element value an *expression*, so a key may be the
+    // value of a constant variable rather than a literal
+    // (`static final String K = "unchecked"; @SuppressWarnings(K)`), which
+    // javac honours. The type layer evaluates the argument list; only when
+    // it cannot read every element value does the lexical scan below stand
+    // in.
+    if let Some(values) =
+        hir_ty::java::annotation_value::suppress_warnings_values(db, file_id, annotation)
+    {
+        out.extend(values.iter().filter_map(|value| LintKey::from_str(value)));
+        return;
+    }
+    // The element is an array of `String` ([§9.6.4.5]), so the keys are
+    // the string literals of the argument list — either a lone literal
+    // (`@SuppressWarnings("unchecked")`, §9.7.1's single-element form) or
+    // the literals of an array initializer. No nested annotation can
+    // appear in a `String[]` element, so every string literal here is a
+    // key. A literal is a *token* of its `LITERAL` node, so the walk
+    // descends through tokens.
+    for literal in args
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == J::STRING_LITERAL)
+    {
+        // The key is the literal's *value*: the token text is the source
+        // as written, so a `"\u0075nchecked"` names `unchecked` ([§3.3]).
+        let text = translate_unicode_escapes(literal.text());
+        if let Some(key) = text
+            .strip_prefix('"')
+            .and_then(|inner| inner.strip_suffix('"'))
+            .and_then(LintKey::from_str)
+        {
+            out.insert(key);
+        }
+    }
 }
 
 /// The `@SuppressWarnings` scopes of `file`, computed in a single tree walk

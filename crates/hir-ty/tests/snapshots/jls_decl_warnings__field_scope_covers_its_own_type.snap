@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_decl_warnings.rs
+expression: out
+---
+FILE /src/com/example/Field.java:
+package com.example;
+
+import java.util.List;
+
+class Field {
+    @SuppressWarnings("rawtypes")
+    List suppressed;
+
+    List control;
+}
+
+@8:4: raw-type-use: Raw use of parameterized class 'List'

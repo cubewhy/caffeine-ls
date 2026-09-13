@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_decl_warnings.rs
+expression: out
+---
+FILE /src/com/example/Param.java:
+package com.example;
+
+import java.util.List;
+
+class Param {
+    void m(@SuppressWarnings("rawtypes") List suppressed) {
+    }
+
+    void n(List control) {
+    }
+}
+
+@8:11: raw-type-use: Raw use of parameterized class 'List'

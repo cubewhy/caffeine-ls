@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_decl_warnings.rs
+expression: out
+---
+FILE /src/com/example/Ctor.java:
+package com.example;
+
+import java.util.List;
+
+class Ctor {
+    @SuppressWarnings("rawtypes")
+    Ctor(List suppressed) {
+    }
+
+    Ctor(List control, int other) {
+    }
+}
+
+@9:9: raw-type-use: Raw use of parameterized class 'List'
