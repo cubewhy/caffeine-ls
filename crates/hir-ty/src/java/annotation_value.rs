@@ -817,17 +817,23 @@ fn string_constant(
         }
         // §15.25/§15.29: the conditional operator's value is the *taken*
         // branch's, and the condition is a `boolean` constant whose value this
-        // layer records as `0`/`1` ([`conditional_kind`]).
+        // layer records as `0`/`1` ([`conditional_kind`]). A condition whose
+        // *value* is not recorded leaves the branch undecided — possibly a key,
+        // never asserted to be one.
         ExprData::Conditional { cond, then, els } => {
-            let taken =
-                match expr_kind(cx, cond, visited) {
-                    ConstKind::Constant { int, ty }
-                        if ty.as_ref().is_some_and(|ty| is_boolean(ty, cx.db)) =>
-                    {
-                        if int == Some(0) { els } else { then }
+            let taken = match expr_kind(cx, cond, visited) {
+                ConstKind::Constant {
+                    int: Some(value),
+                    ty,
+                } if ty.as_ref().is_some_and(|ty| is_boolean(ty, cx.db)) => {
+                    if value == 0 {
+                        els
+                    } else {
+                        then
                     }
-                    _ => return None,
-                };
+                }
+                _ => return None,
+            };
             string_constant(cx, taken, visited)
         }
         // §6.5.6.1/§6.5.6.2: a name denoting a constant variable of type
