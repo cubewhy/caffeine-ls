@@ -2565,6 +2565,85 @@ fn kotlin_navigation() {
     }
 }
 
+/// Kotlin type-level features end to end: an expression hover renders the
+/// inference's type, and `textDocument/diagnostic` reports the type errors with
+/// the compiler's wordings and their codes.
+#[test]
+fn kotlin_expression_hover_and_type_diagnostics() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Broken.kt";
+    // Source-declared types only: the LSP workspace has no Kotlin standard
+    // library on its classpath, so `Int`/`String` would resolve to the error
+    // type and the messages would not be the compiler's. The hermetic fixture
+    // of `hir-ty` pins the wordings `Int`/`String` need.
+    let text = r#"package com.example
+
+class Count
+
+class Holder(val value: Count)
+
+fun compute(holder: Holder) {
+    val read = holder.value
+    val name: Count = null
+    val wrong: Count = holder
+    undefinedName
+}
+"#;
+    lsp.write_file(path, text);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    // The hover over the `holder.value` read renders the inferred type.
+    let (line, character) = position_inside(text, "holder.value", 8);
+    let response = request_until(
+        &lsp,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+        |response| !response.is_null(),
+    );
+    let value = response["contents"]["value"].as_str().unwrap_or_default();
+    assert!(
+        value.contains("Count"),
+        "the inferred type of the read: {value}"
+    );
+
+    // The type diagnostics carry kotlinc's wordings and their codes.
+    let response = request_until(
+        &lsp,
+        "textDocument/diagnostic",
+        json!({ "textDocument": { "uri": lsp.uri(path) } }),
+        |response| {
+            response["items"]
+                .as_array()
+                .is_some_and(|items| items.len() >= 3)
+        },
+    );
+    let items = response["items"].as_array().expect("diagnostic items");
+    let rendered: Vec<String> = items
+        .iter()
+        .map(|item| {
+            format!(
+                "{} {}",
+                item["code"].as_str().unwrap_or_default(),
+                item["message"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    for expected in [
+        "kotlin.nullability-mismatch null cannot be a value of a non-null type 'Count'.",
+        "kotlin.type-mismatch initializer type mismatch: expected 'Count', actual 'Holder'.",
+        "kotlin.unresolved-reference unresolved reference 'undefinedName'.",
+    ] {
+        assert!(
+            rendered.iter().any(|item| item == expected),
+            "expected {expected:?} among {rendered:?}"
+        );
+    }
+}
+
 #[test]
 fn test_hover() {
     let lsp = create_lsp();

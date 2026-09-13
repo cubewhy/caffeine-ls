@@ -166,9 +166,10 @@ impl<'a> InferCtx<'a> {
                     .as_ref()
                     .map(|ty| super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty));
                 let actual = initializer.map(|expr| self.infer_expr(expr));
+                let range = initializer.and_then(|expr| self.bodies.expr_range(expr));
                 let ty = match (declared, actual) {
                     (Some(declared), Some(actual)) => {
-                        self.check_binding(MismatchTarget::Local(local), declared, actual, None);
+                        self.check_binding(MismatchTarget::Local(local), declared, actual, range);
                         declared
                     }
                     (Some(declared), None) => declared,
@@ -384,7 +385,8 @@ impl<'a> InferCtx<'a> {
             ExprData::Postfix { expr: inner, .. } => self.infer_expr(inner),
             ExprData::Assign { lhs, rhs, .. } => {
                 let rhs_ty = self.infer_expr(rhs);
-                self.infer_assignment(lhs, rhs_ty);
+                let range = self.bodies.expr_range(rhs);
+                self.infer_assignment(lhs, rhs_ty, range);
                 self.builtin("Unit")
             }
             ExprData::Elvis { lhs, rhs } => {
@@ -695,7 +697,7 @@ impl<'a> InferCtx<'a> {
 
     /// An assignment: the destination must be a `var`, and the value
     /// assignable to its type.
-    fn infer_assignment(&mut self, lhs: ExprId, rhs_ty: Ty) {
+    fn infer_assignment(&mut self, lhs: ExprId, rhs_ty: Ty, range: Option<rowan::TextRange>) {
         let lhs_ty = self.infer_expr(lhs);
         let name = match self.bodies.expr(lhs).clone() {
             ExprData::Var(name) => name,
@@ -724,6 +726,6 @@ impl<'a> InferCtx<'a> {
                 });
             return;
         }
-        self.check_binding(MismatchTarget::Assignment, lhs_ty, rhs_ty, None);
+        self.check_binding(MismatchTarget::Assignment, lhs_ty, rhs_ty, range);
     }
 }

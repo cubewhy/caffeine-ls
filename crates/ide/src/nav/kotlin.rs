@@ -183,15 +183,56 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
             let scope = Scope::of(&ctx, &token)?;
             hover_resolution(db, &type_resolution(db, &ctx, &scope, &name, offset)?)
         }
-        Site::Declaration => {
-            let item = declaration_item_at(&ctx, offset)?;
-            Some(HoverInfo {
+        // A declaration's own name, or — past its header — a name inside its
+        // body, which `site_of` cannot tell apart from the declaration it is
+        // written in (the first declaration ancestor is the same node).
+        Site::Declaration => match declaration_item_at(&ctx, offset) {
+            Some(item) => Some(HoverInfo {
                 value: render_signature(&ctx.tree, item),
                 docs: crate::docs::hover_docs(db, file, item),
-            })
-        }
-        Site::Other => None,
+            }),
+            None => expression_hover(db, file, offset),
+        },
+        // A name in a body: the type the inference recorded for the expression
+        // written there — the hover a client shows over a variable or a call.
+        Site::Other => expression_hover(db, file, offset),
     }
+}
+
+/// The hover of an expression inside a body: the innermost expression whose
+/// range covers `offset` and whose type the inference recorded, rendered in
+/// the Kotlin spelling ([`hir_ty::display_kotlin`]).
+///
+/// The body inference is memoized per item, so this walks the item that owns
+/// the expression and asks for the innermost match — the same "innermost wins"
+/// rule the Java hover uses for its own expression answers.
+fn expression_hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
+    let ctx = Ctx::new(db, file)?;
+    let bodies = hir::file_body_tree(db, file);
+    for (id, _) in ctx.tree.items.iter() {
+        let item = hir_expand::ids::ItemId(id);
+        if ctx.tree.data(item).body_id().is_none() {
+            continue;
+        }
+        let types = hir_ty::kotlin_body_types(db, file, item);
+        let innermost = bodies
+            .exprs
+            .iter()
+            .filter_map(|(id, _)| {
+                let expr = hir_expand::body::ExprId(id);
+                let range = bodies.expr_range(expr)?;
+                range.contains(offset).then_some((range.len(), expr))
+            })
+            .min_by_key(|(len, _)| *len);
+        if let Some((_, expr)) = innermost {
+            let ty = types.expr_ty(db, expr);
+            return Some(HoverInfo {
+                value: hir_ty::display_kotlin(db, ty).to_string(),
+                docs: None,
+            });
+        }
+    }
+    None
 }
 
 /// The hover of a resolved declaration.
