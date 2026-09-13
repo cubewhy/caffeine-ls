@@ -29,7 +29,8 @@ pub use db::{
 };
 pub use index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex};
 pub use lib_source::{
-    LibrarySourceDecl, library_source_decl, library_source_for_file, library_source_path,
+    CachedMemberParams, LibrarySourceDecl, cache_member_params, cached_member_params,
+    library_decompiles, library_source_decl, library_source_for_file, library_source_path,
     library_sources,
 };
 pub use modules::{

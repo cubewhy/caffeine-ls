@@ -61,9 +61,11 @@ impl AnalysisHost {
         change.apply(&mut self.db);
     }
 
-    /// Enables the persistent (LMDB-backed) stub cache under
-    /// `<cache_dir>/stubs/vN`. Returns whether it could be enabled; without it
-    /// the stub index stays in memory only.
+    /// Enables the persistent (LMDB-backed) library cache under
+    /// `<cache_dir>/stubs/vN`: classfile stubs, library source layouts and the
+    /// member parameter names resolved from those sources. Returns whether it
+    /// could be enabled; without it every one of them is re-derived per
+    /// session.
     pub fn enable_persistent_stub_cache(&self, cache_dir: &Path) -> bool {
         hir::enable_persistent_stub_cache(&self.db, cache_dir)
     }

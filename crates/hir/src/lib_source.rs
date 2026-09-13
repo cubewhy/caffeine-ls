@@ -32,6 +32,7 @@ use crate::{
     HirDatabase,
     db::{ProjectGraph, file_symbols},
     hir_def::java::item_tree::ItemId,
+    lmdb_store::{self, ParamsBlob, SourceIndexBlob, SourcesStamp},
     project::LibrarySources,
     symbol_index::SourceSymbolKind,
 };
@@ -59,9 +60,10 @@ fn relative_entry(entry: &str) -> &str {
     }
 }
 
-/// Builds the source index of `library` by reading the central directory of
-/// its source archive. `None` when the library has no attached sources or the
-/// archive cannot be read.
+/// The source index of `library`: the persistent tier when a previous session
+/// indexed the *same* archive, the archive's central directory otherwise.
+/// `None` when the library has no attached sources or the archive cannot be
+/// read.
 #[salsa::tracked(returns(ref))]
 fn library_source_index_query(
     db: &dyn HirDatabase,
@@ -73,13 +75,134 @@ fn library_source_index_query(
         .get(&library)?
         .archive
         .clone();
+    let stamp = SourcesStamp::of(Some(&archive), library_decompiles(db, library));
+    // Indexing a JDK `src.zip` walks ~25k central-directory entries; a session
+    // that already did it hands the layout over instead (see
+    // [`crate::lmdb_store`]).
+    let store = &db.hir_state().stub_store;
+    if let Some(blob) = store.read_source_index(library, &stamp) {
+        tracing::debug!(library = %library, entries = blob.entries.len(), "library sources indexed from cache");
+        return Some(Arc::new(LibrarySourceIndex {
+            entries: blob
+                .entries
+                .into_iter()
+                .map(|(name, entry)| (SmolStr::new(name), SmolStr::new(entry)))
+                .collect(),
+        }));
+    }
     match build_index(&archive) {
-        Ok(index) => Some(Arc::new(index)),
+        Ok(index) => {
+            let mut entries: Vec<(String, String)> = index
+                .entries
+                .iter()
+                .map(|(name, entry)| (name.to_string(), entry.to_string()))
+                .collect();
+            // Sorted, so an unchanged index encodes to unchanged bytes.
+            entries.sort();
+            let blob = SourceIndexBlob {
+                format_version: lmdb_store::CACHE_FORMAT_VERSION,
+                stamp,
+                entries,
+            };
+            if let Err(err) = store.write_source_index(library, &blob) {
+                tracing::debug!(library = %library, "failed to persist library source index: {err:#}");
+            }
+            Some(Arc::new(index))
+        }
         Err(err) => {
             tracing::warn!(library = %library, archive = %archive, "failed to index library sources: {err:#}");
             None
         }
     }
+}
+
+/// The parameter names a previous session resolved for the library member
+/// `(class, method, descriptor)` — the *persistent* tier of the merge below.
+///
+/// `None` when the cache holds no answer for this session's sources: nothing
+/// was ever resolved for that member, or what was resolved belongs to different
+/// sources ([`SourcesStamp`]). A member that was resolved to *no* names answers
+/// [`CachedMemberParams::NoNames`] — the answer a source-less library carries,
+/// and the reason a cold session never probes such a library again.
+pub fn cached_member_params(
+    db: &dyn HirDatabase,
+    library: LibraryId,
+    class: &str,
+    method: &str,
+    descriptor: &str,
+) -> Option<CachedMemberParams> {
+    let stamp = sources_stamp(db, library);
+    let blob = db
+        .hir_state()
+        .stub_store
+        .read_params(library, &stamp, class, method, descriptor)?;
+    Some(match blob.names {
+        Some(names) => CachedMemberParams::Names(names),
+        None => CachedMemberParams::NoNames,
+    })
+}
+
+/// Persists the answer for one library member, for the sessions that read the
+/// same sources. Best-effort: a disabled or failing cache only costs the next
+/// session the work of resolving the member again.
+pub fn cache_member_params(
+    db: &dyn HirDatabase,
+    library: LibraryId,
+    class: &str,
+    method: &str,
+    descriptor: &str,
+    names: Option<&[String]>,
+) {
+    let stamp = sources_stamp(db, library);
+    let blob = ParamsBlob {
+        format_version: lmdb_store::CACHE_FORMAT_VERSION,
+        class: class.to_owned(),
+        method: method.to_owned(),
+        descriptor: descriptor.to_owned(),
+        names: names.map(<[String]>::to_vec),
+    };
+    if let Err(err) = db
+        .hir_state()
+        .stub_store
+        .write_params(library, &stamp, &blob)
+    {
+        tracing::debug!(library = %library, "failed to persist a member's parameter names: {err:#}");
+    }
+}
+
+/// What a previous session resolved for one library member.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CachedMemberParams {
+    /// The parameter names its declaring source records, in declaration order.
+    Names(Vec<String>),
+    /// The member records none: its library ships no sources at all, or the
+    /// source that declares its class declares no such member.
+    NoNames,
+}
+
+impl CachedMemberParams {
+    /// The names, or `None` for [`CachedMemberParams::NoNames`] — the shape the
+    /// caller's own answer takes.
+    pub fn into_names(self) -> Option<Vec<String>> {
+        match self {
+            CachedMemberParams::Names(names) => Some(names),
+            CachedMemberParams::NoNames => None,
+        }
+    }
+}
+
+/// The stamp of `library`'s attached sources, as the cache keys them.
+fn sources_stamp(db: &dyn HirDatabase, library: LibraryId) -> SourcesStamp {
+    let archive = library_sources(db, library).map(|sources| sources.archive);
+    SourcesStamp::of(archive.as_deref(), library_decompiles(db, library))
+}
+
+/// Whether a decompiler is configured for `library`: its output is a declaring
+/// view a member's names can be read from once it is produced, which is what
+/// makes a "records none" answer conditional on it.
+pub fn library_decompiles(db: &dyn HirDatabase, library: LibraryId) -> bool {
+    ProjectGraph::try_get(db)
+        .is_some_and(|graph| graph.library_decompiled(db).contains_key(&library))
 }
 
 fn build_index(archive: &AbsPath) -> anyhow::Result<LibrarySourceIndex> {

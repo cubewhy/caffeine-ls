@@ -2386,6 +2386,119 @@ fn library_member_hover(
     library_member_signature(db, library, owner_fqn, name, use_kind, descriptor, source)
 }
 
+/// The parameter names the declaration an invocation selected writes
+/// ([JLS §8.4.1]), in order — or `None` when that declaration is no *loaded
+/// source* one.
+///
+/// A library member's names are read back from its declaring *source* (a
+/// classfile records them only in a `MethodParameters` attribute this server
+/// does not read), through the same lookup goto-definition resolves the member
+/// with — so a name can only come from the declaration a click on the
+/// invocation would open. A library whose source is not materialized yet (a
+/// `Pending` archive entry, a class a decompiler would have to produce), or a
+/// synthesized implicit member, answers `None` rather than a guessed name.
+///
+/// The inlay-hint layer asks for these when the type layer recorded none: a
+/// source declaration carries its own names already, so only a classpath member
+/// reaches here.
+///
+/// Resolving them costs the library's source layout and, for a class whose
+/// source is loaded, that file's symbols. Both the member's answer and the
+/// layout are therefore persisted ([`hir::cached_member_params`],
+/// [`hir::lmdb_store`]), and what is *stable* is what is persisted:
+///
+/// * a loaded declaring source is the authority, so its answer — names, or
+///   none because it declares no such member — is written back;
+/// * a library that ships no sources and no decompiler can never answer, which
+///   is written back as "no names" under a stamp that changes the day sources
+///   or a decompiler are configured for it;
+/// * a declaring view that exists but is not materialized yet is *not* written
+///   back: it can name the member once it is, so the miss stays a miss.
+pub(super) fn declared_parameter_names(
+    db: &RootDatabase,
+    file: FileId,
+    method: &hir_ty::MethodData,
+    constructor: bool,
+) -> Option<Vec<String>> {
+    let reference = if constructor {
+        Reference::Constructor
+    } else {
+        Reference::Member
+    };
+    // A classpath member is always named and described; one without either is
+    // no library member, and no declaring source to read names from exists.
+    let owner = method.owner.as_fqn()?;
+    let descriptor = method.descriptor.as_deref()?;
+    let library = library_of(db, file, owner.as_str())?;
+    if let Some(cached) =
+        hir::cached_member_params(db, library, owner.as_str(), &method.name, descriptor)
+    {
+        return cached.into_names();
+    }
+    let Some(decl) = hir::library_source_decl(db, library, owner.as_str()) else {
+        // Nothing will ever declare the class from a source this session reads:
+        // the library ships no sources, and no decompiler is configured for it.
+        hir::cache_member_params(db, library, owner.as_str(), &method.name, descriptor, None);
+        return None;
+    };
+    let hir::LibrarySourceDecl::Loaded {
+        file: decl_file,
+        item,
+    } = decl
+    else {
+        // The declaring view is not materialized yet, and the hint path does
+        // not drive a materialization.
+        return None;
+    };
+    let tree = hir::file_item_tree(db, decl_file);
+    let member = member_item(
+        db,
+        decl_file,
+        &tree,
+        item,
+        &member_decl_name(db, method, reference),
+        member_use_kind(reference),
+        Params::Recorded {
+            types: &method.params,
+            descriptor: method.descriptor.as_ref(),
+        },
+    );
+    let names = member.and_then(|member| match tree.data(member) {
+        ItemData::Method(method) => Some(
+            method
+                .sig
+                .params
+                .iter()
+                .map(|param| param.name.as_str().to_owned())
+                .collect::<Vec<_>>(),
+        ),
+        // The member resolved to its owner — an implicit constructor, an
+        // implicit `equals`/`hashCode`/`toString` — which declares no
+        // parameters of its own.
+        _ => None,
+    });
+    hir::cache_member_params(
+        db,
+        library,
+        owner.as_str(),
+        &method.name,
+        descriptor,
+        names.as_deref(),
+    );
+    names
+}
+
+/// The library the class-like type `owner_fqn` denotes in `file`'s scope —
+/// `None` for a name that resolves to no library class, which is the only case
+/// a classpath member's names could still be read from.
+fn library_of(db: &RootDatabase, file: FileId, owner_fqn: &str) -> Option<hir::LibraryId> {
+    let scope = hir_ty::scope_for_file(db, file);
+    match hir::fqn_resolve(db, &scope, owner_fqn)? {
+        hir::Resolved::Library(class) => Some(class.library),
+        hir::Resolved::Source(_) => None,
+    }
+}
+
 /// The declared name of parameter `index` of the library member the resolution
 /// selected, when its source declaration names one there.
 fn source_parameter_name(

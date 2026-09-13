@@ -4,7 +4,8 @@ use triomphe::Arc;
 
 use ide::{
     Analysis, AnalysisHost, Change, Classpath, ClasspathEntry, InlayHint, InlayHintKind,
-    InlayHintsConfig, LibraryId, LibraryInfo, LibraryKind, ProjectGraphData, SourceSetId,
+    InlayHintsConfig, LibraryId, LibraryInfo, LibraryKind, LibrarySources, ProjectGraphData,
+    SourceSetId,
 };
 use ide_db::base_db::{SourceRoot, SourceRootId};
 use insta::assert_snapshot;
@@ -108,16 +109,53 @@ fn test_file(text: &str) -> Fixture {
     }
 }
 
-/// A workspace file plus one dependency jar holding `com.example.Lib` with the
-/// given members. The jar's members are *library* members: no classfile
-/// without a `MethodParameters` attribute records parameter names, which is
-/// exactly the case the parameter-name hints refuse to guess at.
-fn library_file(text: &str, lib_methods: &[(&str, usize)]) -> Fixture {
-    let dir = tempfile::TempDir::new().unwrap();
-    let base = dir.path().to_path_buf();
+/// The library source entry every source-carrying fixture materializes.
+const LIB_SOURCE_ENTRY: &str = "com/example/Lib.java";
+
+/// The file id that fixture assigns the materialized library source.
+const LIB_SOURCE_FILE: u32 = 1000;
+
+/// A workspace file plus a dependency jar holding `com.example.Lib` with the
+/// given members — *library* members, since no classfile without a
+/// `MethodParameters` attribute records parameter names.
+///
+/// `sources` is the state the library's attached sources are in, which is what
+/// the parameter-name lookup has to tell apart:
+///
+/// * `None`: the library ships no sources, so it can never name a member (the
+///   state a client that disabled source download leaves its dependencies in);
+/// * `Some((text, true))`: the archive carries the class's source and the file
+///   is *loaded* — [`hir::LibrarySourceDecl::Loaded`];
+/// * `Some((text, false))`: the archive carries it but no session has
+///   materialized it — [`hir::LibrarySourceDecl::Pending`].
+///
+/// `workspace` runs the fixture inside a caller-owned directory instead of a
+/// fresh one, which is what two sessions *sharing a library cache* need: a
+/// library is identified by its jar's path (and the cache keyed by it). `cache`
+/// enables the persistent library cache at that directory.
+fn library_fixture(
+    workspace: Option<&tempfile::TempDir>,
+    text: &str,
+    sources: Option<(&str, bool)>,
+    lib_methods: &[(&str, usize)],
+    cache: Option<&std::path::Path>,
+) -> Fixture {
+    let dir = workspace
+        .map(|_| None)
+        .unwrap_or_else(|| Some(tempfile::TempDir::new().unwrap()));
+    let dir_path = dir
+        .as_ref()
+        .map(|dir| dir.path().to_path_buf())
+        .unwrap_or_else(|| workspace.expect("one of them").path().to_path_buf());
+    let base = dir_path.clone();
     let jar = base.join("lib/deps.jar");
-    let class = class_bytes("com/example/Lib", "java/lang/Object", &[], lib_methods);
-    build_jar(&jar, &[("com/example/Lib.class", class)]).unwrap();
+    // A jar already in the workspace is reused: a library's identity is its
+    // path *and* its modification time, so two sessions over one workspace only
+    // see one library — and so one cache entry — if neither rewrites it.
+    if !jar.exists() {
+        let class = class_bytes("com/example/Lib", "java/lang/Object", &[], lib_methods);
+        build_jar(&jar, &[("com/example/Lib.class", class)]).unwrap();
+    }
 
     let file = FileId::from_raw(1);
     let mut change = Change::default();
@@ -129,7 +167,34 @@ fn library_file(text: &str, lib_methods: &[(&str, usize)]) -> Fixture {
         )),
     );
     change.change_file(file, Some(text.to_owned()));
-    change.set_roots(vec![SourceRoot::new(file_set)]);
+
+    let mut library_root = FileSet::default();
+    let mut sources_archive = None;
+    let mut sources_root = None;
+    if let Some((source, loaded)) = sources {
+        let sources_jar = base.join("lib/deps-sources.jar");
+        let lib_root = base.join("sources/deps");
+        if !sources_jar.exists() {
+            build_jar(
+                &sources_jar,
+                &[(LIB_SOURCE_ENTRY, source.as_bytes().to_vec())],
+            )
+            .unwrap();
+        }
+        if loaded {
+            library_root.insert(
+                FileId::from_raw(LIB_SOURCE_FILE),
+                VfsPath::from(AbsPathBuf::assert_utf8(lib_root.join(LIB_SOURCE_ENTRY))),
+            );
+            change.change_file(FileId::from_raw(LIB_SOURCE_FILE), Some(source.to_owned()));
+        }
+        sources_archive = Some(sources_jar);
+        sources_root = Some(lib_root);
+    }
+    change.set_roots(vec![
+        SourceRoot::new(file_set),
+        SourceRoot::library(library_root),
+    ]);
 
     let library = LibraryId::from_file_path(&jar).unwrap();
     let mut data = ProjectGraphData::default();
@@ -145,17 +210,49 @@ fn library_file(text: &str, lib_methods: &[(&str, usize)]) -> Fixture {
     );
     data.source_root_to_source_set
         .insert(SourceRootId(0), main_source_set(0));
+    if let (Some(archive), Some(root)) = (sources_archive, sources_root) {
+        data.library_sources.insert(
+            library,
+            LibrarySources {
+                archive: AbsPathBuf::assert_utf8(archive),
+                root: AbsPathBuf::assert_utf8(root),
+            },
+        );
+        data.library_source_roots.insert(SourceRootId(1), library);
+    }
 
     let mut host = AnalysisHost::new();
+    if let Some(cache) = cache {
+        assert!(
+            host.enable_persistent_stub_cache(cache),
+            "the fixture's cache directory must be usable"
+        );
+    }
     change.set_project_graph(data);
     host.apply_change(change);
 
     Fixture {
-        _dir: Some(dir),
+        _dir: dir,
         host,
         file,
         text: text.to_owned(),
     }
+}
+
+/// [`library_fixture`] over a fresh workspace, with a source-less library.
+fn library_file(text: &str, lib_methods: &[(&str, usize)]) -> Fixture {
+    library_fixture(None, text, None, lib_methods, None)
+}
+
+/// [`library_fixture`] in a fresh workspace, with the library's source attached.
+fn lib_source_file(
+    text: &str,
+    source: &str,
+    lib_methods: &[(&str, usize)],
+    loaded: bool,
+    cache: Option<&std::path::Path>,
+) -> Fixture {
+    library_fixture(None, text, Some((source, loaded)), lib_methods, cache)
 }
 
 /// `kind @offset label` per hint, one row each — the label as the client
@@ -876,4 +973,144 @@ fn inlay_hint_resolve_method_parameter_name() {
     assert!(detail.edits.is_empty());
     assert_eq!(detail.hint.label[0].value, "...args:");
     assert_eq!(detail.hint.label[0].class, None);
+}
+
+const LIB_SOURCE: &str = r#"package com.example;
+
+public class Lib {
+    public void from(int count) {
+    }
+}
+"#;
+
+const LIB_SOURCE_CALLER: &str = r#"package com.example;
+
+class App {
+    void run(Lib lib) {
+        lib.from(1);
+    }
+}
+"#;
+
+#[test]
+fn parameter_names_library_member_from_source() {
+    let fixture = lib_source_file(LIB_SOURCE_CALLER, LIB_SOURCE, &[("from", 1)], true, None);
+    let hints = fixture.hints();
+
+    // The classfile records no parameter name; the *loaded* source of the
+    // declaring class does, and it is the same declaration the merged hover
+    // reads — `lib.from(count: 1)`.
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].offset, fixture.offset_end("lib.from("));
+    assert_eq!(hints[0].kind, InlayHintKind::Parameter);
+    let hover = fixture
+        .analysis()
+        .hover(fixture.file, fixture.offset_start("from", 0))
+        .unwrap()
+        .expect("the invocation's declaration hovers");
+    assert!(
+        hover.value.contains("count"),
+        "the hint and the hover name the same parameter: {}",
+        hover.value
+    );
+
+    assert_snapshot!(
+        "parameter_names_library_member_from_source",
+        render_hints(&hints)
+    );
+}
+
+const LIB_SOURCE_STALE: &str = r#"package com.example;
+
+public class Lib {
+    public void from() {
+    }
+}
+"#;
+
+#[test]
+fn parameter_names_library_member_arity_mismatch_omitted() {
+    // A library source that no longer lines up with its classfile — the stale
+    // jar every edit-then-build cycle produces — is not guessed at: the hint
+    // needs a name for *every* parameter the selected member declares.
+    let fixture = lib_source_file(
+        LIB_SOURCE_CALLER,
+        LIB_SOURCE_STALE,
+        &[("from", 1)],
+        true,
+        None,
+    );
+    assert_eq!(render_hints(&fixture.hints()), "");
+}
+
+/// A second session — a fresh analysis host over the same library cache — that
+/// has *not* materialized the declaring source still names the member: what it
+/// reads is the first session's answer, not the archive.
+///
+/// Both sessions run in one workspace, because a library is identified by its
+/// jar's path and the cache is keyed by it.
+#[test]
+fn parameter_names_member_from_a_previous_session() {
+    let workspace = tempfile::TempDir::new().unwrap();
+    let cache = tempfile::TempDir::new().unwrap();
+    let fixture = |loaded: bool, cache: Option<&std::path::Path>| {
+        library_fixture(
+            Some(&workspace),
+            LIB_SOURCE_CALLER,
+            Some((LIB_SOURCE, loaded)),
+            &[("from", 1)],
+            cache,
+        )
+    };
+
+    // The session that resolves: the declaring source is loaded, so the names
+    // come from it — and are persisted.
+    let resolved = fixture(true, Some(cache.path()));
+    assert_eq!(render_hints(&resolved.hints()), "Parameter @75 count:");
+    drop(resolved);
+
+    // The same session with the source *not* loaded answers nothing: the
+    // archive entry exists, but no session has read the file it names.
+    let cold = fixture(false, None);
+    assert_eq!(
+        render_hints(&cold.hints()),
+        "",
+        "without a cache, a pending archive entry names nothing"
+    );
+    drop(cold);
+
+    // The next session over the same cache answers the name anyway.
+    let remembered = fixture(false, Some(cache.path()));
+    assert_eq!(render_hints(&remembered.hints()), "Parameter @75 count:");
+}
+
+/// A library that ships no sources at all records that it names nothing — and
+/// the record is keyed on the sources it was made for, so attaching sources to
+/// the same library is a fresh question rather than a cached "no".
+#[test]
+fn parameter_names_sourceless_library_answer_is_invalidated_by_new_sources() {
+    let workspace = tempfile::TempDir::new().unwrap();
+    let cache = tempfile::TempDir::new().unwrap();
+
+    // A session with no sources attached: the library can name nothing.
+    let sourceless = library_fixture(
+        Some(&workspace),
+        LIB_SOURCE_CALLER,
+        None,
+        &[("from", 1)],
+        Some(cache.path()),
+    );
+    assert_eq!(render_hints(&sourceless.hints()), "");
+    drop(sourceless);
+
+    // The same library with sources attached, in a later session: the cached
+    // answer belongs to the source-less library, so it is not reused.
+    let sourced = library_fixture(
+        Some(&workspace),
+        LIB_SOURCE_CALLER,
+        Some((LIB_SOURCE, true)),
+        &[("from", 1)],
+        Some(cache.path()),
+    );
+    assert_eq!(render_hints(&sourced.hints()), "Parameter @75 count:");
 }

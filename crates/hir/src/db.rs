@@ -136,8 +136,9 @@ fn cached_index(state: &HirState, id: LibraryId) -> Option<Arc<LibraryIndex>> {
 pub struct HirState {
     pub interner: ThreadedRodeo,
     pub libraries: DashMap<LibraryId, LibraryState>,
-    /// Persistent LMDB-backed stub cache. Starts disabled (memory-only);
-    /// server sessions enable it once at startup via
+    /// Persistent LMDB-backed library cache — classfile stubs, the libraries'
+    /// source layouts and their members' parameter names. Starts disabled
+    /// (memory-only); server sessions enable it once at startup via
     /// [`enable_persistent_stub_cache`].
     pub stub_store: StubStore,
     /// Monotonic id source for inference variables
@@ -416,10 +417,12 @@ pub fn warmup_library(state: &HirState, id: LibraryId) {
     ensure_loaded(id, kind, &archive, state, &|| {});
 }
 
-/// Enables the persistent LMDB stub cache for this session, pointing it at
-/// `cache_dir/stubs/v{CACHE_FORMAT_VERSION}`. Idempotent; later calls after
-/// the first use have no effect. Also cleans up leftover pre-LMDB v1 cache
-/// files. Returns whether persistent caching could be enabled.
+/// Enables the persistent LMDB library cache for this session, pointing it at
+/// `cache_dir/stubs/v{CACHE_FORMAT_VERSION}` — the classfile stubs, together
+/// with the library source layout and the members' parameter names derived from
+/// those sources (see [`crate::lmdb_store`]). Idempotent; later calls after the
+/// first use have no effect. Also cleans up leftover pre-LMDB v1 cache files.
+/// Returns whether persistent caching could be enabled.
 pub fn enable_persistent_stub_cache(db: &dyn HirDatabase, cache_dir: &Path) -> bool {
     let dir = cache_dir
         .join("stubs")

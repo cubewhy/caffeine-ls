@@ -164,3 +164,24 @@ pub(crate) fn class_declaration(
         _ => java::class_declaration(db, file, fqn),
     }
 }
+
+/// The parameter names the declaration the invocation `method` selected writes
+/// ([JLS §8.4.1]), for a caller that has none of its own — the inlay-hint
+/// layer's parameter-name hints. `constructor` says whether the invocation is a
+/// class instance creation or an explicit constructor invocation ([§15.9],
+/// [§8.8.7.1]), which selects a constructor rather than a method of that name.
+///
+/// `None` for a Kotlin file (nothing resolves: see [`kotlin`]) and for a
+/// declaration that is no loaded source one — see
+/// [`java::declared_parameter_names`].
+pub(crate) fn declared_parameter_names(
+    db: &RootDatabase,
+    file: FileId,
+    method: &hir_ty::MethodData,
+    constructor: bool,
+) -> Option<Vec<String>> {
+    match hir::file_item_tree(db, file).language {
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
+        _ => java::declared_parameter_names(db, file, method, constructor),
+    }
+}

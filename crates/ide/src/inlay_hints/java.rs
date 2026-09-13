@@ -40,6 +40,7 @@ use super::{
     InlayHint, InlayHintDetail, InlayHintEdit, InlayHintKind, InlayHintLabelPart, InlayHintsConfig,
 };
 use crate::RootDatabase;
+use crate::nav;
 use ide_db::base_db::{LanguageKind, SourceDatabase};
 
 /// The construct a hint is asked about: a request's range, or the one hint a
@@ -141,7 +142,7 @@ fn collect(
         };
         var_type_hints(db, source, &bodies, &inits, &types, &search, config, out);
         lambda_parameter_hints(db, file, source, &bodies, &types, &search, config, out);
-        parameter_name_hints(db, &bodies, &types, &search, config, out);
+        parameter_name_hints(db, file, &bodies, &types, &search, config, out);
         method_chain_hints(db, file, &bodies, &types, &search, config, out);
     }
 }
@@ -461,7 +462,8 @@ fn lambda_parameter_hints(
 /// A method's parameter names at the arguments it is passed, where the argument
 /// does not already name it (`foo(size: 3)`).
 fn parameter_name_hints(
-    db: &dyn TyDatabase,
+    db: &RootDatabase,
+    file: FileId,
     bodies: &BodyTree,
     types: &BodyTypes,
     search: &Search,
@@ -478,10 +480,10 @@ fn parameter_name_hints(
         // The calls a parameter list belongs to: an invocation, a class
         // instance creation ([JLS §15.9]) and an explicit constructor
         // invocation ([§8.8.7.1]) — IntelliJ's `PsiCall` set.
-        let args: &[ExprId] = match expr {
-            ExprData::MethodCall { args, .. } => args,
-            ExprData::New { args, .. } => args,
-            ExprData::CtorCall { args, .. } => args,
+        let (args, constructor): (&[ExprId], bool) = match expr {
+            ExprData::MethodCall { args, .. } => (args, false),
+            ExprData::New { args, .. } => (args, true),
+            ExprData::CtorCall { args, .. } => (args, true),
             _ => continue,
         };
         // The *declaration form* the invocation selected. An unresolved or
@@ -489,13 +491,22 @@ fn parameter_name_hints(
         let Some(ResolvedMember::Method(method)) = types.resolved.get(&expr_id) else {
             continue;
         };
-        // A library member records no parameter names ([`MethodData::param_names`]
-        // is `Some` only for source declarations), and this feature refuses to
-        // invent `arg0`-style ones. A name list that does not line up with the
-        // parameter list is equally unusable.
-        let Some(names) = method.param_names.as_deref() else {
-            continue;
+        // §8.4.1: the names are the selected declaration's own. A source
+        // declaration carries them in its item tree; a *library* member records
+        // none (a classfile writes them only in a `MethodParameters` attribute
+        // this server does not read), so they are read back from its declaring
+        // source when that is loaded — and a library whose source is not, or a
+        // synthesized implicit member, gets no hint rather than an invented
+        // `arg0`-style name ([`nav::declared_parameter_names`]). A name list
+        // that does not line up with the parameter list is equally unusable.
+        let names: Vec<String> = match method.param_names.clone() {
+            Some(names) => names,
+            None => match nav::declared_parameter_names(db, file, method, constructor) {
+                Some(names) => names,
+                None => continue,
+            },
         };
+        let names = names.as_slice();
         if names.len() != method.params.len() || method.params.is_empty() {
             continue;
         }
