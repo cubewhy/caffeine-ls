@@ -5842,6 +5842,39 @@ fn test_inlay_hints_disabled_by_config() {
 ///
 /// Needs a JDK that ships its sources — the layout being indexed is its
 /// `src.zip`.
+/// The inlay-hint refresh follows the library index stage: the client is asked
+/// to re-request its hints only once the archives they resolve through are
+/// indexed, so the request reads the caches that load just filled instead of
+/// racing the stage for them.
+///
+/// Needs libraries to index, which the harness has only with a real JDK.
+#[test]
+fn test_inlay_hint_refresh_follows_the_index_stage() {
+    let Some(java_home) = std::env::var("JAVA_HOME")
+        .ok()
+        .filter(|home| std::path::Path::new(home).join("lib/src.zip").is_file())
+    else {
+        eprintln!("skipping: JAVA_HOME is unset or ships no lib/src.zip");
+        return;
+    };
+    let lsp = create_lsp_with_config(json!({ "java_home": java_home }), |_| {});
+    lsp.wait_until_workspace_is_loaded();
+
+    let stream = lsp.message_stream();
+    let indexed = stream
+        .iter()
+        .position(|line| line.starts_with("$/progress index-") && line.ends_with("/end"))
+        .unwrap_or_else(|| panic!("the index stage never reported its end: {stream:#?}"));
+    let refreshed = stream
+        .iter()
+        .position(|line| line == "workspace/inlayHint/refresh")
+        .unwrap_or_else(|| panic!("the load never asked for a hint refresh: {stream:#?}"));
+    assert!(
+        refreshed > indexed,
+        "the refresh follows the index stage: {stream:#?}"
+    );
+}
+
 #[test]
 fn test_workspace_load_indexes_library_sources() {
     let Some(java_home) = std::env::var("JAVA_HOME")

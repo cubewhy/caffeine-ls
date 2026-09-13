@@ -116,6 +116,18 @@ fn client_capabilities() -> ClientCapabilities {
     }
 }
 
+/// The `(token, kind)` of a `$/progress` notification's params, `None` when it
+/// spells neither.
+fn progress_event(params: &serde_json::Value) -> Option<(String, String)> {
+    let token = match params.get("token")? {
+        serde_json::Value::String(token) => token.clone(),
+        serde_json::Value::Number(number) => number.to_string(),
+        _ => return None,
+    };
+    let kind = params.get("value")?.get("kind")?.as_str()?.to_owned();
+    Some((token, kind))
+}
+
 impl LspHarness {
     /// Starts `init_backend` on a background thread over an in-memory connection
     /// and completes the `initialize`/`initialized` handshake. `setup` runs on
@@ -213,6 +225,32 @@ impl LspHarness {
 
     /// The server's `initialize` result — the capabilities it negotiated, e.g.
     /// the semantic-tokens legend a request's indices are looked up in.
+    /// Every message the client has seen, in arrival order, as one line each:
+    /// `<method>` for a request or notification, and `<method> <token>/<kind>`
+    /// for a `$/progress` notification. An ordering contract *between* a
+    /// notification and a request is asserted on this — the per-method buffers
+    /// [`Self::wait_for_notifications`] and [`Self::wait_for_requests`] return
+    /// lose the order between them.
+    pub fn message_stream(&self) -> Vec<String> {
+        self.messages
+            .borrow()
+            .iter()
+            .filter_map(|message| match message {
+                Message::Request(request) => Some(request.method.clone()),
+                Message::Notification(notification) => {
+                    let mut line = notification.method.clone();
+                    if notification.method == "$/progress"
+                        && let Some((token, kind)) = progress_event(&notification.params)
+                    {
+                        line.push_str(&format!(" {token}/{kind}"));
+                    }
+                    Some(line)
+                }
+                Message::Response(_) => None,
+            })
+            .collect()
+    }
+
     pub fn initialize_result(&self) -> serde_json::Value {
         self.init_result.borrow().clone()
     }

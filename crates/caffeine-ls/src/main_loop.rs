@@ -716,6 +716,10 @@ impl GlobalState {
                 self.report_progress(progress);
             }
 
+            // The index stage is over, so a hint request now reads the caches
+            // it just filled instead of building them itself.
+            BackgroundTaskEvent::LibrariesIndexed => self.refresh_inlay_hints(),
+
             BackgroundTaskEvent::VfsLoaded => {
                 tracing::info!("VFS file system synchronization completed.");
             }
@@ -1204,9 +1208,10 @@ impl GlobalState {
         // client-side edit, so a client holding tokens from before the load has
         // to be told to re-request them.
         self.refresh_semantic_tokens();
-        // The same holds for inlay hints: the types a hint renders resolve
-        // against the graph a client's own request could not see yet.
-        self.refresh_inlay_hints();
+        // Inlay hints are refreshed from the *end of the index stage* instead
+        // ([`BackgroundTaskEvent::LibrariesIndexed`]): the types a hint renders
+        // resolve against the library archives that stage is indexing, and a
+        // request sent before it finishes would pay for them itself.
     }
 
     /// Builds the classpath-aware project model from the workspace graph:
@@ -1343,6 +1348,11 @@ impl GlobalState {
     fn warmup_libraries(&mut self, root: &AbsPathBuf) {
         let ids: Vec<LibraryId> = self.analysis_host.registered_libraries();
         if ids.is_empty() {
+            // Nothing to index: the stage is over, and the client can be told
+            // its hints are worth re-requesting right away.
+            self.task_sender
+                .send(BackgroundTaskEvent::LibrariesIndexed)
+                .ok();
             return;
         }
 
@@ -1400,6 +1410,7 @@ impl GlobalState {
                             state: ProgressState::End,
                         }))
                         .ok();
+                    task_sender.send(BackgroundTaskEvent::LibrariesIndexed).ok();
                 }
             });
         }

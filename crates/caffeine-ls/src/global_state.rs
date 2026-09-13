@@ -47,6 +47,14 @@ pub enum BackgroundTaskEvent {
         log_file: Option<std::path::PathBuf>,
     },
     Progress(ProgressEvent),
+    /// Every registered library has been indexed — classfile stubs and the
+    /// source layouts the parameter-name hints read names through. Sent once
+    /// per workspace load, and also when there was nothing to index.
+    ///
+    /// It is what triggers the inlay-hint refresh: a hint request sent before
+    /// it would race the stage for the very archives it is filling, and pay for
+    /// them itself.
+    LibrariesIndexed,
     VfsLoaded,
     AsyncRequestCompleted {
         id: lsp_server::RequestId,
