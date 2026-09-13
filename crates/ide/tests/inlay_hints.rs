@@ -254,3 +254,123 @@ fn var_type_outside_range() {
         .unwrap();
     assert!(hints.is_empty(), "{hints:?}");
 }
+
+const LAMBDA_TYPES: &str = r#"package com.example;
+
+class Text {
+    int length() {
+        return 0;
+    }
+}
+
+interface Mapper<T, R> {
+    R apply(T value);
+}
+
+interface Combiner<T> {
+    T combine(T a, T b);
+}
+
+class Sample {
+    static Text text() {
+        return null;
+    }
+
+    void types() {
+        Mapper<Text, Text> m = s -> s;
+        Mapper<Text, Text> mv = (var v) -> v;
+        Combiner<Text> c = (a, b) -> a;
+        Combiner<Text> p = (x, y) -> text();
+    }
+}
+"#;
+
+#[test]
+fn lambda_parameter_types() {
+    let fixture = test_file(LAMBDA_TYPES);
+    let hints = fixture.hints();
+
+    // The type renders *before* the parameter's name: `(Text s) -> ...`.
+    assert_eq!(hints[0].offset, fixture.offset_start("s -> s;", 0));
+    assert_eq!(hints[0].kind, InlayHintKind::Type);
+    assert_eq!(hints[1].offset, fixture.offset_start("v) -> v;", 0));
+    assert_eq!(hints[2].offset, fixture.offset_start("a, b) -> a;", 0));
+    assert_eq!(hints[3].offset, fixture.offset_start("b) -> a;", 0));
+    assert_eq!(hints[4].offset, fixture.offset_start("x, y) -> text();", 0));
+    assert_eq!(hints[5].offset, fixture.offset_start("y) -> text();", 0));
+
+    assert_snapshot!("lambda_parameter_types", render_hints(&hints));
+}
+
+const LAMBDA_SUPER_WILDCARD: &str = r#"package com.example;
+
+class Text {
+    int length() {
+        return 0;
+    }
+}
+
+interface Sink<T> {
+    void accept(T value);
+}
+
+class Sample {
+    static Text text() {
+        return null;
+    }
+
+    void consume() {
+        Sink<? super Text> sink = value -> { };
+    }
+}
+"#;
+
+#[test]
+fn lambda_parameter_type_super_wildcard() {
+    let fixture = test_file(LAMBDA_SUPER_WILDCARD);
+    let hints = fixture.hints();
+
+    assert_eq!(hints[0].offset, fixture.offset_start("value -> ", 0));
+
+    // A captured `? super Text` contributes its *lower* bound, so the
+    // parameter renders `Text`, not `? super Text` ([JLS §5.1.10]).
+    assert_snapshot!("lambda_parameter_type_super_wildcard", render_hints(&hints));
+}
+
+const LAMBDA_OMITTED: &str = r#"package com.example;
+
+class Text {
+    int length() {
+        return 0;
+    }
+}
+
+interface Mapper<T, R> {
+    R apply(T value);
+}
+
+interface Task {
+    void run();
+}
+
+class Sample {
+    static Text text() {
+        return null;
+    }
+
+    void omitted() {
+        Mapper<Text, Text> declared = (Text s) -> s;
+        var untargeted = () -> 1;
+        Task task = () -> { };
+    }
+}
+"#;
+
+#[test]
+fn lambda_parameter_type_omitted() {
+    let fixture = test_file(LAMBDA_OMITTED);
+
+    // A parameter that writes its own type states it, an untargeted lambda has
+    // no SAM to read, and a parameterless lambda declares none.
+    assert_eq!(render_hints(&fixture.hints()), "");
+}

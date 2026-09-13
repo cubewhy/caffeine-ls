@@ -384,15 +384,84 @@ fn is_renderable(db: &dyn TyDatabase, ty: &Ty) -> bool {
 /// before the parameter's name (`(String s) -> ...`).
 #[allow(clippy::too_many_arguments)]
 fn lambda_parameter_hints(
-    _db: &dyn TyDatabase,
-    _file: FileId,
-    _source: &SyntaxNode<Lang>,
-    _bodies: &BodyTree,
-    _types: &BodyTypes,
-    _search: &Search,
-    _config: &InlayHintsConfig,
-    _out: &mut Vec<InlayHintDetail>,
+    db: &dyn TyDatabase,
+    file: FileId,
+    source: &SyntaxNode<Lang>,
+    bodies: &BodyTree,
+    types: &BodyTypes,
+    search: &Search,
+    config: &InlayHintsConfig,
+    out: &mut Vec<InlayHintDetail>,
 ) {
+    if !config.lambda_parameter_types {
+        return;
+    }
+    let scope = hir_ty::scope_for_file(db, file);
+    // The expression arena is in lowering order, so the hints come out in
+    // source order without a hash iteration order to sort out afterwards.
+    for (id, expr) in bodies.exprs.iter() {
+        let ExprData::Lambda { params, .. } = expr else {
+            continue;
+        };
+        // The type layer stores the lambda's *target* functional interface
+        // ([§15.27.3]) in the expression's type slot.
+        let Some(target) = types.exprs.get(&ExprId(id)) else {
+            continue;
+        };
+        if !is_renderable(db, target) {
+            continue;
+        }
+        // §9.8/[§15.27.3]: the parameter types are the single abstract
+        // method's, and a lambda whose parameter count already disagrees with
+        // the SAM reports a diagnostic instead of guessing.
+        let Some(sam) = hir_ty::single_abstract_method(db, &scope, target) else {
+            continue;
+        };
+        if sam.params.len() != params.len() {
+            continue;
+        }
+        for (param, formal) in params.iter().zip(&sam.params) {
+            // A parameter that writes its type states it itself
+            // ([JLS §15.27.1]); only an inferred one is hinted.
+            if param.ty.is_some() {
+                continue;
+            }
+            let ty = hir_ty::inferred_lambda_parameter_ty(db, formal);
+            if !is_renderable(db, &ty) {
+                continue;
+            }
+            let offset = param.range.start();
+            if !search.matches_hint(offset, InlayHintKind::Type) {
+                continue;
+            }
+            let mut label = Vec::new();
+            push_type_label(db, &ty, &mut label);
+            let canonical = ty.display(db).to_string();
+            // A `(var x)` parameter replaces its `var` token; a concise `(x)`
+            // parameter gets the type inserted before the name.
+            let edits = match var_keyword_range(source, param.range) {
+                Some(range) => vec![InlayHintEdit {
+                    range,
+                    new_text: canonical.clone(),
+                }],
+                None => vec![InlayHintEdit {
+                    range: TextRange::empty(offset),
+                    new_text: format!("{canonical} "),
+                }],
+            };
+            out.push(InlayHintDetail {
+                hint: InlayHint {
+                    offset,
+                    label,
+                    kind: InlayHintKind::Type,
+                    padding_left: false,
+                    padding_right: true,
+                },
+                tooltip: canonical,
+                edits,
+            });
+        }
+    }
 }
 
 // -- method parameter names ----------------------------------------------------------

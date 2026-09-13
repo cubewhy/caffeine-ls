@@ -62,6 +62,10 @@ mod poly;
 mod stmt;
 mod switch;
 
+// The one lambda rule the inlay-hint layer shares with inference: what a
+// parameter written without a type actually has.
+pub use self::lambda::inferred_lambda_parameter_ty;
+
 use self::context::*;
 
 use crate::{

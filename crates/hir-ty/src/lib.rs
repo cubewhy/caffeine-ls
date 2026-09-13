@@ -99,7 +99,7 @@ pub use java::db::TyDatabase;
 pub use java::annotation_nav::{AnnotationTarget, annotation_target};
 pub use java::decl_check::{DeclDiagnostic, class_diagnostics, module_diagnostics};
 pub use java::diagnostics::{DiagLocation, TypeError};
-pub use java::infer::{BodyTypes, ResolvedMember, body_types};
+pub use java::infer::{BodyTypes, ResolvedMember, body_types, inferred_lambda_parameter_ty};
 pub use java::inference::least_upper_bound;
 pub use java::level_check::level_diagnostics;
 pub use java::method::all_methods as all_methods_for_test;

@@ -10,6 +10,7 @@ use hir_expand::{
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::java::{
+    db::TyDatabase,
     diagnostics::TypeError,
     inference::{Constraint, Inference, InvocationPhase},
     method::{InvocationContext, InvocationMode, MethodData, member_set, single_abstract_method},
@@ -18,6 +19,23 @@ use crate::java::{
 };
 
 use super::{InferCtx, ResolvedMember, poly::MethodRefKind};
+
+/// The type of a lambda parameter that declares none ([JLS §15.27.3]): the
+/// single abstract method's formal ([§9.8]), except that a captured
+/// `? super X` wildcard contributes its *lower* bound ([§5.1.10]) — the type
+/// the parameter actually has, whose members it may use.
+///
+/// The hint layer reads this too, so a rendered parameter type cannot drift
+/// from the one inference gave the parameter.
+pub fn inferred_lambda_parameter_ty(db: &dyn TyDatabase, formal: &Ty) -> Ty {
+    let ty = *formal;
+    match ty.kind(db) {
+        TyKind::TypeVar {
+            lower: Some(lower), ..
+        } => *lower,
+        _ => ty,
+    }
+}
 
 impl InferCtx<'_> {
     /// The type of a lambda expression ([JLS §15.27.2]): the target
@@ -69,15 +87,7 @@ impl InferCtx<'_> {
                 // ([§15.27.3]); a captured super wildcard (`Consumer<?
                 // super Element>`) contributes its *lower* bound, whose
                 // members the parameter actually has.
-                None => {
-                    let ty = *formal;
-                    match ty.kind(self.db) {
-                        TyKind::TypeVar {
-                            lower: Some(lower), ..
-                        } => *lower,
-                        _ => ty,
-                    }
-                }
+                None => inferred_lambda_parameter_ty(self.db, formal),
             };
             self.check_lambda_param_duplicate(expr, name, range);
             self.lambda_params
