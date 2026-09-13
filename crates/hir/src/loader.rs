@@ -4,7 +4,10 @@
 use std::{
     fs::File,
     io::Read as _,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        LazyLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use anyhow::Context as _;
@@ -30,6 +33,47 @@ use crate::{
 /// phase is otherwise uncancellable, and a query that holds a database
 /// snapshot blocks the writer until it can unwind.
 const PARSE_CHUNK: usize = 256;
+
+/// Stack per parse-pool worker — the headroom the class parser needs on
+/// generated code, the same budget the server's task pool and its global rayon
+/// pool hand their threads (`caffeine_ls::task_pool::TASK_STACK_SIZE`).
+const PARSE_STACK_SIZE: usize = 16 * 1024 * 1024;
+
+/// The pool archives are parsed on.
+///
+/// Deliberately *not* rayon's global pool. A parse runs inside
+/// [`crate::library_name_index_query`], whose execution every other thread that
+/// needs the same library *blocks* on (`salsa::Running::block_on`) — and those
+/// threads are the global pool's own workers, because `ide::workspace_reports`
+/// and `ide::nav` run one salsa query per chunk on it. A worker that blocks
+/// there cannot run the stolen chunks a `par_extend` needs, and the parse is
+/// precisely what the query it is blocked on is doing: the parse waits for the
+/// pool's workers, the workers wait for the parse, and the workers that went to
+/// sleep are never woken again — the whole server hangs. A pool of its own
+/// makes a query execution independent of the pool its waiters run on.
+static PARSE_POOL: LazyLock<Option<rayon::ThreadPool>> = LazyLock::new(|| {
+    let built = rayon::ThreadPoolBuilder::new()
+        .thread_name(|ix| format!("caffeine-parse-{ix}"))
+        .stack_size(PARSE_STACK_SIZE)
+        .num_threads(rayon::current_num_threads())
+        .build();
+    match built {
+        Ok(pool) => Some(pool),
+        Err(err) => {
+            tracing::warn!("failed to build the archive parse pool; parsing sequentially: {err}");
+            None
+        }
+    }
+});
+
+/// Runs one chunk of a parse on the parse pool, or on the calling thread when
+/// that pool could not be built (a parse must still work, just slower).
+fn on_parse_pool<R: Send>(parse: impl FnOnce() -> R + Send) -> R {
+    match &*PARSE_POOL {
+        Some(pool) => pool.install(parse),
+        None => parse(),
+    }
+}
 
 /// A single parsed declaration, with its fully qualified name.
 pub struct StubRecord {
@@ -89,18 +133,22 @@ pub fn parse_jar(
     // point instead of waiting out the whole parse: a query holding a database
     // snapshot blocks the writer until it unwinds, and a jar of generated
     // classfiles can take seconds. The closure does not capture the check —
-    // only the outer loop calls it, from the thread that owns the snapshot.
+    // only this loop calls it, from the thread that owns the snapshot — and
+    // each chunk runs on the parse pool, never on the pool the query's waiters
+    // run on (see [`PARSE_POOL`]).
     for chunk in class_bytes.chunks(PARSE_CHUNK) {
         cancel_check();
-        records.par_extend(chunk.into_par_iter().filter_map(|bytes| {
-            match ClassParser::new(interner).parse_cafebabe(bytes) {
-                Ok(stub) => Some(StubRecord::new(interner, stub)),
-                Err(_) => {
-                    failed.fetch_add(1, Ordering::Relaxed);
-                    None
+        on_parse_pool(|| {
+            records.par_extend(chunk.into_par_iter().filter_map(|bytes| {
+                match ClassParser::new(interner).parse_cafebabe(bytes) {
+                    Ok(stub) => Some(StubRecord::new(interner, stub)),
+                    Err(_) => {
+                        failed.fetch_add(1, Ordering::Relaxed);
+                        None
+                    }
                 }
-            }
-        }));
+            }));
+        });
     }
     let failed = failed.load(Ordering::Relaxed);
     if failed > 0 {
@@ -147,30 +195,33 @@ pub fn parse_jimage(
     let mut records: Vec<StubRecord> = Vec::with_capacity(names.len());
     // Chunked for the same reason as [`parse_jar`]: the whole JDK image is tens
     // of thousands of classes, and a query that holds a snapshot must be able
-    // to unwind at a bounded point when a write is waiting on it.
+    // to unwind at a bounded point when a write is waiting on it. Each chunk
+    // runs on the parse pool (see [`PARSE_POOL`]).
     for chunk in names.chunks(PARSE_CHUNK) {
         cancel_check();
-        records.par_extend(chunk.into_par_iter().filter_map(|resource| {
-            let (module, path) = resource.get_full_name();
-            if !path.ends_with(".class") {
-                return None;
-            }
-            let lookup = format!("/{module}/{path}");
-            let bytes = jimage.find_resource(&lookup).ok().flatten()?;
-            match ClassParser::new(interner).parse_cafebabe(&bytes) {
-                Ok(stub) => {
-                    let mut record = StubRecord::new(interner, stub);
-                    if matches!(record.stub, ClassOrModuleStub::Class(_)) {
-                        record.module = Some(interner.get_or_intern(&module));
+        on_parse_pool(|| {
+            records.par_extend(chunk.into_par_iter().filter_map(|resource| {
+                let (module, path) = resource.get_full_name();
+                if !path.ends_with(".class") {
+                    return None;
+                }
+                let lookup = format!("/{module}/{path}");
+                let bytes = jimage.find_resource(&lookup).ok().flatten()?;
+                match ClassParser::new(interner).parse_cafebabe(&bytes) {
+                    Ok(stub) => {
+                        let mut record = StubRecord::new(interner, stub);
+                        if matches!(record.stub, ClassOrModuleStub::Class(_)) {
+                            record.module = Some(interner.get_or_intern(&module));
+                        }
+                        Some(record)
                     }
-                    Some(record)
+                    Err(_) => {
+                        failed.fetch_add(1, Ordering::Relaxed);
+                        None
+                    }
                 }
-                Err(_) => {
-                    failed.fetch_add(1, Ordering::Relaxed);
-                    None
-                }
-            }
-        }));
+            }));
+        });
     }
     let failed = failed.load(Ordering::Relaxed);
     if failed > 0 {
@@ -690,6 +741,49 @@ mod tests {
             .find(|r| r.fqn == "com.example.Greeter")
             .expect("greeter should be parsed");
         assert_eq!(greeter.module, None);
+    }
+
+    /// A parse must not wait on rayon's global pool. Its workers are exactly
+    /// the threads that block on the query a parse runs inside (see
+    /// [`PARSE_POOL`]), so a chunk queued there waits for a worker that is
+    /// waiting for the parse — the hang this guards against. Holding every
+    /// worker of the global pool makes the dependency observable.
+    #[test]
+    fn parse_does_not_wait_for_the_global_pool() {
+        use std::sync::{Barrier, mpsc};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let jar_path = Utf8PathBuf::from_path_buf(dir.path().join("test.jar")).unwrap();
+        build_jar(&jar_path);
+
+        // Both barriers count this test as an extra party: `parked` returns
+        // once every worker of the global pool is held, `release` lets them go.
+        let workers = rayon::current_num_threads();
+        let parked = std::sync::Arc::new(Barrier::new(workers + 1));
+        let release = std::sync::Arc::new(Barrier::new(workers + 1));
+        for _ in 0..workers {
+            let parked = std::sync::Arc::clone(&parked);
+            let release = std::sync::Arc::clone(&release);
+            rayon::spawn(move || {
+                parked.wait();
+                release.wait();
+            });
+        }
+        parked.wait();
+
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let interner = ThreadedRodeo::default();
+            let parsed = parse_jar(&jar_path, &interner, &NOOP).map(|records| records.len());
+            let _ = done_tx.send(parsed);
+        });
+        let done = done_rx.recv_timeout(std::time::Duration::from_secs(30));
+        let parsed = done.expect(
+            "the parse never finished while rayon's global pool was held: it is waiting for a \
+             worker that is waiting for the parse to finish",
+        );
+        assert_eq!(parsed.unwrap(), 1);
+        release.wait();
     }
 
     #[test]
