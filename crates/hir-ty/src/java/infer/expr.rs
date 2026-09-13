@@ -711,6 +711,18 @@ impl InferCtx<'_> {
         }
         if let Some(local) = self.lookup_local(&name) {
             self.record_member(expr, ResolvedMember::Local(local));
+            // §8.1.3/[§4.12.4]: a local variable, formal parameter or
+            // exception parameter used but not declared in an *inner class* —
+            // a body of a member of a local class-like declaration
+            // ([JLS §14.3]), or of one of its initializers — must be `final`
+            // or effectively final. The verdict is the enclosing body's, read
+            // through the capture site.
+            if self.captured_non_effectively_final.contains(&local) {
+                self.report(TypeError::VariableMustBeEffectivelyFinalInInnerClass {
+                    expr,
+                    name: name.clone(),
+                });
+            }
             // §8.3.1.2/[§16]: writing a `final` local that is not *blank*
             // (a parameter, a catch/foreach/resource variable, or one with an
             // initializer) is an error; a blank final may still be assigned

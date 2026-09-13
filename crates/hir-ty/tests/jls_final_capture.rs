@@ -192,6 +192,115 @@ class Capture {
 );
 // Green: `y` is never reassigned, so the capture is fine.
 
+// -- §8.1.3/[§4.12.4]: effectively final captures by an *inner class* --------
+
+snapshot!(
+    inner_class_capture_mutated,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Capture.java",
+        "\
+package com.example;
+
+class Capture {
+    void m(int param) {
+        int mutated = 1;
+        mutated = 2;
+        class Inner {
+            int use() {
+                return mutated + param;
+            }
+        }
+        new Inner();
+    }
+}
+",
+    )])
+);
+// Red: `mutated` is captured by the local class `Inner` and reassigned, so it
+// is not effectively final — reported at the use inside the inner class
+// ([§8.1.3]).
+
+snapshot!(
+    inner_class_capture_effectively_final,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Capture.java",
+        "\
+package com.example;
+
+class Capture {
+    int field;
+    void m(int param, final int fixed) {
+        int once = 1;
+        int blank;
+        blank = 2;
+        class Inner {
+            int use() {
+                return once + blank + param + fixed + field;
+            }
+        }
+        new Inner();
+    }
+}
+",
+    )])
+);
+// Green: a local assigned once (declared with an initializer, or blank and
+// assigned once), a parameter, a `final` parameter and an enclosing field are
+// all legal to use from an inner class ([§8.1.3], [§6.5.6.1]).
+
+snapshot!(
+    inner_class_captures_through_two_declarations,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Capture.java",
+        "\
+package com.example;
+
+class Capture {
+    void m(int param) {
+        class Outer {
+            void n() {
+                class Inner {
+                    int use() {
+                        return param;
+                    }
+                }
+                new Inner();
+            }
+        }
+        new Outer().n();
+    }
+}
+",
+    )])
+);
+// Green: a declaration nested in a local class's method still captures the
+// enclosing method's parameter ([§8.1.3]).
+
+snapshot!(
+    inner_class_declaration_not_captured,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Capture.java",
+        "\
+package com.example;
+
+class Capture {
+    void m() {
+        int local = 1;
+        local = 2;
+        class Inner {
+            int use() {
+                return 1;
+            }
+        }
+        new Inner();
+    }
+}
+",
+    )])
+);
+// Green: the local class never *uses* the reassigned local, so no capture is
+// reported (javac: the effectively-final rule applies to uses only).
+
 // §4.12.4: a blank local assigned once on a guarded path is effectively final —
 // the `(runnable = ...) != null` condition assigns it for the first time, and
 // the capturing lambda runs only after that.

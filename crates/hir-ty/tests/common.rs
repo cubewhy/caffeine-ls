@@ -585,6 +585,12 @@ pub fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
         for &child in data.body() {
             walk(tree, child, out);
         }
+        // A local class-like declaration ([JLS §14.3]) is not a member, so it
+        // is not in any `body()`: its own item and its members' are walked
+        // from the declaration whose body declares it.
+        for local in tree.local_types_of(id) {
+            walk(tree, local, out);
+        }
     }
     let mut out = Vec::new();
     for &top in &tree.top {

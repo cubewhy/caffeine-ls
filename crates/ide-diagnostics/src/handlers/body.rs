@@ -87,7 +87,8 @@ pub fn code(diag: &TypeError) -> DiagnosticCode {
         TypeError::CannotAssignToFinalVariable { .. } => {
             DiagnosticCode::Java(CannotAssignToFinalVariable)
         }
-        TypeError::VariableMustBeEffectivelyFinal { .. } => {
+        TypeError::VariableMustBeEffectivelyFinal { .. }
+        | TypeError::VariableMustBeEffectivelyFinalInInnerClass { .. } => {
             DiagnosticCode::Java(VariableMustBeEffectivelyFinal)
         }
         TypeError::VariableAlreadyDefined { .. } => DiagnosticCode::Java(DuplicateDeclaration),
@@ -385,6 +386,10 @@ pub fn message(db: &dyn TyDatabase, diag: &TypeError, bodies: &BodyTree) -> Stri
         }
         VariableMustBeEffectivelyFinal { name, .. } => format!(
             "Variable '{}' used in lambda expression should be final or effectively final",
+            name.as_str()
+        ),
+        VariableMustBeEffectivelyFinalInInnerClass { name, .. } => format!(
+            "Variable '{}' is accessed from within inner class, needs to be final or effectively final",
             name.as_str()
         ),
         VariableAlreadyDefined { name, .. } => {

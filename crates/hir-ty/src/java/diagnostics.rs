@@ -351,6 +351,15 @@ pub enum TypeError {
     /// javac: `local variables referenced from a lambda expression must be
     /// final or effectively final`.
     VariableMustBeEffectivelyFinal { expr: ExprId, name: Name },
+    /// §8.1.3/[§4.12.4]: a local variable, formal parameter or exception
+    /// parameter used but not declared in an *inner class* — a body of a
+    /// member of a local class-like declaration
+    /// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)),
+    /// or of one of its initializers — that is not `final` or effectively
+    /// final. Reported at the use. javac reports the same
+    /// `compiler.err.cant.ref.non.effectively.final.var` with an inner-class
+    /// note (`compiler.misc.inner.cls`).
+    VariableMustBeEffectivelyFinalInInnerClass { expr: ExprId, name: Name },
     /// §6.4: a local variable or parameter declaration re-declares a name
     /// already in scope as a local variable, formal parameter, exception
     /// parameter, for-loop variable or resource variable — a local may not
@@ -533,7 +542,8 @@ impl TypeError {
             | RedundantConstructorCall { expr }
             | CannotReferenceBeforeSuper { expr, .. }
             | CannotAssignToFinalVariable { expr, .. }
-            | VariableMustBeEffectivelyFinal { expr, .. } => DiagLocation::Expr(*expr),
+            | VariableMustBeEffectivelyFinal { expr, .. }
+            | VariableMustBeEffectivelyFinalInInnerClass { expr, .. } => DiagLocation::Expr(*expr),
             VariableAlreadyDefined { local, .. } => DiagLocation::Local(*local),
             LambdaParameterAlreadyDefined { lambda, .. } => DiagLocation::Expr(*lambda),
             CannotInstantiateWildcard { expr, .. } => DiagLocation::Expr(*expr),
@@ -617,6 +627,7 @@ impl TypeError {
             | TypeError::CannotReferenceBeforeSuper { expr, .. }
             | TypeError::CannotAssignToFinalVariable { expr, .. }
             | TypeError::VariableMustBeEffectivelyFinal { expr, .. }
+            | TypeError::VariableMustBeEffectivelyFinalInInnerClass { expr, .. }
             | TypeError::NonStaticMethodFromStaticContext { expr, .. }
             | TypeError::AbstractSuperAccess { expr, .. }
             | TypeError::QualifiedSuperNotEnclosing { expr, .. }

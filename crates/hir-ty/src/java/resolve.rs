@@ -29,7 +29,7 @@ use vfs::FileId;
 use hir_def::java::item_tree::{ImportItem, ItemData, ItemId, ItemTree, TypeParam};
 use hir_def::java::ranges;
 use hir_expand::ast_id_map::AstIdMap;
-use hir_expand::body::{BodyId, BodyTree, StmtData, StmtId};
+use hir_expand::body::{BodyId, BodyTree, LocalId, StmtData, StmtId};
 use hir_expand::name::Name;
 use syntax::stub::{TypeBound, TypeRef};
 
@@ -90,6 +90,14 @@ pub struct LocalDeclSite {
     /// order [`Resolver::type_param`] uses too, so the innermost declaration of
     /// a name wins ([§6.4.1]).
     pub local_types: Vec<ScopedLocalType>,
+    /// The local variables in scope
+    /// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)):
+    /// the enclosing body's parameters (and the captured ones of the
+    /// declarations enclosing it) plus every variable declared before this
+    /// point in the enclosing blocks. A member body of a *local* class may use
+    /// them ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)):
+    /// they are the variables it captures.
+    pub locals: Vec<LocalId>,
 }
 
 impl LocalDeclSite {
@@ -493,12 +501,13 @@ pub(crate) fn local_decl_sites(
     impl Walker<'_> {
         /// Records the scope in force at `id` and walks the declaration's
         /// contents with that scope.
-        fn item(&mut self, id: ItemId, scope: &[ScopedLocalType]) {
-            if !scope.is_empty() {
+        fn item(&mut self, id: ItemId, scope: &[ScopedLocalType], locals: &[LocalId]) {
+            if !scope.is_empty() || !locals.is_empty() {
                 self.map.insert(
                     id,
                     LocalDeclSite {
                         local_types: scope.to_vec(),
+                        locals: locals.to_vec(),
                     },
                 );
             }
@@ -526,22 +535,22 @@ pub(crate) fn local_decl_sites(
                         );
                     }
                     for member in tree.data(id).body().to_vec() {
-                        self.item(member, &inner);
+                        self.item(member, &inner, locals);
                     }
                 }
                 ItemData::Method(data) => {
                     if let Some(body) = data.body() {
-                        self.body(body, scope);
+                        self.body(body, scope, locals);
                     }
                 }
                 ItemData::StaticInit(data) => {
                     if let Some(body) = data.body {
-                        self.body(body, scope);
+                        self.body(body, scope, locals);
                     }
                 }
                 ItemData::InstanceInit(data) => {
                     if let Some(body) = data.body {
-                        self.body(body, scope);
+                        self.body(body, scope, locals);
                     }
                 }
                 // A field's initializer and an enum constant's arguments are
@@ -568,20 +577,35 @@ pub(crate) fn local_decl_sites(
         /// Walks a body's statements: its statement list is the body's own
         /// block, so a declaration made in it is in scope for the rest of the
         /// body.
-        fn body(&mut self, body: BodyId, scope: &[ScopedLocalType]) {
-            let mut current = scope.to_vec();
+        /// Walks a body's statements: its statement list is the body's own
+        /// block, so a declaration made in it is in scope for the rest of the
+        /// body, and the body's parameters are in scope throughout.
+        fn body(&mut self, body: BodyId, scope: &[ScopedLocalType], locals: &[LocalId]) {
+            let mut current_scope = scope.to_vec();
+            let mut current_locals = locals.to_vec();
+            current_locals.extend(self.bodies.body(body).params.iter().copied());
             let stmts = self.bodies.body(body).stmts.clone();
-            self.stmts(&stmts, &mut current);
+            self.stmts(&stmts, &mut current_scope, &mut current_locals);
         }
 
-        fn stmts(&mut self, stmts: &[StmtId], current: &mut Vec<ScopedLocalType>) {
+        fn stmts(
+            &mut self,
+            stmts: &[StmtId],
+            current: &mut Vec<ScopedLocalType>,
+            locals: &mut Vec<LocalId>,
+        ) {
             for stmt in stmts {
-                self.stmt(*stmt, current);
+                self.stmt(*stmt, current, locals);
             }
         }
 
         #[stacksafe]
-        fn stmt(&mut self, stmt: StmtId, current: &mut Vec<ScopedLocalType>) {
+        fn stmt(
+            &mut self,
+            stmt: StmtId,
+            current: &mut Vec<ScopedLocalType>,
+            locals: &mut Vec<LocalId>,
+        ) {
             let bodies = self.bodies;
             match bodies.stmt(stmt) {
                 StmtData::LocalClass { item } => {
@@ -593,63 +617,84 @@ pub(crate) fn local_decl_sites(
                     };
                     current.push(entry);
                     let scope = current.clone();
+                    let enclosing = locals.clone();
                     self.map.insert(
                         *item,
                         LocalDeclSite {
                             local_types: scope.clone(),
+                            locals: enclosing.clone(),
                         },
                     );
-                    self.item(*item, &scope);
+                    self.item(*item, &scope, &enclosing);
                 }
                 StmtData::Block(inner) => {
                     // A nested block is a scope of its own: a declaration made
                     // inside it is not in scope after it, while every
                     // enclosing declaration is ([§6.3]).
                     let mut inner_scope = current.clone();
+                    let mut inner_locals = locals.clone();
                     let inner = inner.clone();
-                    self.stmts(&inner, &mut inner_scope);
+                    self.stmts(&inner, &mut inner_scope, &mut inner_locals);
                 }
                 StmtData::DeclGroup(inner) => {
                     let inner = inner.clone();
-                    self.stmts(&inner, current);
+                    self.stmts(&inner, current, locals);
                 }
-                StmtData::Labeled { stmt, .. } => self.stmt(*stmt, current),
+                StmtData::Decl { local, .. } => locals.push(*local),
+                StmtData::Labeled { stmt, .. } => self.stmt(*stmt, current, locals),
                 StmtData::If { then, els, .. } => {
-                    self.stmt(*then, current);
+                    self.stmt(*then, current, locals);
                     if let Some(els) = els {
-                        self.stmt(*els, current);
+                        self.stmt(*els, current, locals);
                     }
                 }
                 StmtData::While { body, .. }
                 | StmtData::DoWhile { body, .. }
-                | StmtData::ForEach { body, .. }
-                | StmtData::Synchronized { body, .. } => self.stmt(*body, current),
+                | StmtData::Synchronized { body, .. } => self.stmt(*body, current, locals),
+                // §14.14: a loop's own variable — the basic loop's declared
+                // ones and the enhanced loop's — is scoped to the loop, so it
+                // joins the scope only inside it.
+                StmtData::ForEach { var, body, .. } => {
+                    let mut inner_locals = locals.clone();
+                    inner_locals.push(*var);
+                    self.stmt(*body, current, &mut inner_locals);
+                }
                 StmtData::For { init, body, .. } => {
                     let init = init.clone();
-                    self.stmts(&init, current);
-                    self.stmt(*body, current);
+                    let mut inner_locals = locals.clone();
+                    self.stmts(&init, current, &mut inner_locals);
+                    self.stmt(*body, current, &mut inner_locals);
                 }
                 StmtData::Switch { arms, .. } => {
                     // Every arm belongs to the switch *block*, so a
                     // declaration of one arm is in scope in the later ones.
                     let arms: Vec<Vec<StmtId>> = arms.iter().map(|arm| arm.body.clone()).collect();
                     for arm in &arms {
-                        self.stmts(arm, current);
+                        self.stmts(arm, current, locals);
                     }
                 }
                 StmtData::Try {
+                    resources,
                     body,
                     catches,
                     finally,
-                    ..
                 } => {
-                    self.stmt(*body, current);
-                    let catches: Vec<StmtId> = catches.iter().map(|catch| catch.body).collect();
-                    for catch in catches {
-                        self.stmt(catch, current);
+                    // §14.20.3: a resource is scoped to the try statement; a
+                    // catch parameter to its own clause ([§14.20]).
+                    let mut try_locals = locals.clone();
+                    try_locals.extend(resources.iter().map(|resource| resource.local));
+                    self.stmt(*body, current, &mut try_locals);
+                    let catches: Vec<(LocalId, StmtId)> = catches
+                        .iter()
+                        .map(|catch| (catch.param, catch.body))
+                        .collect();
+                    for (param, catch) in catches {
+                        let mut clause_locals = locals.clone();
+                        clause_locals.push(param);
+                        self.stmt(catch, current, &mut clause_locals);
                     }
                     if let Some(finally) = finally {
-                        self.stmt(*finally, current);
+                        self.stmt(*finally, current, locals);
                     }
                 }
                 // Every other statement form contains no block statement
@@ -657,7 +702,6 @@ pub(crate) fn local_decl_sites(
                 // declaration is a *block statement*
                 // ([§14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)).
                 StmtData::Empty
-                | StmtData::Decl { .. }
                 | StmtData::Expr(_)
                 | StmtData::Return(_)
                 | StmtData::Throw(_)
@@ -669,7 +713,6 @@ pub(crate) fn local_decl_sites(
             }
         }
     }
-
     let mut walker = Walker {
         tree,
         bodies,
@@ -677,7 +720,7 @@ pub(crate) fn local_decl_sites(
         map: FxHashMap::default(),
     };
     for &top in &tree.top {
-        walker.item(top, &[]);
+        walker.item(top, &[], &[]);
     }
     walker.map
 }

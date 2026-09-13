@@ -92,6 +92,13 @@ pub struct BodyTypes {
     /// reference reached only by a speculative overload probe has no entry —
     /// see [`InferCtx::record_member`].
     pub resolved: FxHashMap<ExprId, ResolvedMember>,
+    /// The body's own variables that are not effectively final
+    /// ([JLS §4.12.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4)):
+    /// a local assigned after its declarator (or without ever being
+    /// initialized once). A member body of a *local* class
+    /// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+    /// reads this to report the §8.1.3 rule for the variables it captures.
+    pub non_effectively_final: FxHashSet<LocalId>,
 }
 
 /// The declaration a body reference resolves to, as recorded by inference.
@@ -175,6 +182,14 @@ pub(crate) fn body_types_impl(
     let resolver = Resolver::for_item(db, file, &tree, item);
     let access = access_context(db, file, item);
     let enclosing_class = enclosing_self_ty(db, file, &tree, item, &scope, &resolver);
+    // §8.1.3/[§6.5.6.1]: a body of a member of a *local* class-like
+    // declaration ([JLS §14.3]) — or of the local declaration's own
+    // initializers — may use the variables in scope where the declaration was
+    // made: they are the variables it *captures*, with the definite-assignment
+    // state and effectively-final verdict of the body that declares it. The
+    // dependency is one-way (the inner body reads the outer's types and never
+    // the reverse).
+    let captured = capture_site(db, file, &tree, item);
     // §6.3/[§8.1.3]: the chain of enclosing class-like declarations of `item`,
     // outermost first; the first element is the *outermost* one, which
     // [JLS §9.6.4.6]'s same-outermost-class exemption compares.
@@ -231,7 +246,27 @@ pub(crate) fn body_types_impl(
         probing: false,
         bool_outcomes: None,
         rethrow_sets: FxHashMap::default(),
+        captured_non_effectively_final: captured
+            .as_ref()
+            .map(|site| site.non_effectively_final.clone())
+            .unwrap_or_default(),
     };
+    // §8.1.3: "any local variable used but not declared in an inner class must
+    // be definitely assigned before the body of the inner class" — the
+    // captured variables enter the body assigned, and in the outermost scope,
+    // so inference resolves a use of one to the declaration the enclosing body
+    // made.
+    if let Some(captured) = &captured {
+        let names = bodies.clone();
+        for &local in &captured.locals {
+            if let Some(ty) = captured.types.get(&local).copied() {
+                ctx.locals.insert(local, ty);
+            }
+            let name = names.local(local).name.clone();
+            ctx.scopes[0].insert(name, local);
+            ctx.flow.definite.insert(local);
+        }
+    }
     // §8.3.1.2/[§16]: seed the body's already-assigned set with the blank
     // `final` fields that *earlier* initializer bodies of the same class —
     // which run before this one — may have assigned ([§8.3.2], [§8.6],
@@ -526,15 +561,19 @@ pub(crate) fn body_types_impl(
     // this covers a local reassigned after the capturing lambda too, and only
     // the *final* inference pass's body-tree participates (each `body_types`
     // invocation re-runs it).
-    if let Some(body_id) = body {
-        let (mutated, captures) = flow::effective_final_scan(&ctx.tree, body_id);
-        let mut reported: FxHashSet<(Name, ExprId)> = FxHashSet::default();
-        for (local, name, expr) in captures {
-            if mutated.contains(&local) && reported.insert((name.clone(), expr)) {
-                ctx.report(TypeError::VariableMustBeEffectivelyFinal { expr, name });
+    let non_effectively_final = match body {
+        Some(body_id) => {
+            let (mutated, captures) = flow::effective_final_scan(&ctx.tree, body_id);
+            let mut reported: FxHashSet<(Name, ExprId)> = FxHashSet::default();
+            for (local, name, expr) in captures {
+                if mutated.contains(&local) && reported.insert((name.clone(), expr)) {
+                    ctx.report(TypeError::VariableMustBeEffectivelyFinal { expr, name });
+                }
             }
+            mutated
         }
-    }
+        None => FxHashSet::default(),
+    };
     Some(BodyTypes {
         body,
         exprs: ctx.types,
@@ -542,7 +581,77 @@ pub(crate) fn body_types_impl(
         diagnostics: ctx.diagnostics,
         field_touched: ctx.flow.field_touched,
         resolved: ctx.resolved,
+        non_effectively_final,
     })
+}
+
+/// The variables a body of a *local* class-like declaration may use
+/// ([JLS §8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)):
+/// the locals in scope where the declaration was made, with the types the
+/// enclosing body gave them and the ones that body did not keep effectively
+/// final ([§4.12.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4)).
+struct CaptureSite {
+    locals: Vec<LocalId>,
+    types: FxHashMap<LocalId, Ty>,
+    non_effectively_final: FxHashSet<LocalId>,
+}
+
+/// The capture site of the body owned by `item`, when `item` is nested in a
+/// local class-like declaration ([JLS §14.3]): the scope map records the
+/// variables in scope where that declaration was made, and the enclosing body
+/// — the one that declares the local declaration — their types and
+/// effectively-final verdict. `None` for a body outside any local declaration,
+/// and for a local declaration's own item (only its *members'* bodies capture
+/// the enclosing variables, [§8.1.3]).
+fn capture_site(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+    item: ItemId,
+) -> Option<CaptureSite> {
+    let local = enclosing_local_decl(tree, item)?;
+    // The body that declares the local declaration ([`ItemTree::parent_of`]).
+    let outer_owner = tree.parent_of(local)?;
+    let site = crate::java::db::local_decl_sites_query(db, db.file_text(file))
+        .get(&item)
+        .cloned()
+        .unwrap_or_default();
+    if site.locals.is_empty() {
+        return None;
+    }
+    let outer = body_types(db, file, outer_owner)?;
+    let mut types = FxHashMap::default();
+    let mut non_effectively_final = FxHashSet::default();
+    for &local in &site.locals {
+        if let Some(ty) = outer.locals.get(&local) {
+            types.insert(local, *ty);
+        }
+        if outer.non_effectively_final.contains(&local) {
+            non_effectively_final.insert(local);
+        }
+    }
+    Some(CaptureSite {
+        locals: site.locals,
+        types,
+        non_effectively_final,
+    })
+}
+
+/// The *local* class-like declaration the item is nested in, if any: the
+/// innermost enclosing one
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)).
+/// Its members' bodies — and the bodies of its own field initializers and
+/// initializer blocks — are the ones that may use the variables in scope where
+/// it was declared ([§8.1.3]).
+fn enclosing_local_decl(tree: &hir_def::java::item_tree::ItemTree, item: ItemId) -> Option<ItemId> {
+    let mut current = tree.parent_of(item);
+    while let Some(id) = current {
+        if tree.is_local_type(id) {
+            return Some(id);
+        }
+        current = tree.parent_of(id);
+    }
+    None
 }
 
 /// argument lists, where no blank `final` field write is legal.
@@ -672,6 +781,10 @@ struct InferCtx<'a> {
     /// reference expression ([`ResolvedMember`]); the read side is
     /// [`BodyTypes::resolved`].
     resolved: FxHashMap<ExprId, ResolvedMember>,
+    /// The captured variables of the enclosing declaration that its own body
+    /// did not keep effectively final ([JLS §8.1.3], [§4.12.4]): a use of one
+    /// inside this body is reported. See [`capture_site`].
+    captured_non_effectively_final: FxHashSet<LocalId>,
     /// [`Ty::error`]; the diagnostics layer collects them per file.
     diagnostics: Vec<TypeError>,
     /// The lexical scope stack ([JLS §6.3]): innermost first.

@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Capture.java:
+package com.example;
+
+class Capture {
+    void m(int param) {
+        int mutated = 1;
+        mutated = 2;
+        class Inner {
+            int use() {
+                return mutated + param;
+            }
+        }
+        new Inner();
+    }
+}
+
+method use(): int
+  @8:23..8:30 'mutated': variable-must-be-effectively-final: Variable 'mutated' is accessed from within inner class, needs to be final or effectively final

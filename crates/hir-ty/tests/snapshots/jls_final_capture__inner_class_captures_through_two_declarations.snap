@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Capture.java:
+package com.example;
+
+class Capture {
+    void m(int param) {
+        class Outer {
+            void n() {
+                class Inner {
+                    int use() {
+                        return param;
+                    }
+                }
+                new Inner();
+            }
+        }
+        new Outer().n();
+    }
+}
