@@ -252,7 +252,9 @@ fn goto_implicit_field_read() {
 #[test]
 fn goto_method_call() {
     let fixture = test_file(SRC);
-    assert_snapshot!("goto_method_call", render_nav(&fixture, "add(1, 2)"));
+    // The offset is on the invocation's own name (`add` of `add(1, 2)`) — an
+    // argument is a nested expression, whose own resolution is its own.
+    assert_snapshot!("goto_method_call", render_nav_at(&fixture, "add(1, 2)", 0));
 }
 
 #[test]
@@ -287,6 +289,78 @@ fn hover_over_class_declaration() {
     let fixture = test_file(SRC);
     // The class declaration's signature.
     assert_snapshot!("hover_class_declaration", render_nav(&fixture, "class Nav"));
+}
+
+// -- anchoring: a resolution belongs to the expression the offset is inside --------
+
+/// The shapes an anchor decides: every reference below is nested inside an
+/// invocation or a creation, so a walk that ascends past the innermost
+/// expression answers the enclosing member — a declaration whose own name is
+/// not written where the offset is.
+const ANCHOR_SRC: &str = r#"package com.example;
+
+class Holder {
+    static Holder label = null;
+}
+
+class Example {
+    void foo(Runnable r) {}
+}
+
+class Entry {}
+
+class Client {
+    static void consume(Holder h) {}
+
+    void take(Entry value) {}
+
+    void run(String[] args, Entry other) {
+        consume(Holder.label);
+        var made = new Example();
+        this.take((Entry) other);
+        take(other);
+        class Local {}
+        interface Contract {}
+        new Local();
+    }
+}
+"#;
+
+#[test]
+fn goto_and_hover_anchor_on_the_innermost_expression() {
+    let fixture = test_file(ANCHOR_SRC);
+    assert_snapshot!(
+        "goto_and_hover_anchor_on_the_innermost_expression",
+        render_nav_many(
+            &fixture,
+            &[
+                // §6.5.6.1 written through the *type* the field is declared by
+                // ([§15.11.1]): the field read is an argument, and the
+                // enclosing invocation names `consume`, not the field — its
+                // resolution is about a name that is not written at the offset.
+                ("label)", 0),
+                // §15.16: a cast's type as an invocation's argument. The cast
+                // is the expression at the offset; the invocation's resolution
+                // is its method.
+                ("Entry) other", 0),
+                // §15.12.1/[§6.5.6.1]: an argument written as a name names what
+                // that name denotes — here the parameter `other`, not `take`.
+                ("other);", 0),
+                // The invocation's own name, for contrast.
+                ("take(other);", 0),
+                // §14.4/[§6.5.2]: a declared type renders its *simple* name,
+                // as a declaration's signature does.
+                ("made", 0),
+                ("args,", 0),
+                // §14.3: a local class-like declaration is in no symbol index
+                // ([§6.7] gives it no canonical name) — its own name is what a
+                // hover there asks about, not the enclosing method's signature.
+                ("Local {}", 0),
+                ("Contract {}", 0),
+                ("new Local()", 0),
+            ],
+        )
+    );
 }
 
 // -- documentation: the hovered declaration's doc comment, rendered ---------------
@@ -664,10 +738,12 @@ const MANY_MEMBER_GOTO: &[(&str, usize, &str, &str)] = &[
 ];
 
 /// The references of [`MANY_SRC`] that name no declaration: a name nothing
-/// declares. (A local's own declarator is not a *reference* either, but
-/// goto-definition on its own name still answers with the declaration — see
-/// [`goto_own_declaration_name`].)
-const MANY_MEMBER_NONE: &[(&str, usize)] = &[("nope + 1", 0)];
+/// declares, and an argument that is a literal — an expression the offset is
+/// *inside* names only itself, so the enclosing invocation, whose name is not
+/// written there, does not answer for it. (A local's own declarator is not a
+/// *reference* either, but goto-definition on its own name still answers with
+/// the declaration — see [`goto_own_declaration_name`].)
+const MANY_MEMBER_NONE: &[(&str, usize)] = &[("nope + 1", 0), ("1);", 0)];
 
 #[test]
 fn goto_reference_matrix() {

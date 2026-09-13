@@ -49,8 +49,12 @@ SECOND
 --- goto @"q.count"#0 ---
 q @999..1000
 --- hover ---
-com.example.Base
+Base
 --- goto @"nope + 1"#0 ---
 
 --- hover ---
 <error>
+--- goto @"1);"#0 ---
+
+--- hover ---
+int

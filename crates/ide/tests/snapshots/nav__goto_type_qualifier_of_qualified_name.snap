@@ -21,4 +21,4 @@ ON
 --- goto @"shadow.FIELD"#0 ---
 shadow @135..141
 --- hover ---
-com.example.Main
+Main

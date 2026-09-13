@@ -907,7 +907,8 @@ impl Ty {
     /// ([JLS §3.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.8)),
     /// so a `$`-containing name keeps its `$`. Every non-reference kind
     /// renders identically to [`Ty::display`]. Used where javac renders the
-    /// *simple* class name: LSP symbol signatures and diagnostic messages.
+    /// *simple* class name: LSP symbol signatures, hover signatures and
+    /// diagnostic messages.
     pub fn display_simple<'a>(&'a self, db: &'a dyn TyDatabase) -> TySimpleDisplay<'a> {
         TySimpleDisplay { ty: self, db }
     }

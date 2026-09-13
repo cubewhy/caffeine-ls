@@ -2494,6 +2494,212 @@ class Nav {
     insta::assert_json_snapshot!("hover_class_declaration", response);
 }
 
+/// The source of [`test_hover_and_definition_anchor`]: one file carrying every
+/// reference shape a hover or a definition has to answer for. Each is nested
+/// inside an invocation, so an answer taken from the *enclosing* member would
+/// name a declaration that is not written where the offset is.
+const ANCHOR_MAIN: &str = r#"package org.example;
+
+/**
+ * The entrypoint class
+ */
+public class Main {
+    private static final String field = "";
+
+    static void main(String[] args) {
+        System.out.println(Main.field);
+        var e = new Example();
+        e.foo(() -> {
+            System.out.println((Object)"hello world");
+        });
+
+        Class<?> cls = String.class;
+
+        record R(String a) {}
+
+        R r = new R("");
+        r.a();
+
+        class C {}
+
+        new C();
+
+        interface I {}
+
+        System.out.println(args);
+    }
+}
+"#;
+
+const ANCHOR_EXAMPLE: &str = r#"package org.example;
+
+public class Example {
+    public void foo(Runnable r) {
+        r.run();
+    }
+}
+"#;
+
+/// The hover and definition responses of every reported shape, end to end over
+/// stdio and against a *real* JDK (`JAVA_HOME`), which the `Object` cast, the
+/// `Class` local and the `println` invocation all resolve against.
+///
+/// The probes are `(label, needle, offset inside the needle)`: the offset lands
+/// on one token — a member identifier, a name, a type in a cast, a literal —
+/// and the snapshot pins both the signature a hover answers with and the
+/// declaration a definition resolves to. Hovers are reduced to their
+/// *signature* and definitions to their *file and covered identifier*
+/// ([`hover_signature`], [`definition_summary`]): documentation and line
+/// numbers belong to whatever the installed JDK happens to ship.
+#[test]
+fn test_hover_and_definition_anchor() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let java_home = std::env::var("JAVA_HOME")
+        .ok()
+        .filter(|p| std::path::Path::new(p).join("lib/modules").is_file());
+    let Some(java_home) = java_home else {
+        eprintln!("skipping: JAVA_HOME is unset or ships no lib/modules");
+        return;
+    };
+
+    let lsp = create_lsp_with_config(json!({ "java_home": java_home }), |root| {
+        std::fs::create_dir_all(root.join("src/main/java/org/example")).unwrap();
+        std::fs::write(
+            root.join("src/main/java/org/example/Main.java"),
+            ANCHOR_MAIN,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/main/java/org/example/Example.java"),
+            ANCHOR_EXAMPLE,
+        )
+        .unwrap();
+    });
+
+    let path = "/src/main/java/org/example/Main.java";
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let probes: &[(&str, &str, usize)] = &[
+        // §15.11.1: a static field read through the class that declares it, as
+        // an argument of a library invocation — the field's declaration, not
+        // `println`'s.
+        ("field-read", "Main.field", 7),
+        // §14.4: a local declared with `var`, whose inferred type is a
+        // workspace class — its simple name.
+        ("var-local", "var e = new Example()", 4),
+        // §15.16: a cast's type as an argument; a definition jumps to the type,
+        // and the enclosing invocation does not answer for it.
+        ("cast-type", "(Object)\"hello world\"", 3),
+        // §3.10.5: a string literal names no declaration; a hover answers its
+        // type, a definition nothing.
+        ("string-literal", "(Object)\"hello world\"", 12),
+        // §15.8.2: a local of the parameterized `Class` type — simple names,
+        // type argument included.
+        ("class-local", "Class<?> cls = String.class", 11),
+        // §8.10.3: a record component's accessor — the component's type.
+        ("record-component", "r.a()", 2),
+        // §14.3: a local class and a local interface — their own names, which
+        // no symbol index carries.
+        ("local-class", "class C {}", 6),
+        ("local-interface", "interface I {}", 10),
+        // §10.1: an array-typed parameter, on its use and on its declaration.
+        ("parameter-use", "System.out.println(args)", 20),
+        ("parameter-declaration", "String[] args)", 9),
+    ];
+
+    let mut observed = Vec::new();
+    for &(label, needle, inner) in probes {
+        let (line, character) = position_inside(ANCHOR_MAIN, needle, inner);
+        let params = json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        });
+        let hover = lsp.request("textDocument/hover", params.clone());
+        let definition = lsp.request("textDocument/definition", params);
+        observed.push(json!({
+            "at": label,
+            "hover": hover_signature(&hover),
+            "definition": definition_summary(&definition),
+        }));
+    }
+
+    insta::assert_json_snapshot!("hover_and_definition_anchor", observed);
+}
+
+/// The LSP position of byte `inner` inside the first `needle` of `text`
+/// (ASCII fixture files only).
+fn position_inside(text: &str, needle: &str, inner: usize) -> (u32, u32) {
+    position_at(text, text.find(needle).expect("needle in text") + inner)
+}
+
+/// The signature a hover answers with: the first line inside the Java code
+/// fence of its Markdown value (`class Object`, `e: Example`, `String[]`), or
+/// `null` when the hover answered nothing. The documentation under the fence
+/// comes from the declaration's own source — a platform class ships different
+/// prose from one JDK release to the next — so the signature is the stable,
+/// client-facing part a snapshot can hold.
+fn hover_signature(hover: &serde_json::Value) -> Option<String> {
+    let value = hover["contents"]["value"].as_str()?;
+    let fenced = value.strip_prefix("```java\n")?;
+    let (signature, _) = fenced.split_once("\n```")?;
+    Some(signature.to_owned())
+}
+
+/// A definition answer as one `<file name>: <covered text>` line per location,
+/// or `null` when nothing resolved. The directory a location lives in is a temp
+/// path (a workspace root, or the cache the server materializes platform
+/// sources into) and a platform source's line numbers move between JDK
+/// releases; the file's name and the identifier its range covers do not.
+fn definition_summary(definition: &serde_json::Value) -> serde_json::Value {
+    let Some(locations) = definition.as_array() else {
+        return serde_json::Value::Null;
+    };
+    let lines: Vec<String> = locations
+        .iter()
+        .map(|location| {
+            let uri: lsp_types::Uri =
+                serde_json::from_value(location["uri"].clone()).expect("a location uri");
+            let path = uri.to_file_path().expect("a file uri");
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let covered = range_text(&text, &location["range"]);
+            format!("{name}: {covered}")
+        })
+        .collect();
+    json!(lines)
+}
+
+/// The source text an LSP range of `text` covers.
+fn range_text(text: &str, range: &serde_json::Value) -> String {
+    let at = |value: &serde_json::Value| value.as_u64().expect("a position") as usize;
+    let lines: Vec<&str> = text.lines().collect();
+    let (start_line, start_char) = (
+        at(&range["start"]["line"]),
+        at(&range["start"]["character"]),
+    );
+    let (end_line, end_char) = (at(&range["end"]["line"]), at(&range["end"]["character"]));
+    let mut covered = String::new();
+    for line in start_line..=end_line {
+        let text = lines.get(line).copied().unwrap_or_default();
+        let from = if line == start_line { start_char } else { 0 };
+        let to = if line == end_line {
+            end_char
+        } else {
+            text.len()
+        };
+        covered.push_str(&text[from..to]);
+        if line != end_line {
+            covered.push('\n');
+        }
+    }
+    covered
+}
+
 /// Re-issues `workspace/diagnostic` until `pred` holds, returning the accepted
 /// raw report (the server cancels queries when a write lands mid-request).
 fn request_workspace_until(

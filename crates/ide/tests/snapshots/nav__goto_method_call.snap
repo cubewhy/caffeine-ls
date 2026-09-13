@@ -1,8 +1,8 @@
 ---
 source: crates/ide/tests/nav.rs
-expression: "render_nav(&fixture, \"add(1, 2)\")"
+expression: "render_nav_at(&fixture, \"add(1, 2)\", 0)"
 ---
---- goto @"add(1, 2)" ---
+--- goto @"add(1, 2)"#0 ---
 add @134..137
 --- hover ---
 add(int, int): int

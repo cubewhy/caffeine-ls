@@ -1,0 +1,74 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: observed
+---
+[
+  {
+    "at": "field-read",
+    "hover": "field: String",
+    "definition": [
+      "Main.java: field"
+    ]
+  },
+  {
+    "at": "var-local",
+    "hover": "e: Example",
+    "definition": [
+      "Main.java: e"
+    ]
+  },
+  {
+    "at": "cast-type",
+    "hover": "class Object",
+    "definition": [
+      "Object.java: Object"
+    ]
+  },
+  {
+    "at": "string-literal",
+    "hover": "String",
+    "definition": null
+  },
+  {
+    "at": "class-local",
+    "hover": "cls: Class<?>",
+    "definition": [
+      "Main.java: cls"
+    ]
+  },
+  {
+    "at": "record-component",
+    "hover": "String",
+    "definition": [
+      "Main.java: a"
+    ]
+  },
+  {
+    "at": "local-class",
+    "hover": "class C",
+    "definition": [
+      "Main.java: C"
+    ]
+  },
+  {
+    "at": "local-interface",
+    "hover": "interface I",
+    "definition": [
+      "Main.java: I"
+    ]
+  },
+  {
+    "at": "parameter-use",
+    "hover": "String[]",
+    "definition": [
+      "Main.java: args"
+    ]
+  },
+  {
+    "at": "parameter-declaration",
+    "hover": "args: String[]",
+    "definition": [
+      "Main.java: args"
+    ]
+  }
+]

@@ -1,0 +1,40 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture,\n&[(\"label)\", 0), (\"Entry) other\", 0), (\"other);\", 0), (\"take(other);\", 0),\n(\"made\", 0), (\"args,\", 0), (\"Local {}\", 0), (\"Contract {}\", 0),\n(\"new Local()\", 0),],)"
+---
+--- goto @"label)"#0 ---
+label @55..60
+--- hover ---
+label: Holder
+--- goto @"Entry) other"#0 ---
+Entry @125..130
+--- hover ---
+class Entry
+--- goto @"other);"#0 ---
+other @253..258
+--- hover ---
+Entry
+--- goto @"take(other);"#0 ---
+take @197..201
+--- hover ---
+take(Entry): void
+--- goto @"made"#0 ---
+made @305..309
+--- hover ---
+made: Example
+--- goto @"args,"#0 ---
+args @241..245
+--- hover ---
+args: String[]
+--- goto @"Local {}"#0 ---
+Local @396..401
+--- hover ---
+class Local
+--- goto @"Contract {}"#0 ---
+Contract @423..431
+--- hover ---
+interface Contract
+--- goto @"new Local()"#0 ---
+Local @396..401
+--- hover ---
+class Local

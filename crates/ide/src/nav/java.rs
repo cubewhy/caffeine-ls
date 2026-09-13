@@ -161,11 +161,12 @@ fn resolutions(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolut
     // A reference the recorded table does not cover: a lambda parameter (the
     // body IR carries it as a name/range pair, not a local), a local of a body
     // the type layer could not infer, or the enum constant of a `case` label
-    // ([§14.11.1] labels are checked before inference).
-    for expr in exprs_at(&bodies, offset) {
-        let ExprData::Var(name) = bodies.expr(expr).clone() else {
-            continue;
-        };
+    // ([§14.11.1] labels are checked before inference). Only a name written at
+    // the offset is a candidate, so the enclosing invocation of an argument is
+    // never answered from here.
+    if let Some(expr) = innermost_expr_at(&bodies, offset)
+        && let ExprData::Var(name) = bodies.expr(expr).clone()
+    {
         // §6.4/[§15.27.2]: a lambda parameter shadows every enclosing local of
         // the same name throughout its body, so it is looked up first.
         if let Some(resolution) = lambda_param_resolution(file, &bodies, offset, &name) {
@@ -824,43 +825,43 @@ fn targets(db: &RootDatabase, resolutions: Vec<Resolution>) -> Vec<NavigationTar
 }
 
 /// The resolutions inference recorded for the reference at `offset`, from the
-/// innermost expression that names a reference. See
-/// [`hir_ty::BodyTypes::resolved`]: an expression inference never resolved has
-/// no entry, and then no *outer* expression has one for this reference either —
-/// the enclosing invocation or field access names a different declaration.
+/// innermost expression there. See [`hir_ty::BodyTypes::resolved`]: an
+/// expression inference never resolved has no entry, and then no *outer*
+/// expression has one for this reference either — the enclosing invocation or
+/// field access names a different declaration ([`innermost_expr_at`]).
 fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
     let bodies = hir::file_body_tree(db, file);
     let tree = hir::file_item_tree(db, file);
     let items = body_items_at(db, file, &tree, offset);
-    for expr in exprs_at(&bodies, offset) {
-        if !names_a_reference(&bodies, expr) {
-            continue;
-        }
-        // §15.9: the resolution of a class instance creation is the
-        // *constructor* it selected — a member the classfile names `<init>`
-        // ([JVMS §4.6]) and the class declares under its own name, never a
-        // method that happens to carry that name.
-        let reference = reference_at(&bodies, expr);
-        for &item in &items {
-            let Some(types) = hir_ty::body_types(db, file, item) else {
-                continue;
-            };
-            let Some(member) = types.resolved.get(&expr) else {
-                continue;
-            };
-            return match member {
-                hir_ty::ResolvedMember::Local(local) => match bodies.local_name_range(*local) {
-                    Some(range) => vec![Resolution::Variable {
-                        file,
-                        range,
-                        name: bodies.local(*local).name.as_str().to_owned(),
-                    }],
-                    None => Vec::new(),
-                },
-                member => member_resolution(db, file, member, reference),
-            };
-        }
+    let Some(expr) = innermost_expr_at(&bodies, offset) else {
         return Vec::new();
+    };
+    if !names_a_reference(&bodies, expr) {
+        return Vec::new();
+    }
+    // §15.9: the resolution of a class instance creation is the
+    // *constructor* it selected — a member the classfile names `<init>`
+    // ([JVMS §4.6]) and the class declares under its own name, never a
+    // method that happens to carry that name.
+    let reference = reference_at(&bodies, expr);
+    for &item in &items {
+        let Some(types) = hir_ty::body_types(db, file, item) else {
+            continue;
+        };
+        let Some(member) = types.resolved.get(&expr) else {
+            continue;
+        };
+        return match member {
+            hir_ty::ResolvedMember::Local(local) => match bodies.local_name_range(*local) {
+                Some(range) => vec![Resolution::Variable {
+                    file,
+                    range,
+                    name: bodies.local(*local).name.as_str().to_owned(),
+                }],
+                None => Vec::new(),
+            },
+            member => member_resolution(db, file, member, reference),
+        };
     }
     Vec::new()
 }
@@ -1431,29 +1432,34 @@ enum Keyword {
     Super,
 }
 
-/// The classpath resolutions of the innermost navigable expression at
-/// `offset`, innermost first: the first expression with a resolution wins.
+/// The classpath resolution of the reference written at `offset` ([JLS §6.5]):
+/// the declaration the innermost expression there denotes, resolved through the
+/// classpath. The resolution an expression carries is about its own name,
+/// never about an argument or a type inside it, so the walk never ascends past
+/// the innermost expression ([`innermost_expr_at`]).
 fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
     let bodies = hir::file_body_tree(db, file);
     let tree = hir::file_item_tree(db, file);
     let items = body_items_at(db, file, &tree, offset);
     let item = items.first().copied();
 
-    for expr_id in exprs_at(&bodies, offset) {
-        let resolution = match bodies.expr(expr_id).clone() {
-            ExprData::New { ty, .. } | ExprData::ClassLit(ty) => {
-                type_ref_name(&ty).map_or_else(Vec::new, |name| {
-                    type_resolution(
-                        db,
-                        file,
-                        item,
-                        &Name::new(&name),
-                        bodies.expr_name_range(expr_id).map(|range| range.start()),
-                    )
-                })
-            }
-            ExprData::InstanceOf { ty, .. } => ty
-                .as_ref()
+    let Some(expr_id) = innermost_expr_at(&bodies, offset) else {
+        return Vec::new();
+    };
+    match bodies.expr(expr_id).clone() {
+        ExprData::New { ty, .. } | ExprData::ClassLit(ty) => {
+            type_ref_name(&ty).map_or_else(Vec::new, |name| {
+                type_resolution(
+                    db,
+                    file,
+                    item,
+                    &Name::new(&name),
+                    bodies.expr_name_range(expr_id).map(|range| range.start()),
+                )
+            })
+        }
+        ExprData::InstanceOf { ty, .. } => {
+            ty.as_ref()
                 .and_then(|t| type_ref_name(t))
                 .map_or_else(Vec::new, |name| {
                     type_resolution(
@@ -1463,156 +1469,146 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                         &Name::new(&name),
                         bodies.expr_name_range(expr_id).map(|range| range.start()),
                     )
-                }),
-            // A method invocation, with an implicit `this` receiver when
-            // `receiver` is empty ([JLS §15.12.1]). The member is keyed on the
-            // recorded resolution ([§15.12.2]): without one the walk has no
-            // signature to select by, and an unresolved invocation is not
-            // guessed at by argument count.
-            ExprData::MethodCall { receiver, name, .. } => {
-                let body = items
-                    .iter()
-                    .find_map(|&item| hir_ty::body_types(db, file, item));
-                let params = match body.as_deref().and_then(|body| body.resolved.get(&expr_id)) {
-                    Some(hir_ty::ResolvedMember::Method(method)) => Params::Recorded {
-                        types: &method.params,
-                        descriptor: method.descriptor.as_ref(),
-                    },
-                    _ => Params::Unknown,
-                };
-                match receiver {
-                    Some(receiver) => receiver_ty(db, file, &items, receiver)
-                        .map_or_else(Vec::new, |ty| {
-                            member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, params)
-                        }),
-                    None => enclosing_class_receiver(db, file, &tree, offset)
-                        .map_or_else(Vec::new, |ty| {
-                            member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, params)
-                        }),
-                }
+                })
+        }
+        // A method invocation, with an implicit `this` receiver when
+        // `receiver` is empty ([JLS §15.12.1]). The member is keyed on the
+        // recorded resolution ([§15.12.2]): without one the walk has no
+        // signature to select by, and an unresolved invocation is not
+        // guessed at by argument count.
+        ExprData::MethodCall { receiver, name, .. } => {
+            let body = items
+                .iter()
+                .find_map(|&item| hir_ty::body_types(db, file, item));
+            let params = match body.as_deref().and_then(|body| body.resolved.get(&expr_id)) {
+                Some(hir_ty::ResolvedMember::Method(method)) => Params::Recorded {
+                    types: &method.params,
+                    descriptor: method.descriptor.as_ref(),
+                },
+                _ => Params::Unknown,
+            };
+            match receiver {
+                Some(receiver) => receiver_ty(db, file, &items, receiver)
+                    .map_or_else(Vec::new, |ty| {
+                        member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, params)
+                    }),
+                None => enclosing_class_receiver(db, file, &tree, offset)
+                    .map_or_else(Vec::new, |ty| {
+                        member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, params)
+                    }),
             }
-            // A field access, with an implicit receiver when `target` is empty.
-            ExprData::FieldAccess { target, name } => match target {
-                Some(target) => receiver_ty(db, file, &items, target).map_or_else(Vec::new, |ty| {
-                    member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, Params::Unknown)
-                }),
-                None => {
-                    enclosing_class_receiver(db, file, &tree, offset).map_or_else(Vec::new, |ty| {
-                        member_in_hierarchy(
-                            db,
-                            file,
-                            ty,
-                            name.as_str(),
-                            Use::Field,
-                            Params::Unknown,
-                        )
-                    })
-                }
-            },
-            // A simple name. [JLS §6.5.2] reclassifies a contextually
-            // ambiguous name: an expression name — a local, parameter or field
-            // in scope — first, a type name otherwise, and a package name
-            // last. A local or a field of the name is already answered from
-            // the recorded table ([`recorded_reference`]), and a statically
-            // imported member ([§7.5.4]) is an expression name whose declaring
-            // type has to be probed here.
-            //
-            // The type-name step is what answers the *qualifier* of a
-            // qualified name: a bare leading segment lowers to a `Var` (a
-            // `LITERAL` identifier), never to a `NamePath` — `Main` in
-            // `Main.field`, `System` in `System.out` — and inference records
-            // the *member* the qualified access names on the enclosing
-            // `FieldAccess`/`MethodCall`, not the type the qualifier denotes.
-            ExprData::Var(name) => {
-                let resolver = hir_ty::Resolver::for_file(&tree);
-                let mut found = Vec::new();
-                let mut pending = Vec::new();
-                for (owner, member) in resolver.static_import_owners(name.as_str()) {
-                    match member_of_named_owner(
-                        db,
-                        file,
-                        item,
-                        &owner,
-                        &member,
-                        Use::Field,
-                        Params::Unknown,
-                    ) {
-                        MemberLookup::Found(resolution) => {
-                            found = vec![resolution];
-                            break;
-                        }
-                        // A pending owner is only reported after every owner
-                        // was probed.
-                        MemberLookup::PendingSource(source) => pending.push(source),
-                        MemberLookup::Absent => {}
+        }
+        // A field access, with an implicit receiver when `target` is empty.
+        ExprData::FieldAccess { target, name } => match target {
+            Some(target) => receiver_ty(db, file, &items, target).map_or_else(Vec::new, |ty| {
+                member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, Params::Unknown)
+            }),
+            None => enclosing_class_receiver(db, file, &tree, offset).map_or_else(Vec::new, |ty| {
+                member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, Params::Unknown)
+            }),
+        },
+        // A simple name. [JLS §6.5.2] reclassifies a contextually
+        // ambiguous name: an expression name — a local, parameter or field
+        // in scope — first, a type name otherwise, and a package name
+        // last. A local or a field of the name is already answered from
+        // the recorded table ([`recorded_reference`]), and a statically
+        // imported member ([§7.5.4]) is an expression name whose declaring
+        // type has to be probed here.
+        //
+        // The type-name step is what answers the *qualifier* of a
+        // qualified name: a bare leading segment lowers to a `Var` (a
+        // `LITERAL` identifier), never to a `NamePath` — `Main` in
+        // `Main.field`, `System` in `System.out` — and inference records
+        // the *member* the qualified access names on the enclosing
+        // `FieldAccess`/`MethodCall`, not the type the qualifier denotes.
+        ExprData::Var(name) => {
+            let resolver = hir_ty::Resolver::for_file(&tree);
+            let mut found = Vec::new();
+            let mut pending = Vec::new();
+            for (owner, member) in resolver.static_import_owners(name.as_str()) {
+                match member_of_named_owner(
+                    db,
+                    file,
+                    item,
+                    &owner,
+                    &member,
+                    Use::Field,
+                    Params::Unknown,
+                ) {
+                    MemberLookup::Found(resolution) => {
+                        found = vec![resolution];
+                        break;
                     }
-                }
-                if !found.is_empty() {
-                    found
-                } else if !pending.is_empty() {
-                    // An unloaded owner may still declare the member, an
-                    // expression name that would win over a type of the same
-                    // name; materialize it and decide on the re-run.
-                    pending.into_iter().map(Resolution::Pending).collect()
-                } else {
-                    // §6.5.2/§6.5.5.1: with no expression name in scope, the
-                    // name is reclassified as a type name when one is in scope.
-                    // A package name (and a type variable) resolves to no
-                    // declaration, so it stays unanswered.
-                    type_resolution(
-                        db,
-                        file,
-                        item,
-                        &name,
-                        bodies.expr_name_range(expr_id).map(|range| range.start()),
-                    )
+                    // A pending owner is only reported after every owner
+                    // was probed.
+                    MemberLookup::PendingSource(source) => pending.push(source),
+                    MemberLookup::Absent => {}
                 }
             }
-            // A qualified name in expression position: `Outer.Inner`,
-            // `Type.field`. [JLS §6.5.2] reclassifies a qualified ambiguous
-            // name through its prefix, so the whole text is tried as a type
-            // reference first, and its last segment is then read as a member
-            // of the class its prefix denotes.
-            ExprData::NamePath(name) => {
-                let as_type = type_resolution(
+            if !found.is_empty() {
+                found
+            } else if !pending.is_empty() {
+                // An unloaded owner may still declare the member, an
+                // expression name that would win over a type of the same
+                // name; materialize it and decide on the re-run.
+                pending.into_iter().map(Resolution::Pending).collect()
+            } else {
+                // §6.5.2/§6.5.5.1: with no expression name in scope, the
+                // name is reclassified as a type name when one is in scope.
+                // A package name (and a type variable) resolves to no
+                // declaration, so it stays unanswered.
+                type_resolution(
                     db,
                     file,
                     item,
                     &name,
                     bodies.expr_name_range(expr_id).map(|range| range.start()),
-                );
-                if !as_type.is_empty() {
-                    as_type
-                } else {
-                    match name.as_str().rsplit_once('.') {
-                        Some((prefix, member)) => {
-                            match member_of_named_owner(
-                                db,
-                                file,
-                                item,
-                                &Name::new(prefix),
-                                member,
-                                Use::Field,
-                                Params::Unknown,
-                            ) {
-                                MemberLookup::Found(resolution) => vec![resolution],
-                                MemberLookup::PendingSource(source) => {
-                                    vec![Resolution::Pending(source)]
-                                }
-                                MemberLookup::Absent => Vec::new(),
+                )
+            }
+        }
+        // A qualified name in expression position: `Outer.Inner`,
+        // `Type.field`. [JLS §6.5.2] reclassifies a qualified ambiguous
+        // name through its prefix, so the whole text is tried as a type
+        // reference first, and its last segment is then read as a member
+        // of the class its prefix denotes.
+        ExprData::NamePath(name) => {
+            let as_type = type_resolution(
+                db,
+                file,
+                item,
+                &name,
+                bodies.expr_name_range(expr_id).map(|range| range.start()),
+            );
+            if !as_type.is_empty() {
+                as_type
+            } else {
+                match name.as_str().rsplit_once('.') {
+                    Some((prefix, member)) => {
+                        match member_of_named_owner(
+                            db,
+                            file,
+                            item,
+                            &Name::new(prefix),
+                            member,
+                            Use::Field,
+                            Params::Unknown,
+                        ) {
+                            MemberLookup::Found(resolution) => vec![resolution],
+                            MemberLookup::PendingSource(source) => {
+                                vec![Resolution::Pending(source)]
                             }
+                            MemberLookup::Absent => Vec::new(),
                         }
-                        None => Vec::new(),
                     }
+                    None => Vec::new(),
                 }
             }
-            _ => Vec::new(),
-        };
-        if !resolution.is_empty() {
-            return resolution;
         }
+        // The name written at the offset belongs to an expression that names
+        // no declaration (a literal, a `this`/`super` keyword, a cast, an
+        // operator): nothing here, and nothing *enclosing* it either.
+        _ => Vec::new(),
     }
-    Vec::new()
 }
 
 /// The type of the expression `receiver`, read from the body that owns it.
@@ -2316,7 +2312,7 @@ fn library_member_signature(
                 .iter()
                 .find(|field| interner.resolve(&field.name) == name)?;
             let field_ty = hir_ty::ty_from_library(db, &field.field_type);
-            let ty = field_ty.display(db);
+            let ty = field_ty.display_simple(db);
             format!("{ty} {name}")
         }
         Use::Method | Use::Constructor => {
@@ -2336,7 +2332,7 @@ fn library_member_signature(
                 Use::Constructor => String::new(),
                 _ => {
                     let return_ty = hir_ty::ty_from_library(db, &method.return_type);
-                    format!("{} ", return_ty.display(db))
+                    format!("{} ", return_ty.display_simple(db))
                 }
             };
             let params: Vec<String> = method
@@ -2345,7 +2341,7 @@ fn library_member_signature(
                 .enumerate()
                 .map(|(index, param)| {
                     let param_ty = hir_ty::ty_from_library(db, &param.param_type);
-                    let ty = param_ty.display(db);
+                    let ty = param_ty.display_simple(db);
                     let name = param
                         .name
                         .map(|symbol| interner.resolve(&symbol).to_owned())
@@ -2458,7 +2454,6 @@ fn type_ref_name(tyref: &syntax::stub::TypeRef<hir_expand::name::Name>) -> Optio
 pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     let tree = hir::file_item_tree(db, file);
     let bodies = hir::file_body_tree(db, file);
-    let symbols = hir::file_symbols(db, file);
 
     // A resolved reference outranks everything below: what the user is asking
     // about is the declaration the reference names — its header *and* its
@@ -2552,7 +2547,7 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
                 && let Some(ty) = body.exprs.get(&expr_id)
             {
                 return Some(HoverInfo {
-                    value: ty.display(db).to_string(),
+                    value: ty.display_simple(db).to_string(),
                     docs: None,
                 });
             }
@@ -2570,7 +2565,7 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
                     && let Some(ty) = body.locals.get(&LocalId(id))
                 {
                     return Some(HoverInfo {
-                        value: format!("{}: {}", local.name.as_str(), ty.display(db)),
+                        value: format!("{}: {}", local.name.as_str(), ty.display_simple(db)),
                         // A local is not a declaration the file's doc-comment
                         // index carries.
                         docs: None,
@@ -2589,7 +2584,7 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
     }
 
     // A declaration's signature.
-    render_symbol_decl(db, file, &tree, &symbols, offset)
+    render_symbol_decl(db, file, &tree, offset)
 }
 
 /// Every item whose declaration range contains `offset`, innermost (smallest
@@ -2689,24 +2684,29 @@ fn declaration_hover(db: &RootDatabase, file: FileId, item: ItemId) -> Option<Ho
 /// The rendered signature of the declaration the offset falls inside: a
 /// method's `name(params): ret`, a field's `name: ty`, a class-like
 /// declaration's `kind name` — and the declaration's documentation.
+///
+/// The candidates come from the item tree, innermost first ([`items_at`]), not
+/// from the file's symbol index: a *local* class-like declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// has no canonical name ([§6.7]) and is deliberately absent from that index
+/// (`hir::file_symbols`), yet its own name is exactly what a hover on it asks
+/// about.
 fn render_symbol_decl(
     db: &RootDatabase,
     file: FileId,
     tree: &ItemTree,
-    symbols: &[hir::SourceSymbol],
     offset: TextSize,
 ) -> Option<HoverInfo> {
-    let symbol = symbols
-        .iter()
-        .filter(|s| item_range(db, file, tree, s.item).is_some_and(|range| range.contains(offset)))
-        .min_by_key(|s| {
-            let range = item_range(db, file, tree, s.item).unwrap_or_default();
-            range.end() - range.start()
-        })?;
-    Some(HoverInfo {
-        value: item_header(db, file, tree, symbol.item)?,
-        docs: crate::docs::hover_docs(db, file, symbol.item),
-    })
+    for item in items_at(db, file, tree, offset) {
+        let Some(value) = item_header(db, file, tree, item) else {
+            continue;
+        };
+        return Some(HoverInfo {
+            value,
+            docs: crate::docs::hover_docs(db, file, item),
+        });
+    }
+    None
 }
 
 /// The kind of member or type a reference resolves to.
@@ -2735,4 +2735,19 @@ fn exprs_at(bodies: &BodyTree, offset: TextSize) -> Vec<ExprId> {
         .collect();
     enclosing.sort_by_key(|(len, _)| *len);
     enclosing.into_iter().map(|(_, id)| id).collect()
+}
+
+/// The innermost expression at `offset` — the expression the offset is inside
+/// of — or `None` when no expression is written there at all (a declaration's
+/// modifiers, a brace, a semicolon).
+///
+/// A resolution belongs to the expression that carries the reference, and is
+/// never handed up to an enclosing one. The offset on an argument, a cast's
+/// type or a receiver lands inside a *nested* expression, whose own resolution
+/// is about that nested name; the enclosing invocation's or creation's
+/// resolution is about a name that is not written where the offset is, so it
+/// must not answer for it. [`exprs_at`] is innermost first, so the resolution
+/// walks stop here instead of ascending.
+fn innermost_expr_at(bodies: &BodyTree, offset: TextSize) -> Option<ExprId> {
+    exprs_at(bodies, offset).first().copied()
 }

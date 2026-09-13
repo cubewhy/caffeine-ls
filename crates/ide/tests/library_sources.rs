@@ -613,14 +613,15 @@ fn hover_shows_the_source_documentation() {
 /// §15.12.2.2: the hovered signature is the overload the invocation selected,
 /// matched by the classfile descriptor the resolution recorded — not the first
 /// declaration of the same parameter count (`Loader(int size)` is declared
-/// before `Loader(Root root)`).
+/// before `Loader(Root root)`). The signature renders class names simple, the
+/// way a Java declaration reads.
 #[test]
 fn hover_shows_the_overload_the_invocation_selected() {
     let fixture = fixture(&["com/example/Loader.java", "com/example/Root.java"], false);
 
     assert_eq!(
         fixture.hover("loader.load").as_deref(),
-        Some("void load(com.example.Root root)")
+        Some("void load(Root root)")
     );
 }
 
