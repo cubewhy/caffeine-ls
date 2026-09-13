@@ -23,12 +23,16 @@ mod change;
 pub mod delta;
 pub mod docs;
 pub mod highlight;
+pub mod inlay_hints;
 pub mod nav;
 pub mod symbols;
 pub mod workspace;
 
 pub use change::Change;
 pub use highlight::{Highlight, HlMods, HlTag};
+pub use inlay_hints::{
+    InlayHint, InlayHintDetail, InlayHintEdit, InlayHintKind, InlayHintLabelPart, InlayHintsConfig,
+};
 pub use nav::{HoverInfo, LibraryFileRef, NavigationTarget, ReferenceTarget};
 pub use symbols::{DocumentSymbol, WorkspaceSymbolSummary};
 pub use workspace::WorkspaceReport;
@@ -329,5 +333,31 @@ impl Analysis {
     /// `textDocument/semanticTokens` requests, sorted by range start.
     pub fn highlight(&self, file_id: FileId) -> Cancellable<Vec<Highlight>> {
         self.with_db(|db| highlight::highlight(db, file_id))
+    }
+
+    /// The inlay hints of the file whose offset `range` contains, sorted by
+    /// offset — the model behind the LSP `textDocument/inlayHint` request (see
+    /// [`crate::inlay_hints`]).
+    pub fn inlay_hints(
+        &self,
+        file_id: FileId,
+        range: rowan::TextRange,
+        config: &InlayHintsConfig,
+    ) -> Cancellable<Vec<InlayHint>> {
+        self.with_db(|db| inlay_hints::inlay_hints(db, file_id, range, config))
+    }
+
+    /// The detail of the one hint a resolve names — the tooltip, the label
+    /// parts' declarations and the edits accepting the hint applies. `None`
+    /// when no hint is anchored at `(offset, kind)` any more (see
+    /// [`crate::inlay_hints::inlay_hint_resolve`]).
+    pub fn inlay_hint_resolve(
+        &self,
+        file_id: FileId,
+        offset: rowan::TextSize,
+        kind: InlayHintKind,
+        config: &InlayHintsConfig,
+    ) -> Cancellable<Option<InlayHintDetail>> {
+        self.with_db(|db| inlay_hints::inlay_hint_resolve(db, file_id, offset, kind, config))
     }
 }

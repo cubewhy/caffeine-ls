@@ -1,0 +1,6 @@
+---
+source: crates/ide/tests/inlay_hints.rs
+expression: render_hints(&hints)
+---
+Type @157 : Text
+Type @224 : Text
