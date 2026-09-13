@@ -1711,3 +1711,92 @@ class Client {
         "the declaration and the field read are in `Point.java`"
     );
 }
+
+/// The shapes a record component's declaration has to keep answering: a
+/// *variable-arity* component ([JLS §8.4.1]) — whose field and accessor carry
+/// the array type, and which a compact constructor reads as its implicit
+/// parameter ([§8.10.4]) — a component of a record nested in another class,
+/// and a local that shadows a component's name ([JLS §6.4.1]), which keeps its
+/// own declaration.
+const RECORD_COMPONENT_SHAPES_SRC: &str = r#"package com.example;
+
+record Group(String... names) {
+    Group {
+        this.names = names;
+    }
+
+    String first() {
+        String names = "local";
+        return names;
+    }
+}
+
+class Outer {
+    record Inner(int n) {
+        int read() {
+            return n;
+        }
+    }
+}
+"#;
+
+#[test]
+fn goto_record_component_shapes() {
+    let fixture = test_file(RECORD_COMPONENT_SHAPES_SRC);
+    // A varargs component: its own name, the field `this.names` writes, and the
+    // implicit parameter a compact constructor reads.
+    assert_targets_name(&fixture, "names", 0, "String... names)", "names");
+    assert_targets_name(&fixture, "names", 1, "String... names)", "names");
+    assert_targets_name(&fixture, "names", 2, "String... names)", "names");
+    // A local of the same name shadows it ([JLS §6.4.1]): only the names that
+    // denote the *component* reach it.
+    assert_targets_name(&fixture, "names;", 1, "String names = \"local\";", "names");
+    // A record nested in another class declares its components the same way.
+    assert_targets_name(&fixture, "n)", 0, "n)", "n");
+    assert_targets_name(&fixture, "n;", 0, "n)", "n");
+}
+
+/// Two records may declare components of the same name: each component is its
+/// own declaration, so neither query reports the other record's sites.
+#[test]
+fn record_components_are_not_conflated() {
+    let fixture = test_file(
+        r#"package com.example;
+
+record A(int v) {
+    int read() {
+        return v;
+    }
+}
+
+record B(int v) {
+    int read() {
+        return v;
+    }
+}
+"#,
+    );
+    for occurrence in [0, 1] {
+        assert_eq!(
+            reference_texts(&fixture, "v)", occurrence, true),
+            vec!["v", "v"],
+            "occurrence {occurrence}: the declaration and the field read of one record"
+        );
+        assert_eq!(
+            reference_texts(&fixture, "v)", occurrence, false),
+            vec!["v"],
+            "occurrence {occurrence}: the field read alone"
+        );
+    }
+    // Each record's component is a declaration of its own.
+    let first = goto_target(&fixture, "v)", 0);
+    let second = goto_target(&fixture, "v)", 1);
+    assert_ne!(
+        first.range, second.range,
+        "two components, two declarations"
+    );
+    assert_eq!(
+        &fixture.text[usize::from(second.range.start())..usize::from(second.range.end())],
+        "v"
+    );
+}
