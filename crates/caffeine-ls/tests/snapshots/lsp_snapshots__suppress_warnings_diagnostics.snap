@@ -1,0 +1,22 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: items
+---
+[
+  {
+    "range": {
+      "start": {
+        "line": 13,
+        "character": 37
+      },
+      "end": {
+        "line": 13,
+        "character": 47
+      }
+    },
+    "severity": 2,
+    "code": "compiler.warn.unchecked.assign",
+    "source": "caffeine-ls",
+    "message": "Unchecked assignment: 'List' to 'List<String>'"
+  }
+]

@@ -3529,6 +3529,119 @@ exit 0
     insta::assert_json_snapshot!("deprecation_diagnostics", items);
 }
 
+/// The `@SuppressWarnings` vocabulary and scope of
+/// [JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)
+/// end to end: the *same* unchecked conversion, once inside an
+/// `@SuppressWarnings("unchecked")` method and once inside a plain one, leaves
+/// exactly one item — the plain method's. Suppression is invisible on the
+/// wire: a warning an enclosing declaration names is not an item at all, so a
+/// client that only reads the report cannot tell it was ever produced.
+///
+/// Requires a real JDK (`JAVA_HOME`), like the deprecation test:
+/// `java.util.Collections.EMPTY_LIST` is a raw `List` *field* of the platform —
+/// the raw use is declared by the classfile, not by this file — and reading it
+/// into a `List<String>` is the unchecked conversion javac reports as
+/// `warning: [unchecked] unchecked conversion`.
+#[test]
+fn test_suppress_warnings_diagnostics() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let java_home = std::env::var("JAVA_HOME")
+        .ok()
+        .filter(|p| std::path::Path::new(p).join("lib/modules").is_file());
+    let Some(java_home) = java_home else {
+        eprintln!("skipping: JAVA_HOME is unset or ships no lib/modules");
+        return;
+    };
+
+    let shim_dir = tempfile::tempdir().unwrap();
+    let shim = shim_dir.path().join("gradle");
+    std::fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{{"workspace_name":"demo","projects":[{{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[],"test_classpath":[],"java_release":21,"java_language_version":"21","java_home":"{java_home}"}}]}}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#
+        ),
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this guard
+    // (it is declared first, so it drops last).
+    let java_home_before = std::env::var_os("JAVA_HOME");
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    unsafe {
+        std::env::set_var("JAVA_HOME", &java_home);
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", shim_dir.path().display(), path_var),
+        );
+    }
+    struct EnvGuard(Option<std::ffi::OsString>);
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: as above.
+            unsafe {
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("JAVA_HOME", previous),
+                    None => std::env::remove_var("JAVA_HOME"),
+                }
+            }
+        }
+    }
+    let _guard = EnvGuard(java_home_before);
+
+    let lsp = create_lsp_with_config(json!({ "java_home": java_home }), |root| {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::create_dir_all(root.join("src/main/java/demo")).unwrap();
+        std::fs::write(
+            root.join("src/main/java/demo/Main.java"),
+            "package demo;\n\nimport java.util.Collections;\nimport java.util.List;\n\nclass Main {\n    @SuppressWarnings(\"unchecked\")\n    void a() {\n        List<String> l = Collections.EMPTY_LIST;\n        l.size();\n    }\n\n    void b() {\n        List<String> l = Collections.EMPTY_LIST;\n        l.size();\n    }\n}\n",
+        )
+        .unwrap();
+    });
+
+    let path = "/src/main/java/demo/Main.java";
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let report = lsp.pull_document_diagnostics(path);
+    let lsp_types::DocumentDiagnosticReport::RelatedFullDocumentDiagnosticReport(report) = report
+    else {
+        panic!("expected a full diagnostic report, got: {report:?}");
+    };
+    let items: Vec<serde_json::Value> = report
+        .full_document_diagnostic_report
+        .items
+        .iter()
+        .map(|item| serde_json::to_value(item).unwrap())
+        .collect();
+
+    // Exactly the unsuppressed sibling's conversion: `a`'s is named by the
+    // annotation on it, so no item stands for it.
+    assert_eq!(
+        items.len(),
+        1,
+        "expected only the unsuppressed conversion: {items:?}"
+    );
+    assert_eq!(items[0]["code"], "compiler.warn.unchecked.assign");
+    assert_eq!(items[0]["severity"], 2);
+    assert_eq!(
+        items[0]["message"],
+        "Unchecked assignment: 'List' to 'List<String>'"
+    );
+
+    insta::assert_json_snapshot!("suppress_warnings_diagnostics", items);
+}
+
 /// The annotation element-pair diagnostics
 /// ([JLS §9.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.1))
 /// end to end: every code the LSP publishes is javac's own key, and every
