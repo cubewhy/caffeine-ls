@@ -1,0 +1,24 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+First paragraph.
+
+Second **bold** and *italic* and `code`.
+   
+After a break.
+
+- one
+- two
+
+- **term** definition
+
+> quoted
+
+# Heading
+
+---
+
+
+ See [the site](https://example.com/a?x=1&y=2) and [this].
+ unknown elements

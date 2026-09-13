@@ -1,0 +1,12 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+```
+
+ if (a < b) {
+     run();  // <b>not markup</b>
+ }
+ 
+```
+ An example.

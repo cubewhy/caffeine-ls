@@ -1,0 +1,17 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+The description.
+
+    an indented code block
+
+```java
+/** Hello World! */
+public class HelloWorld {}
+```
+
+**Parameters:**
+- `name` — the name
+
+**Returns:** the greeting

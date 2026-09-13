@@ -1,0 +1,5 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+There is no end

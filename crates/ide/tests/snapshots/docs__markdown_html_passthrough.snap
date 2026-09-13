@@ -1,0 +1,5 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+Use <b>bold</b> and `<T>` and &amp; as written.

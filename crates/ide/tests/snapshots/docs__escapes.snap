@@ -1,0 +1,7 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+@escaped at the start
+ *star at the start
+ and @mid-line text

@@ -1,0 +1,23 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+> **Deprecated.** Use `#add(long, long)` instead.
+
+Adds two numbers.
+
+**Parameters:**
+- `a` — the first number
+- `T` — the type of the numbers
+
+**Returns:** the sum
+
+**Throws:**
+- `ArithmeticException` — if the sum overflows
+- `IllegalStateException` — if it is not
+
+**See Also:**
+- #add(long, long)
+- [the manual](https://example.com)
+
+**Since:** 1.2

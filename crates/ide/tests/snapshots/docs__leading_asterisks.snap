@@ -1,0 +1,6 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+This is a comment.
+   Indented by two spaces.

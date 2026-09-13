@@ -1,0 +1,9 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "format!(\"named:\\n{named}\\n\\nunnamed:\\n{unnamed}\")"
+---
+named:
+The maximum, `MAX`, of `MIN`.
+
+unnamed:
+The maximum, {@value}, of `MIN`.

@@ -1,0 +1,5 @@
+---
+source: crates/ide/tests/docs.rs
+expression: "ide::docs::render_javadoc(raw)"
+---
+`A<B>C` 3 \< 4 `java.util.List` a list runs `MAX` A summary. `java.home`    \{\@unknown something\} `java.util.Map`

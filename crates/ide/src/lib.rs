@@ -21,6 +21,7 @@ use vfs::FileId;
 
 mod change;
 pub mod delta;
+pub mod docs;
 pub mod highlight;
 pub mod nav;
 pub mod symbols;
