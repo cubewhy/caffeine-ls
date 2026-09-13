@@ -1,0 +1,10 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: response
+---
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```kotlin\nfun distance(): Int\n```\n\nHow far the point is from the origin."
+  }
+}

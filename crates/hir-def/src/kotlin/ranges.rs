@@ -13,7 +13,7 @@
 //! ranges) land with the Kotlin navigation layer; this module currently
 //! carries what the symbol surface and the snapshot renderer need.
 
-use rowan::{NodeOrToken, SyntaxNode, TextRange};
+use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
 use syntax::SourceFile;
 use syntax::kotlin::{Lang, SyntaxKind as K};
 
@@ -196,4 +196,70 @@ fn variable_name_range(node: &SyntaxNode<Lang>, name: Option<&str>) -> Option<Te
         return Some(token.text_range());
     }
     declarations.first().and_then(&range_of)
+}
+
+/// The source range of the KDoc comment documenting the declaration item `id`,
+/// if it has one.
+///
+/// KDoc is the `KDOC` token ([KLS
+/// `syntax-and-grammar.html`](https://kotlinlang.org/spec/syntax-and-grammar.html)
+/// carries the comment forms; the token kind is `kotlin-syntax`'s) immediately
+/// before the declaration, past whitespace and line breaks — and, because a
+/// declaration node starts at its modifiers, before its annotations too. The
+/// comment's text is sliced out of the file's `FileText` by this range: the
+/// index stores no copy of it.
+pub fn item_doc_range(
+    map: &AstIdMap,
+    source: &SourceFile,
+    tree: &KotlinItemTree,
+    id: ItemId,
+) -> Option<TextRange> {
+    let node = item_node(map, source, tree, id)?;
+    preceding_doc(&node)
+}
+
+/// The `KDOC` token immediately preceding `node`, skipping the whitespace and
+/// line breaks between them; any other preceding token (`{`, a modifier that
+/// stayed outside the declaration, a comma) means the declaration is not
+/// documented.
+///
+/// The walk is over the *element* stream, not over sibling nodes: the parser
+/// leaves trailing trivia inside the node that precedes a declaration — a KDoc
+/// after a `packageHeader` is a child of that header — and an empty node
+/// (`IMPORT_LIST`) may sit between them. `SyntaxToken::prev_token` stays inside
+/// one parent, so the walk ascends itself ([`previous_element`]).
+fn preceding_doc(node: &SyntaxNode<Lang>) -> Option<TextRange> {
+    let mut current: NodeOrToken<SyntaxNode<Lang>, SyntaxToken<Lang>> = node.clone().into();
+    loop {
+        match previous_element(&current)? {
+            // A node before the declaration: only its *last* token matters
+            // (the trailing trivia the parser left inside it). An empty node —
+            // the `IMPORT_LIST` of a file that imports nothing — is stepped
+            // over: it writes no token at all.
+            NodeOrToken::Node(node) => match node.last_token() {
+                Some(last) => current = last.into(),
+                None => current = node.into(),
+            },
+            NodeOrToken::Token(token) => match token.kind() {
+                K::WHITESPACE | K::NEWLINE => current = token.into(),
+                K::KDOC => return Some(token.text_range()),
+                _ => return None,
+            },
+        }
+    }
+}
+
+/// The element immediately before `element` in document order, ascending to
+/// the nearest ancestor that has a preceding sibling.
+fn previous_element(
+    element: &NodeOrToken<SyntaxNode<Lang>, SyntaxToken<Lang>>,
+) -> Option<NodeOrToken<SyntaxNode<Lang>, SyntaxToken<Lang>>> {
+    let mut current = element.clone();
+    loop {
+        if let Some(previous) = current.prev_sibling_or_token() {
+            return Some(previous);
+        }
+        let parent = current.parent()?;
+        current = parent.into();
+    }
 }

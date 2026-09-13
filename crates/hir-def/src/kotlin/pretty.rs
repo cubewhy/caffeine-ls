@@ -386,11 +386,134 @@ fn render_item_type(ty: &ItemTypeRef) -> String {
     render_type(&ty.ty)
 }
 
-/// Renders a declaration-side type reference the way a Kotlin client spells
-/// it (`String?`, `List<out Number>`, `Function1<Int, String>`), for a consumer
-/// outside the snapshot surface (the IDE's document symbols).
+/// Renders a declaration-side type reference the way a Kotlin *client* spells
+/// it — the hover, outline and inlay-hint surface.
+///
+/// The spellings are the ones kotlinc 2.4.20 reports, checked with the
+/// `val probe: String = <expr>` probe:
+///
+/// | type | kotlinc |
+/// |---|---|
+/// | `Int?` | `actual 'Int?'` |
+/// | `(Int) -> String` | `actual '(Int) -> String'` |
+/// | `List<out Number>` | `actual 'List<out Number>'` |
+/// | `Map<Int, Int>` | `actual 'Map<Int, Int>'` |
+///
+/// A function type is spelled in its *sugar* form rather than as the
+/// classifier the item tree stores: `kotlin.FunctionN<P1, …, PN, R>` is
+/// `(P1, …, PN) -> R` ([KLS
+/// `type-system.html#function-types`](https://kotlinlang.org/spec/type-system.html#function-types)),
+/// and N is the number of parameters, so the last argument is the return type.
+///
+/// A recorded deviation: an *extension* function type, which kotlinc spells
+/// `String.(Int) -> Boolean`, renders in the parameter form
+/// (`(String, Int) -> Boolean`), because the lowering puts the receiver first
+/// and the item tree carries no marker for it (see
+/// [`crate::kotlin::lower::walk`]).
 pub fn display_type(ty: &ItemTypeRef) -> String {
-    render_type(&ty.ty)
+    render_client_type(&ty.ty)
+}
+
+/// [`display_type`]'s recursive rendering.
+fn render_client_type(ty: &TypeRef<Name>) -> String {
+    match ty {
+        TypeRef::Reference { name, generic_args } if is_function_classifier(name) => {
+            let (params, ret) = generic_args.split_at(generic_args.len().saturating_sub(1));
+            let params = render_join(params.iter().map(render_client_type));
+            let ret = match ret.first() {
+                Some(ret) => render_client_type(ret),
+                None => "Unit".to_owned(),
+            };
+            format!("({params}) -> {ret}")
+        }
+        TypeRef::Reference { name, generic_args } => {
+            if generic_args.is_empty() {
+                name.to_string()
+            } else {
+                format!(
+                    "{name}<{}>",
+                    render_join(generic_args.iter().map(render_client_type))
+                )
+            }
+        }
+        TypeRef::Nullable(inner) => format!("{}?", render_client_type(inner)),
+        TypeRef::DefinitelyNonNull(inner) => format!("{} & Any", render_client_type(inner)),
+        TypeRef::Wildcard { bound } => match bound {
+            None => "*".to_owned(),
+            Some(bound) => match &**bound {
+                TypeBound::Upper(ty) => format!("out {}", render_client_type(ty)),
+                TypeBound::Lower(ty) => format!("in {}", render_client_type(ty)),
+            },
+        },
+        other => render_type(other),
+    }
+}
+
+/// Whether a reference name is a `kotlin.FunctionN` classifier — the names the
+/// function-type lowering produces.
+fn is_function_classifier(name: &Name) -> bool {
+    let simple = name.as_str().rsplit('.').next().unwrap_or(name.as_str());
+    match simple.strip_prefix("Function") {
+        Some(digits) => !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()),
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(ty: TypeRef<Name>) -> ItemTypeRef {
+        ItemTypeRef::synthetic(ty)
+    }
+
+    #[test]
+    fn client_spellings_match_kotlinc() {
+        let named = |name: &str| TypeRef::Reference {
+            name: Name::new(name),
+            generic_args: Vec::new(),
+        };
+        // `Int?`
+        assert_eq!(
+            display_type(&item(TypeRef::Nullable(Box::new(named("Int"))))),
+            "Int?"
+        );
+        // `(Int) -> String`
+        assert_eq!(
+            display_type(&item(TypeRef::Reference {
+                name: Name::new("Function1"),
+                generic_args: vec![named("Int"), named("String")],
+            })),
+            "(Int) -> String"
+        );
+        // `List<out Number>`
+        assert_eq!(
+            display_type(&item(TypeRef::Reference {
+                name: Name::new("List"),
+                generic_args: vec![TypeRef::Wildcard {
+                    bound: Some(Box::new(TypeBound::Upper(named("Number")))),
+                }],
+            })),
+            "List<out Number>"
+        );
+        // `Map<Int, Int>` — and a `Function`-prefixed name that is not a
+        // classifier stays a reference.
+        assert_eq!(
+            display_type(&item(TypeRef::Reference {
+                name: Name::new("Map"),
+                generic_args: vec![named("Int"), named("Int")],
+            })),
+            "Map<Int, Int>"
+        );
+        assert_eq!(
+            display_type(&item(TypeRef::Reference {
+                name: Name::new("Functionx"),
+                generic_args: vec![named("Int")],
+            })),
+            "Functionx<Int>"
+        );
+        assert_eq!(display_type(&item(named("Unit"))), "Unit");
+    }
 }
 
 /// Renders a Kotlin source type: `T?`, `out T`, `*`, `Function2<A, B, R>`.

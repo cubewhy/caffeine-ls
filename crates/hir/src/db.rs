@@ -956,20 +956,53 @@ fn file_docs_query(db: &dyn HirDatabase, file: FileText) -> Arc<DocIndex> {
             entries: Box::new([]),
         });
     }
-    let tree = java_item_tree(db, file_id);
+    let tree = file_item_tree(db, file_id);
     let map = hir_def::db::ast_id_map(db, file_id, language);
     let parse = parse(db, file_id, language);
     let source = parse.syntax_node(language);
     let mut entries = Vec::new();
-    for &top in &tree.top {
-        collect_file_docs(map, &source, &tree, top, &mut entries);
+    match &*tree {
+        FileItemTree::Java(tree) => {
+            for &top in &tree.top {
+                collect_file_docs(map, &source, tree, top, &mut entries);
+            }
+        }
+        FileItemTree::Kotlin(tree) => {
+            for &top in &tree.top {
+                collect_kotlin_docs(map, &source, tree, top, &mut entries);
+            }
+        }
+        FileItemTree::Empty(_) => {}
     }
-    // The walk is in source order; item ids are not (local type declarations
+    // The walk is in source order; item ids are not (local declarations
     // allocate after the members of their declaring body).
     entries.sort_unstable_by_key(|&(item, _)| item);
     Arc::new(DocIndex {
         entries: entries.into_boxed_slice(),
     })
+}
+
+/// Collects the KDoc range of `id` and of every declaration nested in it — its
+/// members and a property's accessors — mirroring the item walk the IDE's
+/// outline uses.
+fn collect_kotlin_docs(
+    map: &AstIdMap,
+    source: &SourceFile,
+    tree: &KotlinItemTree,
+    id: ItemId,
+    out: &mut Vec<(ItemId, TextRange)>,
+) {
+    if let Some(range) = hir_def::kotlin::ranges::item_doc_range(map, source, tree, id) {
+        out.push((id, range));
+    }
+    if let KotlinItemData::Property(property) = tree.data(id) {
+        for &accessor in &property.accessors {
+            collect_kotlin_docs(map, source, tree, accessor, out);
+        }
+    }
+    for &child in tree.data(id).body() {
+        collect_kotlin_docs(map, source, tree, child, out);
+    }
 }
 
 /// Collects the doc-comment range of `id` and of every declaration nested in

@@ -12,6 +12,6 @@ package com.example
 PARSE_ERRORS:
 <none>
 ITEM_TREE:
-file (kotlin)
+file (kotlin) package com.example
 file annotation @1..24
 file annotation @24..50

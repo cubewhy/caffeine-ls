@@ -1,0 +1,10 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: response
+---
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "```kotlin\nclass Point\n```\n\nA point in the plane.\n\n**Parameters:**\n- `x` the horizontal coordinate"
+  }
+}

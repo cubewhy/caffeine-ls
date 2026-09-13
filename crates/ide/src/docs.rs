@@ -8,6 +8,7 @@
 //! Markdown an editor renders.
 
 mod javadoc;
+mod kdoc;
 
 use hir::hir_def::java::item_tree::ItemId;
 use ide_db::base_db::LanguageKind;
@@ -32,14 +33,15 @@ pub fn render_javadoc_of(raw: &str, owner: &str) -> String {
 /// `None` when it has no doc comment, or when the language's arm has none.
 pub(crate) fn hover_docs(db: &RootDatabase, file: FileId, item: ItemId) -> Option<String> {
     match hir::file_item_tree(db, file).language() {
-        // Placeholder: Kotlin has no HIR lowering, so a KDoc comment has no
-        // declaration to attach to. The lexer already carries one
-        // (`kotlin-syntax`'s `SyntaxKind::KDOC`); `hir-def`'s
-        // `kotlin::lower` — an empty item tree today — is where the
-        // declaration it documents will be anchored, and this arm is where the
-        // Kotlin renderer (KDoc is not Javadoc) will hook in. See
-        // `nav::kotlin`.
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
+        // KDoc is not Javadoc: the same comment structure, a Markdown body and
+        // its own tag set, so it renders through its own renderer.
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => {
+            let raw = hir::item_doc(db, file, item)?;
+            // KDoc has no tag that displays the owner's name; the owner is
+            // passed for symmetry with the JavaDoc renderer.
+            let rendered = kdoc::render(raw, None);
+            (!rendered.trim().is_empty()).then_some(rendered)
+        }
         _ => {
             let tree = hir::java_item_tree(db, file);
             let raw = hir::item_doc(db, file, item)?;

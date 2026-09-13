@@ -2426,6 +2426,145 @@ fn kotlin_definition_answers_null() {
     assert!(symbols.is_array(), "got: {symbols:?}");
 }
 
+/// The Kotlin workspace of the navigation tests: a documented class with a
+/// member and a nested class, plus a second file that references them.
+const KOTLIN_NAV_FILES: &[(&str, &str)] = &[
+    (
+        "/src/com/example/Point.kt",
+        r#"package com.example
+
+/**
+ * A point in the plane.
+ *
+ * @param x the horizontal coordinate
+ */
+class Point(val x: Int) {
+    /** How far the point is from the origin. */
+    fun distance(): Int = x
+
+    class Nested
+}
+
+typealias Coord = Point
+"#,
+    ),
+    (
+        "/src/com/example/Shape.kt",
+        r#"package com.example
+
+import com.example.Point.Nested
+
+class Shape(val origin: Point) {
+    val nested: Nested? = null
+    val qualified: Point.Nested? = null
+}
+"#,
+    ),
+];
+
+/// Kotlin navigation end to end: a definition on a type reference in another
+/// file, a definition on an import path, a hover with the declaration's
+/// signature and its KDoc, and the file's document symbols.
+///
+/// Every one of these answered *nothing* before the Kotlin item tree existed —
+/// the placeholders in `ide::nav::kotlin` and the empty lowering — so the test
+/// is the regression guard for the whole ladder.
+#[test]
+fn kotlin_navigation() {
+    let lsp = create_lsp();
+    for (path, text) in KOTLIN_NAV_FILES {
+        lsp.write_file(path, text);
+        lsp.open_document(path);
+    }
+    lsp.wait_until_workspace_is_loaded();
+
+    let point = KOTLIN_NAV_FILES[0].0;
+    let shape = KOTLIN_NAV_FILES[1].0;
+    let point_text = KOTLIN_NAV_FILES[0].1;
+    let shape_text = KOTLIN_NAV_FILES[1].1;
+
+    // A type reference in a constructor parameter resolves to the class in the
+    // other file, at its name.
+    let (line, character) = position_inside(shape_text, "origin: Point", 10);
+    let response = definition_at(&lsp, shape, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_type_reference", response);
+
+    // A nested classifier reached through the import that binds it.
+    let (line, character) = position_inside(shape_text, "nested: Nested?", 11);
+    let response = definition_at(&lsp, shape, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_nested_class", response);
+
+    // A nested classifier reached through its enclosing class.
+    let (line, character) = position_inside(shape_text, "qualified: Point.Nested?", 11);
+    let response = definition_at(&lsp, shape, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_qualified_nested_class", response);
+
+    // The file's own import path.
+    let import_text = "package com.example\n\nimport com.example.Point\n";
+    lsp.write_file("/src/com/example/Import.kt", import_text);
+    lsp.open_document("/src/com/example/Import.kt");
+    lsp.wait_until_workspace_is_loaded();
+    let (line, character) = position_inside(import_text, "com.example.Point", 14);
+    let response = definition_at(
+        &lsp,
+        "/src/com/example/Import.kt",
+        Position { line, character },
+    );
+    insta::assert_json_snapshot!("kotlin_definition_import_path", response);
+
+    // Hover over the referenced class name: its signature in a `kotlin` fence
+    // and its KDoc behind it.
+    let (line, character) = position_inside(shape_text, "origin: Point", 10);
+    let response = request_until(
+        &lsp,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": lsp.uri(shape) },
+            "position": { "line": line, "character": character },
+        }),
+        |response| !response.is_null(),
+    );
+    insta::assert_json_snapshot!("kotlin_hover_type_reference", response);
+
+    // Hover over a function's own name: its signature and its KDoc.
+    let (line, character) = position_inside(point_text, "fun distance()", 6);
+    let response = request_until(
+        &lsp,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": lsp.uri(point) },
+            "position": { "line": line, "character": character },
+        }),
+        |response| !response.is_null(),
+    );
+    insta::assert_json_snapshot!("kotlin_hover_method_declaration", response);
+
+    // The outline lists the class, its members, the nested class and the type
+    // alias — the symbol index's Kotlin arm, rendered by the IDE's outline.
+    let symbols = lsp.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": lsp.uri(point) } }),
+    );
+    let names: Vec<String> = symbols
+        .as_array()
+        .unwrap_or_else(|| panic!("documentSymbol answers an array: {symbols}"))
+        .iter()
+        .flat_map(|symbol| {
+            let mut names = vec![symbol["name"].as_str().unwrap_or_default().to_owned()];
+            for child in symbol["children"].as_array().into_iter().flatten() {
+                names.push(child["name"].as_str().unwrap_or_default().to_owned());
+            }
+            names
+        })
+        .collect();
+    for expected in ["Point", "x", "distance", "Nested", "Coord"] {
+        assert!(
+            names.iter().any(|name| name.contains(expected)),
+            "the outline lists {expected}: {names:?}"
+        );
+    }
+}
+
 #[test]
 fn test_hover() {
     let lsp = create_lsp();

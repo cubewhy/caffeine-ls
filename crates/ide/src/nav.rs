@@ -93,8 +93,9 @@ impl LibraryFileRef {
     }
 }
 
-/// The declarations the reference at `offset` resolves to ([JLS §6.5] in a Java
-/// file, nothing at all in a Kotlin one).
+/// The declarations the reference at `offset` resolves to ([JLS §6.5] for a
+/// Java file, the Kotlin scope rules for a Kotlin one — see
+/// [`kotlin`]).
 pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
     match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::definition(db, file, offset),
@@ -115,7 +116,9 @@ pub fn references(
     include_declaration: bool,
 ) -> Vec<ReferenceTarget> {
     match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::references(db, file, offset),
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => {
+            kotlin::references(db, file, offset, include_declaration)
+        }
         _ => java::references(db, file, offset, include_declaration),
     }
 }
@@ -150,8 +153,8 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
 
 /// The declaration of the class-like type `fqn` names in `file`'s scope — the
 /// declaration a click on an inlay hint's type label navigates to. Nothing for
-/// a Kotlin file (see [`kotlin`]) and for a name the file's scope cannot
-/// resolve to a declaration.
+/// a name the file's scope cannot resolve to a declaration, or which names a
+/// library class the caller has not materialized yet (see [`kotlin`]).
 pub(crate) fn class_declaration(
     db: &RootDatabase,
     file: FileId,
@@ -171,9 +174,11 @@ pub(crate) fn class_declaration(
 /// class instance creation or an explicit constructor invocation ([§15.9],
 /// [§8.8.7.1]), which selects a constructor rather than a method of that name.
 ///
-/// `None` for a Kotlin file (nothing resolves: see [`kotlin`]) and for a
-/// declaration that is no loaded source one — see
-/// [`java::declared_parameter_names`].
+/// `None` for a Kotlin file: the parameter names of a call come from the
+/// resolved callable ([`hir_ty::MethodData`]), and Kotlin has no resolved-call
+/// table yet — the Kotlin type layer is where a callable's parameters become
+/// available ([`kotlin`]) — and for a declaration that is no loaded source one
+/// ([`java::declared_parameter_names`]).
 pub(crate) fn declared_parameter_names(
     db: &RootDatabase,
     file: FileId,
@@ -193,7 +198,8 @@ pub(crate) fn declared_parameter_names(
 /// member's parameter names render on the first request rather than only once
 /// the declaration's source happens to be open.
 ///
-/// `None` for a Kotlin file and for a member no load can name.
+/// `None` for a Kotlin file (no resolved callable to name it through, see
+/// [`kotlin`]) and for a member no load can name.
 pub(crate) fn pending_parameter_names(
     db: &RootDatabase,
     file: FileId,

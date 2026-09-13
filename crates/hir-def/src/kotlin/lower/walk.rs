@@ -68,7 +68,13 @@ pub(super) fn lower_file(ctx: &mut LowerCtx<'_>, file: &kotlin_syntax::SourceFil
 /// `packageHeader`: ['package' {NL} identifier {NL} {'.' {NL} identifier}]
 /// [spec: grammar-rule-packageHeader] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-packageHeader
 fn lower_package(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) {
-    let Some(name) = qualified_name(node) else {
+    // The declared name is the `QUALIFIED_NAME` child; the header itself holds
+    // only the `package` keyword and that node.
+    let Some(name) = node
+        .children()
+        .find(|child| is(child, K::QUALIFIED_NAME))
+        .and_then(|qualified| qualified_name(&qualified))
+    else {
         return;
     };
     ctx.tree.package = Some(name);

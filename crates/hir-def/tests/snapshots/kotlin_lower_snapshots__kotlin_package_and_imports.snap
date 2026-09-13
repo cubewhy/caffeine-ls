@@ -16,7 +16,7 @@ class Foo
 PARSE_ERRORS:
 <none>
 ITEM_TREE:
-file (kotlin)
+file (kotlin) package com.example.app
 import com.example.app.Foo; @26..53
 import com.example.app.*; @53..78
 import com.example.app.Foo as Bar; @78..112

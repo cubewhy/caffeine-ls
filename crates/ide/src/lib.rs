@@ -159,6 +159,16 @@ impl Analysis {
         Cancelled::catch(AssertUnwindSafe(|| f(&self.db)))
     }
 
+    /// The language of `file`: what a client needs to present per-language
+    /// content — the fence tag of a hover, a semantic-token legend.
+    ///
+    /// Read from the file's *item tree* rather than from its path, so a file
+    /// whose source root is not loaded yet answers `Unknown` exactly as its
+    /// other HIR queries do.
+    pub fn file_language(&self, file_id: FileId) -> ide_db::base_db::LanguageKind {
+        hir::file_item_tree(&self.db, file_id).language()
+    }
+
     pub fn syntax_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
         self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, file_id))
     }
