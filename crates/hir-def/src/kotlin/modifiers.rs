@@ -58,6 +58,13 @@ impl KotlinVisibility {
     pub fn is_public(self) -> bool {
         self == KotlinVisibility::Public
     }
+
+    /// Whether the declaration is `private` — the one visibility that hides a
+    /// declaration from the workspace symbol index (`internal` and
+    /// `protected` stay visible; see [`crate::kotlin::item_tree`]).
+    pub fn is_private(self) -> bool {
+        self == KotlinVisibility::Private
+    }
 }
 
 /// The inheritance modifiers of a declaration

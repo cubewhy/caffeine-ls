@@ -386,6 +386,13 @@ fn render_item_type(ty: &ItemTypeRef) -> String {
     render_type(&ty.ty)
 }
 
+/// Renders a declaration-side type reference the way a Kotlin client spells
+/// it (`String?`, `List<out Number>`, `Function1<Int, String>`), for a consumer
+/// outside the snapshot surface (the IDE's document symbols).
+pub fn display_type(ty: &ItemTypeRef) -> String {
+    render_type(&ty.ty)
+}
+
 /// Renders a Kotlin source type: `T?`, `out T`, `*`, `Function2<A, B, R>`.
 fn render_type(ty: &TypeRef<Name>) -> String {
     match ty {

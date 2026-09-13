@@ -70,6 +70,47 @@ fn render_resolved(db: &common::TestDatabase, resolved: Option<&Resolved>) -> St
     }
 }
 
+/// A Kotlin file's declarations: the qualified name a nested classifier, a
+/// member, a class-parameter property and a constructor are indexed under.
+/// Confirmed against the compiler with `javap -p`: the same members the index
+/// reports (`com.example.Point.x`, `com.example.Util.f`) are the ones in the
+/// classfile, and a plain class parameter is in neither.
+#[test]
+fn file_symbols_kotlin_declarations() {
+    let src = r#"package com.example
+
+class Point(val x: Int, label: String) {
+    fun distance(): Int = x
+
+    class Nested
+
+    companion object {
+        const val ORIGIN = 0
+    }
+}
+
+object Util {
+    fun f(): Int = 1
+}
+
+typealias StringMap<V> = Map<String, V>
+
+private class Hidden
+"#;
+    let db = build(
+        &[Root {
+            source_set: main_source_set(),
+            files: vec![file(1, "/src/main/kotlin/com/example/Point.kt", src)],
+            classpath: vec![],
+        }],
+        &[],
+    );
+    assert_snapshot!(
+        "file_symbols_kotlin_declarations",
+        render_symbols(&file_symbols(&db, FileId::from_raw(1)))
+    );
+}
+
 #[test]
 fn file_symbols_mixed_declarations() {
     let src = r#"package com.example;

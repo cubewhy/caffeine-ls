@@ -1,0 +1,15 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_symbols(&file_symbols(&db, FileId::from_raw(1)))"
+---
+class      Point public=true item0
+constructor Point public=true item1
+property   Point.x public=true item2
+function   Point.distance public=true item3
+class      Point.Nested public=true item4
+object     Point.Companion public=true item5
+property   Point.Companion.ORIGIN public=true item6
+object     Util public=true item7
+function   Util.f public=true item8
+typealias  StringMap public=true item9
+class      Hidden public=false item10

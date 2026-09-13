@@ -24,7 +24,8 @@ use super::to_proto;
 
 /// Maps an HIR symbol kind to the closest LSP [`SymbolKind`]. Records and
 /// annotation types have no direct LSP kind; they map to `Struct` and
-/// `Interface` respectively.
+/// `Interface` respectively — and Kotlin's `object`, which declares a class
+/// with a single instance, to `Class`.
 pub(crate) fn symbol_kind(kind: ide::SourceSymbolKind) -> SymbolKind {
     use ide::SourceSymbolKind as Kind;
     match kind {
@@ -38,6 +39,11 @@ pub(crate) fn symbol_kind(kind: ide::SourceSymbolKind) -> SymbolKind {
         Kind::Field => SymbolKind::Field,
         Kind::EnumConstant => SymbolKind::EnumMember,
         Kind::Package => SymbolKind::Package,
+        Kind::Object => SymbolKind::Class,
+        Kind::Function => SymbolKind::Function,
+        Kind::Property => SymbolKind::Property,
+        Kind::Constructor => SymbolKind::Constructor,
+        Kind::TypeAlias => SymbolKind::TypeParameter,
     }
 }
 

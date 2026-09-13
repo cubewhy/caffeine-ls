@@ -6,7 +6,9 @@
 //! memoized; the `ide::Analysis` methods below funnel them through the
 //! cancellation boundary.
 
+use hir::hir_def::FileItemTree;
 use hir::hir_def::java::item_tree::ItemData;
+use hir::hir_def::kotlin::item_tree::{KotlinItemData, KotlinItemTree};
 
 /// The `(map, source)` pair the on-demand range helpers resolve against, for
 /// a file whose language is known.
@@ -94,6 +96,12 @@ pub struct WorkspaceSymbolSummary {
 /// ranges target its record component, and the canonical constructor's
 /// ranges target the record declaration.
 pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
+    match *hir::file_item_tree(db, file_id) {
+        FileItemTree::Kotlin(ref tree) => return kotlin_document_symbols(db, file_id, tree),
+        // An unknown-language file has no declarations.
+        FileItemTree::Empty(_) => return Vec::new(),
+        FileItemTree::Java(_) => {}
+    }
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
     let tree = hir::java_item_tree(db, file_id);
@@ -251,19 +259,29 @@ fn record_members(
 /// top-level types. The unnamed package ([JLS §7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2))
 /// is rendered explicitly as `<default package>`.
 fn package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
-    let tree = hir::java_item_tree(db, file_id);
-    let name = tree
-        .package
-        .as_ref()
+    let file_tree = hir::file_item_tree(db, file_id);
+    let name = file_tree
+        .as_java()
+        .and_then(|tree| tree.package.clone())
+        .or_else(|| file_tree.as_kotlin().and_then(|tree| tree.package.clone()))
         .map(|name| name.as_str().to_owned())
         .unwrap_or_else(|| "<default package>".to_owned());
-    let range = range_ctx(db, file_id, tree.language)
-        .and_then(|(map, source)| {
-            tree.package_decls.last().and_then(|decl| {
-                hir::hir_def::java::ranges::package_name_range(&map, &source, *decl)
+    let range = match &*file_tree {
+        FileItemTree::Java(tree) => {
+            range_ctx(db, file_id, tree.language).and_then(|(map, source)| {
+                tree.package_decls.last().and_then(|decl| {
+                    hir::hir_def::java::ranges::package_name_range(&map, &source, *decl)
+                })
             })
-        })
-        .unwrap_or_default();
+        }
+        FileItemTree::Kotlin(tree) => {
+            range_ctx(db, file_id, tree.language).and_then(|(map, source)| {
+                hir::hir_def::kotlin::ranges::package_name_range(&map, &source, tree)
+            })
+        }
+        FileItemTree::Empty(_) => None,
+    }
+    .unwrap_or_default();
     DocumentSymbol {
         name: name.clone(),
         display_name: name,
@@ -467,9 +485,120 @@ pub fn source_symbol_range(db: &RootDatabase, file_id: FileId, item: u32) -> Opt
     {
         return None;
     }
-    let tree = hir::java_item_tree(db, file_id);
-    let (map, source) = range_ctx(db, file_id, tree.language)?;
-    hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)
+    match *hir::file_item_tree(db, file_id) {
+        FileItemTree::Kotlin(ref tree) => {
+            let (map, source) = range_ctx(db, file_id, tree.language)?;
+            hir::hir_def::kotlin::ranges::item_range(&map, &source, tree, item)
+        }
+        FileItemTree::Empty(_) => None,
+        FileItemTree::Java(_) => {
+            let tree = hir::java_item_tree(db, file_id);
+            let (map, source) = range_ctx(db, file_id, tree.language)?;
+            hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)
+        }
+    }
+}
+
+/// The declared symbols of a Kotlin file, in declaration order, prefixed by a
+/// synthesized symbol for the file's package.
+///
+/// The Kotlin surface of [`document_symbols`]: a declaration's range is its
+/// whole syntax node and its selection range its declared name, both resolved
+/// from the item tree's anchors
+/// ([`hir::hir_def::kotlin::ranges`]). The client-facing name carries the
+/// signature the *item tree* knows — a function's parameters and return type,
+/// a property's type — because the Kotlin type layer's rendering is not
+/// available for an arbitrary declaration yet.
+fn kotlin_document_symbols(
+    db: &RootDatabase,
+    file_id: FileId,
+    tree: &KotlinItemTree,
+) -> Vec<DocumentSymbol> {
+    let symbols = hir::file_symbols(db, file_id);
+    let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
+    let ctx = range_ctx(db, file_id, tree.language);
+    let mut out = Vec::with_capacity(symbols.len() + 1);
+    if !symbols.is_empty() {
+        out.push(package_symbol(db, file_id));
+    }
+    out.extend(symbols.iter().map(|source| {
+        let top_level = source
+            .name
+            .as_str()
+            .rsplit_once('.')
+            .is_none_or(|(parent, _)| !names.contains(parent));
+        let (range, name_range) = match ctx.as_ref() {
+            Some((map, source_file)) => (
+                hir::hir_def::kotlin::ranges::item_range(map, source_file, tree, source.item),
+                hir::hir_def::kotlin::ranges::item_name_range(map, source_file, tree, source.item),
+            ),
+            None => (None, None),
+        };
+        let (range, name_range) = (range.unwrap_or_default(), name_range.unwrap_or_default());
+        DocumentSymbol {
+            name: source.name.as_str().to_owned(),
+            kind: source.kind,
+            range,
+            name_range,
+            display_name: kotlin_display_name(tree, source.item, source.name.simple_name()),
+            detail: kotlin_detail(tree, source.item, source.name.simple_name(), top_level),
+            item: Some(source.item),
+        }
+    }));
+    out
+}
+
+/// The client-facing name of a Kotlin declaration: its simple name, with the
+/// signature the item tree knows rendered inline — `name(params): ret` for a
+/// function, `name: type` for a property.
+fn kotlin_display_name(tree: &KotlinItemTree, item: ItemId, simple: &str) -> String {
+    match tree.data(item) {
+        KotlinItemData::Function(data) => {
+            let params = data
+                .params
+                .iter()
+                .map(|param| {
+                    format!(
+                        "{}: {}",
+                        param.name,
+                        hir::hir_def::kotlin::pretty::display_type(&param.ty)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret = match &data.ret {
+                Some(ret) => format!(": {}", hir::hir_def::kotlin::pretty::display_type(ret)),
+                None => String::new(),
+            };
+            format!("{simple}({params}){ret}")
+        }
+        KotlinItemData::Property(data) => match &data.ty {
+            Some(ty) => format!(
+                "{simple}: {}",
+                hir::hir_def::kotlin::pretty::display_type(ty)
+            ),
+            None => simple.to_owned(),
+        },
+        _ => simple.to_owned(),
+    }
+}
+
+/// The `detail` of a Kotlin symbol: the fully qualified name for a top-level
+/// declaration, `kind simple` for a nested one.
+fn kotlin_detail(
+    tree: &KotlinItemTree,
+    item: ItemId,
+    simple: &str,
+    top_level: bool,
+) -> Option<String> {
+    if top_level {
+        return Some(
+            tree.data(item)
+                .name()
+                .map_or_else(|| simple.to_owned(), |name| name.as_str().to_owned()),
+        );
+    }
+    Some(format!("{} {simple}", tree.data(item).label()))
 }
 
 /// The registered source sets of the project graph, in unspecified order.

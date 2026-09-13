@@ -37,6 +37,7 @@ use rustc_hash::FxHashMap;
 use vfs::FileId;
 
 use hir_def::java::item_tree::{ItemData, ItemId};
+use hir_def::kotlin::item_tree::{KotlinClassKind, KotlinItemData};
 use hir_expand::name::Name;
 
 /// The kind of a source symbol, mapped from the lowered [`ItemData`].
@@ -64,6 +65,23 @@ pub enum SourceSymbolKind {
     /// synthesized by the IDE above a file's top-level types, not lowered from
     /// `ItemData`.
     Package,
+    /// A Kotlin `object` declaration, including a `companion object` ([KLS
+    /// `declarations.html#object-declaration`](https://kotlinlang.org/spec/declarations.html#object-declaration)).
+    Object,
+    /// A Kotlin function declaration ([KLS
+    /// `declarations.html#function-declaration`](https://kotlinlang.org/spec/declarations.html#function-declaration)).
+    Function,
+    /// A Kotlin property declaration ([KLS
+    /// `declarations.html#property-declaration`](https://kotlinlang.org/spec/declarations.html#property-declaration)).
+    Property,
+    /// A Kotlin constructor declaration ([KLS
+    /// `declarations.html#constructor-declaration`](https://kotlinlang.org/spec/declarations.html#constructor-declaration)):
+    /// a primary or a secondary constructor. It declares no name of its own —
+    /// the JVM name is the class name.
+    Constructor,
+    /// A Kotlin type alias ([KLS
+    /// `declarations.html#type-alias`](https://kotlinlang.org/spec/declarations.html#type-alias)).
+    TypeAlias,
 }
 
 impl SourceSymbolKind {
@@ -84,6 +102,33 @@ impl SourceSymbolKind {
         }
     }
 
+    /// The symbol kind of a lowered Kotlin item, or `None` for the nameless
+    /// declarations (`init` blocks, property accessors) the index skips.
+    ///
+    /// A property's accessors are skipped deliberately: the source declares no
+    /// name for them (the JVM name is synthesized from the property), so they
+    /// are not nameable from another file. They stay reachable through
+    /// [`hir_def::kotlin::item_tree::PropertyData::accessors`].
+    pub fn of_kotlin(data: &KotlinItemData) -> Option<SourceSymbolKind> {
+        match data {
+            KotlinItemData::Class(data) => Some(match data.kind {
+                KotlinClassKind::Class => SourceSymbolKind::Class,
+                KotlinClassKind::Interface => SourceSymbolKind::Interface,
+                KotlinClassKind::Enum => SourceSymbolKind::Enum,
+                KotlinClassKind::Annotation => SourceSymbolKind::Annotation,
+                KotlinClassKind::Object | KotlinClassKind::CompanionObject => {
+                    SourceSymbolKind::Object
+                }
+            }),
+            KotlinItemData::Constructor(_) => Some(SourceSymbolKind::Constructor),
+            KotlinItemData::Function(_) => Some(SourceSymbolKind::Function),
+            KotlinItemData::Property(_) => Some(SourceSymbolKind::Property),
+            KotlinItemData::EnumEntry(_) => Some(SourceSymbolKind::EnumConstant),
+            KotlinItemData::TypeAlias(_) => Some(SourceSymbolKind::TypeAlias),
+            KotlinItemData::Accessor(_) | KotlinItemData::AnonymousInitializer(_) => None,
+        }
+    }
+
     /// The display label of the kind.
     pub fn label(&self) -> &'static str {
         match self {
@@ -97,6 +142,11 @@ impl SourceSymbolKind {
             SourceSymbolKind::Field => "field",
             SourceSymbolKind::EnumConstant => "constant",
             SourceSymbolKind::Package => "package",
+            SourceSymbolKind::Object => "object",
+            SourceSymbolKind::Function => "function",
+            SourceSymbolKind::Property => "property",
+            SourceSymbolKind::Constructor => "constructor",
+            SourceSymbolKind::TypeAlias => "typealias",
         }
     }
 }

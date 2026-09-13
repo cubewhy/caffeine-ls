@@ -1,8 +1,6 @@
 #[macro_use]
 mod common;
 
-use base_db::LanguageKind;
-
 // -- top-level / package / imports -----------------------------------------
 
 lower_snapshot! {

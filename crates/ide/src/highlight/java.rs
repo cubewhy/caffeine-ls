@@ -262,6 +262,10 @@ fn declarations(tree: &ItemTree, map: &AstIdMap, source: &SourceFile, out: &mut 
 /// [JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1)),
 /// and a record is the language's product type, which the legend spells
 /// `struct`.
+///
+/// The Kotlin kinds never reach this Java walk (it visits a Java file's item
+/// tree only); their tags are the ones a Kotlin highlighter would use — an
+/// `object` is a class, a constructor is a method, a type alias names a type.
 fn tag_of(kind: SourceSymbolKind) -> HlTag {
     match kind {
         SourceSymbolKind::Class => HlTag::Class,
@@ -274,6 +278,11 @@ fn tag_of(kind: SourceSymbolKind) -> HlTag {
         SourceSymbolKind::Field => HlTag::Property,
         SourceSymbolKind::EnumConstant => HlTag::EnumMember,
         SourceSymbolKind::Package => HlTag::Namespace,
+        SourceSymbolKind::Object => HlTag::Class,
+        SourceSymbolKind::Function => HlTag::Function,
+        SourceSymbolKind::Property => HlTag::Property,
+        SourceSymbolKind::Constructor => HlTag::Method,
+        SourceSymbolKind::TypeAlias => HlTag::Type,
     }
 }
 

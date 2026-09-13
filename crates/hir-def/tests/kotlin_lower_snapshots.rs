@@ -11,8 +11,6 @@ mod common;
 
 use base_db::LanguageKind;
 
-use common::lower_snapshot_lang;
-
 // -- files: package, imports, file annotations ------------------------------
 
 lower_snapshot_lang! {
