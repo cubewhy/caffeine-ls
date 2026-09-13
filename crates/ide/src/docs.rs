@@ -34,7 +34,12 @@ pub(crate) fn hover_docs(db: &RootDatabase, file: FileId, item: ItemId) -> Optio
     let tree = hir::file_item_tree(db, file);
     match tree.language {
         // Placeholder: Kotlin has no HIR lowering, so a KDoc comment has no
-        // declaration to attach to (see `nav::kotlin`).
+        // declaration to attach to. The lexer already carries one
+        // (`kotlin-syntax`'s `SyntaxKind::KDOC`); `hir-def`'s
+        // `kotlin::lower` — an empty item tree today — is where the
+        // declaration it documents will be anchored, and this arm is where the
+        // Kotlin renderer (KDoc is not Javadoc) will hook in. See
+        // `nav::kotlin`.
         LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
         _ => {
             let raw = hir::item_doc(db, file, item)?;

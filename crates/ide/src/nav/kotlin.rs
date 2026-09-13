@@ -14,6 +14,13 @@
 //! ranges need a Kotlin-aware `hir_def::kotlin::ranges`, and the classpath
 //! deferral is already language-neutral ([`hir::fqn_resolve`],
 //! [`hir::library_source_decl`], [`hir::library_sources`]).
+//!
+//! A *hover* picks up its documentation the same way it will pick up its Kotlin
+//! declaration: through [`crate::docs::hover_docs`], which answers `None` for a
+//! Kotlin file today because the empty item tree gives a KDoc comment no
+//! declaration to attach to. The lexer already carries one
+//! (`kotlin-syntax`'s `SyntaxKind::KDOC`), so the Kotlin lowering only has to
+//! anchor the declaration it documents — nothing in the hover path changes.
 
 use rowan::TextSize;
 use vfs::FileId;

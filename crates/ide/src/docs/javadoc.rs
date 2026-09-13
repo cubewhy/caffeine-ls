@@ -244,7 +244,7 @@ fn strip_traditional(raw: &str) -> String {
 /// One line of a traditional comment without its leading whitespace and
 /// asterisks; a line that begins with neither is unchanged.
 fn strip_leading_asterisks(line: &str) -> &str {
-    let trimmed = line.trim_start_matches(leading_whitespace);
+    let trimmed = line.trim_start_matches(LEADING_WHITESPACE);
     let stars = trimmed.trim_start_matches('*');
     match stars.len() == trimmed.len() {
         true => line,
@@ -262,7 +262,7 @@ fn strip_markdown(raw: &str) -> String {
     let lines: Vec<&str> = raw
         .split('\n')
         .map(|line| {
-            let trimmed = line.trim_start_matches(leading_whitespace);
+            let trimmed = line.trim_start_matches(LEADING_WHITESPACE);
             trimmed.strip_prefix("///").unwrap_or(trimmed)
         })
         .collect();
@@ -284,14 +284,14 @@ fn strip_markdown(raw: &str) -> String {
 
 /// The number of leading horizontal whitespace characters of `line`.
 fn indent(line: &str) -> usize {
-    line.len() - line.trim_start_matches(leading_whitespace).len()
+    line.len() - line.trim_start_matches(LEADING_WHITESPACE).len()
 }
 
 /// The whitespace a doc comment's leading-asterisk and Markdown rules strip:
 /// horizontal whitespace, as
 /// [JLS §3.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.6)
 /// defines it.
-const leading_whitespace: &[char] = &[' ', '\t', '\u{c}'];
+const LEADING_WHITESPACE: &[char] = &[' ', '\t', '\u{c}'];
 
 /// Splits the stripped comment into its main description and its block tags.
 ///
@@ -395,7 +395,7 @@ fn convert(text: &str, mode: Mode, owner: Option<&str>) -> String {
         // An inline tag outranks the `<` of an HTML tag only by position: the
         // two cannot start on the same byte, and `{@code <T>}` keeps its
         // angle brackets because the whole tag is consumed at once.
-        if tail.starts_with("{@") {
+        if let Some(stripped) = tail.strip_prefix("{@") {
             push_literal(before, mode, &mut out, &mut pending);
             match parse_inline(tail) {
                 Some((tag, consumed)) => {
@@ -407,7 +407,7 @@ fn convert(text: &str, mode: Mode, owner: Option<&str>) -> String {
                 // An unterminated tag is not a tag: keep it as text.
                 None => {
                     out.push_str("{@");
-                    rest = &tail[2..];
+                    rest = stripped;
                 }
             }
         } else {
