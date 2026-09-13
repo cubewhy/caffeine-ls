@@ -223,50 +223,29 @@ fn annotation_keys(
     if !is_suppress_warnings(db, file_id, &name_node) {
         return;
     }
-    let Some(args) = annotation
+    // The marker form names no warning, and `@SuppressWarnings` is not a
+    // marker annotation anyway
+    // ([§9.6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4)).
+    if !annotation
         .children()
-        .find(|child| child.kind() == J::ANNOTATION_ARGUMENT_LIST)
+        .any(|child| child.kind() == J::ANNOTATION_ARGUMENT_LIST)
+    {
+        return;
+    }
+    // §9.7.1 makes an element value an *expression*, so a key may be the value
+    // of a constant variable rather than a literal
+    // (`static final String K = "unchecked"; @SuppressWarnings(K)`), which
+    // javac honours — and a concatenation names a key only as its *whole*
+    // value (`"un" + "checked"` is `unchecked`, `"unchecked" + "X"` is not
+    // one). The type layer reads each element value as the constant it is;
+    // what it cannot read names nothing, and must not be guessed from the
+    // source, which would let the second of those pass for the first.
+    let Some(values) =
+        hir_ty::java::annotation_value::suppress_warnings_values(db, file_id, annotation)
     else {
-        // A marker `@SuppressWarnings` has no argument list; it names no
-        // warning, and `@SuppressWarnings` is not a marker annotation
-        // anyway ([§9.6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4)).
         return;
     };
-    // §9.7.1 makes an element value an *expression*, so a key may be the
-    // value of a constant variable rather than a literal
-    // (`static final String K = "unchecked"; @SuppressWarnings(K)`), which
-    // javac honours. The type layer evaluates the argument list; only when
-    // it cannot read every element value does the lexical scan below stand
-    // in.
-    if let Some(values) =
-        hir_ty::java::annotation_value::suppress_warnings_values(db, file_id, annotation)
-    {
-        out.extend(values.iter().filter_map(|value| LintKey::from_str(value)));
-        return;
-    }
-    // The element is an array of `String` ([§9.6.4.5]), so the keys are
-    // the string literals of the argument list — either a lone literal
-    // (`@SuppressWarnings("unchecked")`, §9.7.1's single-element form) or
-    // the literals of an array initializer. No nested annotation can
-    // appear in a `String[]` element, so every string literal here is a
-    // key. A literal is a *token* of its `LITERAL` node, so the walk
-    // descends through tokens.
-    for literal in args
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| token.kind() == J::STRING_LITERAL)
-    {
-        // The key is the literal's *value*: the token text is the source
-        // as written, so a `"\u0075nchecked"` names `unchecked` ([§3.3]).
-        let text = translate_unicode_escapes(literal.text());
-        if let Some(key) = text
-            .strip_prefix('"')
-            .and_then(|inner| inner.strip_suffix('"'))
-            .and_then(LintKey::from_str)
-        {
-            out.insert(key);
-        }
-    }
+    out.extend(values.iter().filter_map(|value| LintKey::from_str(value)));
 }
 
 /// The `@SuppressWarnings` scopes of `file`, computed in a single tree walk

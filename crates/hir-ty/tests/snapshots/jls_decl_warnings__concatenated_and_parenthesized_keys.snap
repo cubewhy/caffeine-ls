@@ -1,0 +1,35 @@
+---
+source: crates/hir-ty/tests/jls_decl_warnings.rs
+expression: out
+---
+FILE /src/com/example/Cat.java:
+package com.example;
+
+import java.util.List;
+
+class Cat {
+    static final String K = "types";
+
+    @SuppressWarnings("raw" + K)
+    void joined(List suppressed) {
+    }
+
+    @SuppressWarnings("raw" + "types" + "X")
+    void tooLong(List control) {
+    }
+
+    @SuppressWarnings("rawtypes" + "X")
+    void suffixed(List control) {
+    }
+
+    @SuppressWarnings(("rawtypes"))
+    void parenthesized(List suppressed) {
+    }
+
+    void plain(List control) {
+    }
+}
+
+@12:17: raw-type-use: Raw use of parameterized class 'List'
+@16:18: raw-type-use: Raw use of parameterized class 'List'
+@23:15: raw-type-use: Raw use of parameterized class 'List'

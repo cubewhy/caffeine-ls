@@ -367,3 +367,57 @@ class Param {
 ",
     )])
 );
+
+// JLS §9.7.1/§15.18.1/§15.29/§9.6.4.5: an element value is an expression, and
+// the key is the *whole* value it denotes — so a concatenation names one only
+// when the concatenation itself spells it, and parentheses change nothing.
+// javac:
+// ```text
+// Cat.java:13: warning: [rawtypes] found raw type: List
+//     void tooLong(List control) {
+//                  ^
+//   missing type arguments for generic class List<E>
+// Cat.java:17: warning: [rawtypes] found raw type: List
+//     void suffixed(List control) {
+//                   ^
+//   missing type arguments for generic class List<E>
+// Cat.java:24: warning: [rawtypes] found raw type: List
+//     void plain(List control) {
+//                ^
+//   missing type arguments for generic class List<E>
+// 3 warnings
+// ```
+snapshot!(
+    concatenated_and_parenthesized_keys,
+    check_class_diagnostics(&[(
+        "/src/com/example/Cat.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Cat {
+    static final String K = \"types\";
+
+    @SuppressWarnings(\"raw\" + K)
+    void joined(List suppressed) {
+    }
+
+    @SuppressWarnings(\"raw\" + \"types\" + \"X\")
+    void tooLong(List control) {
+    }
+
+    @SuppressWarnings(\"rawtypes\" + \"X\")
+    void suffixed(List control) {
+    }
+
+    @SuppressWarnings((\"rawtypes\"))
+    void parenthesized(List suppressed) {
+    }
+
+    void plain(List control) {
+    }
+}
+",
+    )])
+);

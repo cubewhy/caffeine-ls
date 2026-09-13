@@ -890,20 +890,27 @@ fn name_string_constant(
 /// (`@SuppressWarnings("a")`), the explicit `value = ...` form and the array
 /// form (`@SuppressWarnings({"a", "b"})`) alike.
 ///
-/// A value counts when it is a `String` constant expression ([§15.29]) this
-/// layer can read: a string literal, a parenthesized, cast, concatenated or
+/// A value counts when it *is* a `String` constant expression ([§15.29]) this
+/// layer can read — a string literal, a parenthesized, concatenated or
 /// conditional form of readable ones, or a [§4.12.4] constant variable of type
-/// `String` — a source field's initializer or a library field's classfile
+/// `String`: a source field's initializer or a library field's classfile
 /// `ConstantValue` ([JVMS §4.7.2]) — named bare, through a static import
 /// ([§7.5.4]) or through a type qualifier ([§6.5.6.2]).
 ///
 /// This is what gives `@SuppressWarnings(K)` its keys when `K` is a constant:
 /// §9.7.1 makes the element value an expression, so the key is the *value* of
-/// `K`, not the name. `None` when the annotation carries no argument list, no
-/// enclosing declaration, or any element value that is not such a constant, so
-/// a caller may fall back to reading the source lexically.
+/// `K`, not the name. `None` when the annotation carries no argument list or
+/// any element value is not such a constant.
 ///
-/// `None` is always a *miss*, never a claim that the annotation names nothing.
+/// A name needs the resolution context of the declaration the annotation is
+/// written in; an annotation that no item encloses (a package declaration's)
+/// has none, and only its literal values are readable. Every other form is
+/// read from the source as written.
+///
+/// `None` is always a *miss*, never a claim that the annotation names nothing
+/// — and never a licence for the caller to read the argument list more
+/// loosely, which is what would let `"un" + "checked" + "X"` pass for
+/// `"unchecked"`.
 ///
 /// [§9.6.4.5]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5
 /// [§15.29]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.29
@@ -915,27 +922,31 @@ pub fn suppress_warnings_values(
 ) -> Option<Vec<String>> {
     let tree = hir::file_item_tree(db, file);
     let (map, source) = range_ctx(db, file, tree.language)?;
+    let list = node
+        .children()
+        .find(|child| child.kind() == J::ANNOTATION_ARGUMENT_LIST)?;
     // The resolution context is the innermost declaration the annotation is
     // written in — the same context a written *name* at that position has
     // ([`Resolver::for_item`], [`resolve_written_name`]).
     let target = node
         .parent()
         .map_or_else(|| node.text_range(), |parent| parent.text_range());
-    let item = innermost_item(&map, &source, &tree, target)?;
-    let scope = scope_for_file(db, file);
-    let resolver = Resolver::for_item(db, file, &tree, item);
-    let bodies = hir::file_body_tree(db, file);
-    let cx = ValueCtx {
-        db,
-        file,
-        item,
-        scope: &scope,
-        resolver: &resolver,
-        bodies: &bodies,
-    };
-    let list = node
-        .children()
-        .find(|child| child.kind() == J::ANNOTATION_ARGUMENT_LIST)?;
+    let context = innermost_item(&map, &source, &tree, target).map(|item| {
+        let scope = scope_for_file(db, file);
+        let resolver = Resolver::for_item(db, file, &tree, item);
+        let bodies = hir::file_body_tree(db, file);
+        (item, scope, resolver, bodies)
+    });
+    let cx = context
+        .as_ref()
+        .map(|(item, scope, resolver, bodies)| ValueCtx {
+            db,
+            file,
+            item: *item,
+            scope,
+            resolver,
+            bodies,
+        });
     let mut out = Vec::new();
     let mut visited = FxHashSet::default();
     for arg in list.children() {
@@ -945,20 +956,16 @@ pub fn suppress_warnings_values(
             // The implicit single-element form `(v)`.
             _ => arg,
         };
-        element_string(&cx, &value, &mut visited, &mut out)?;
+        element_string(cx.as_ref(), &value, &mut visited, &mut out)?;
     }
     Some(out)
 }
 
-/// Appends the `String` constant the element value `node` denotes, in place
-/// ([JLS §9.7.1]) — a string literal ([§3.10.5]), a bare name or a
-/// `Type.NAME` qualifying one ([§6.5.6.1], [§6.5.6.2]) — or an array
-/// initializer's elements ([§10.6]), one per element. `None` for any element
-/// value that is not such a constant.
-///
-/// [§6.5.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.6
+/// Appends the `String` constants the element value `node` denotes, in place
+/// ([JLS §9.7.1]): one per element of an array initializer ([§10.6]), and
+/// otherwise the one value [`value_string`] reads.
 fn element_string(
-    cx: &ValueCtx<'_>,
+    cx: Option<&ValueCtx<'_>>,
     node: &SyntaxNode<Lang>,
     visited: &mut FxHashSet<(FileId, ItemId)>,
     out: &mut Vec<String>,
@@ -971,6 +978,26 @@ fn element_string(
             }
             Some(())
         }
+        _ => {
+            out.push(value_string(cx, node, visited)?);
+            Some(())
+        }
+    }
+}
+
+/// The `String` a single element value denotes, when §15.29 makes it a
+/// `String` constant this layer can read.
+///
+/// The syntactic forms — a string literal ([§3.10.5]), parentheses
+/// ([§15.8.5]) and a concatenation ([§15.18.1]) — need no resolution context;
+/// a *name* is read through [`name_string_constant`], and only when `cx` is
+/// there to resolve it in.
+fn value_string(
+    cx: Option<&ValueCtx<'_>>,
+    node: &SyntaxNode<Lang>,
+    visited: &mut FxHashSet<(FileId, ItemId)>,
+) -> Option<String> {
+    match node.kind() {
         // §3.10.5: a string literal. A bare identifier is a *name* — §9.7.1's
         // enum-constant form, which is how the lowering reads one.
         J::LITERAL => {
@@ -978,16 +1005,14 @@ fn element_string(
                 .children_with_tokens()
                 .filter_map(|element| element.into_token())
                 .find(|token| !token.kind().is_trivia())?;
-            let value = match token.kind() {
-                J::STRING_LITERAL => string_literal_value(token.text())?,
+            match token.kind() {
+                J::STRING_LITERAL => string_literal_value(token.text()),
                 J::IDENTIFIER => {
                     let name = Name::new(&translate_unicode_escapes(token.text()));
-                    name_string_constant(cx, None, &name, visited)?
+                    name_string_constant(cx?, None, &name, visited)
                 }
-                _ => return None,
-            };
-            out.push(value);
-            Some(())
+                _ => None,
+            }
         }
         // §6.5.6.2: `Type.NAME` — the member is the access's own identifier,
         // the qualifier the receiver's text.
@@ -998,16 +1023,31 @@ fn element_string(
                 .find(|token| token.kind() == J::IDENTIFIER)?;
             let member = Name::new(&translate_unicode_escapes(member.text()));
             let qualifier = receiver_name(node)?;
-            out.push(name_string_constant(
-                cx,
-                Some(&qualifier),
-                &member,
-                visited,
-            )?);
-            Some(())
+            name_string_constant(cx?, Some(&qualifier), &member, visited)
         }
-        // Every other form — a class literal, a nested annotation, a
-        // parenthesized or arithmetic expression — is not a string constant.
+        // §15.8.5: parentheses do not change what the expression is.
+        J::PAREN_EXPR => value_string(cx, &node.children().next()?, visited),
+        // §15.18.1: `+` with a `String` operand is string concatenation, and
+        // §15.29 admits it — so the concatenation of two readable constants is
+        // itself a readable constant, and of anything else is not.
+        J::BINARY_EXPR => {
+            let operator = node
+                .children_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| !token.kind().is_trivia())?;
+            if operator.kind() != J::PLUS {
+                return None;
+            }
+            let mut operands = node.children();
+            let left = operands.next()?;
+            let right = operands.next()?;
+            if operands.next().is_some() {
+                return None;
+            }
+            Some(value_string(cx, &left, visited)? + &value_string(cx, &right, visited)?)
+        }
+        // Every other form — a class literal, a nested annotation, an
+        // invocation, a comparison — is not a `String` constant.
         _ => None,
     }
 }
