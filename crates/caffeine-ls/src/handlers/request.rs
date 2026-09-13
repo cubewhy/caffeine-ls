@@ -331,6 +331,13 @@ pub fn on_semantic_tokens(
 /// inferred types, parameter names and chain types of `ide`'s hint model, in
 /// the client's own `InlayHint` shape. A resolve is asked for separately, so
 /// this answer carries only what a client renders immediately.
+///
+/// A hint whose parameter names come from a library member's declaring source
+/// defers when that source is not loaded yet, exactly like [`on_hover`]: the
+/// handler returns [`DeferForLibraryFiles`], the main loop materializes the
+/// files and re-runs the request, and the retried call renders the names. The
+/// files are collected for the whole range in one round, so a request that
+/// resolves through several libraries pays one materialization pass.
 pub fn on_inlay_hint(
     state: GlobalStateSnapshot,
     params: InlayHintParams,
@@ -345,6 +352,12 @@ pub fn on_inlay_hint(
     let line_index = state.file_line_index(file_id)?;
     let range = crate::lsp::from_proto::text_range(&line_index, params.range)?;
     let config = state.config.inlay_hints();
+    let files = state
+        .analysis
+        .inlay_hint_pending_library_files(file_id, range, &config)?;
+    if !files.is_empty() {
+        return Err(DeferForLibraryFiles(files).into());
+    }
     let hints = state.analysis.inlay_hints(file_id, range, &config)?;
     let hints: Vec<InlayHint> = hints
         .iter()

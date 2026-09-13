@@ -122,6 +122,28 @@ pub fn inlay_hints(
     }
 }
 
+/// The library files the hints over `range` need loaded before their parameter
+/// names can be rendered: the declaring sources of the library members their
+/// invocations selected, where the source is in the library's archive but not
+/// materialized. The LSP layer materializes them and re-runs the request — the
+/// same deferral goto-definition and hover drive — so a library member's names
+/// render on the first request rather than only once its source happens to be
+/// open.
+///
+/// Empty for a Kotlin file ([`kotlin`]) and for a request the parameter-name
+/// category is off for.
+pub fn pending_library_files(
+    db: &RootDatabase,
+    file: FileId,
+    range: TextRange,
+    config: &InlayHintsConfig,
+) -> Vec<crate::nav::LibraryFileRef> {
+    match hir::file_item_tree(db, file).language {
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => Vec::new(),
+        _ => java::pending_library_files(db, file, range, config),
+    }
+}
+
 /// The one hint a resolve names, with its deferred detail. `None` when no hint
 /// is anchored at `offset` with `kind` — the document changed under a hint the
 /// client still holds.

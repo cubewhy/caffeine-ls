@@ -1084,6 +1084,45 @@ fn parameter_names_member_from_a_previous_session() {
     assert_eq!(render_hints(&remembered.hints()), "Parameter @75 count:");
 }
 
+/// The pending state of a library member's names is *reported* so the hint
+/// layer can materialize the declaring source and render the name on the first
+/// request. A call whose arguments would render no hint anyway — and a library
+/// that ships no sources at all — collects nothing, so a request never
+/// materializes a source no hint waits on.
+#[test]
+fn library_member_pending_source_is_collected_for_names() {
+    let deferred = |fixture: &Fixture| {
+        let whole = TextRange::up_to(TextSize::of(fixture.text.as_str()));
+        fixture
+            .analysis()
+            .inlay_hint_pending_library_files(fixture.file, whole, &InlayHintsConfig::default())
+            .unwrap()
+    };
+
+    // The declaring source exists in the archive but no session loaded it, and
+    // the literal argument is one whose role a reader cannot infer: the hint
+    // waits on the file, so the request defers on it.
+    let fixture = lib_source_file(LIB_SOURCE_CALLER, LIB_SOURCE, &[("from", 1)], false, None);
+    let pending = deferred(&fixture);
+    assert_eq!(pending.len(), 1, "{pending:#?}");
+    let ide::LibraryFileRef::Source { entry, path, .. } = &pending[0] else {
+        panic!("a sourced library defers on its archive entry: {pending:#?}");
+    };
+    assert_eq!(entry.as_ref(), "com/example/Lib.java");
+    assert!(path.to_string().ends_with("com/example/Lib.java"), "{path}");
+
+    // A variable argument speaks for itself: the call renders no hint, so its
+    // source is never materialized for it.
+    let clear = "package com.example;\n\nclass App {\n    void run(Lib lib, int size) {\n        lib.from(size);\n    }\n}\n";
+    let fixture = lib_source_file(clear, LIB_SOURCE, &[("from", 1)], false, None);
+    assert!(deferred(&fixture).is_empty());
+
+    // A library that ships no sources can never name the member: there is no
+    // file to load.
+    let fixture = library_file(LIB_SOURCE_CALLER, &[("from", 1)]);
+    assert!(deferred(&fixture).is_empty());
+}
+
 /// A library that ships no sources at all records that it names nothing — and
 /// the record is keyed on the sources it was made for, so attaching sources to
 /// the same library is a fresh question rather than a cached "no".

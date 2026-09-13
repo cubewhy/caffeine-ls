@@ -185,3 +185,23 @@ pub(crate) fn declared_parameter_names(
         _ => java::declared_parameter_names(db, file, method, constructor),
     }
 }
+
+/// The library file that has to be loaded before the invocation `method`'s
+/// declaration can be named — the pending source of its declaring class, when
+/// there is one. The inlay-hint layer collects these over a request's range and
+/// defers through them exactly as goto-definition and hover do, so a library
+/// member's parameter names render on the first request rather than only once
+/// the declaration's source happens to be open.
+///
+/// `None` for a Kotlin file and for a member no load can name.
+pub(crate) fn pending_parameter_names(
+    db: &RootDatabase,
+    file: FileId,
+    method: &hir_ty::MethodData,
+    constructor: bool,
+) -> Option<LibraryFileRef> {
+    match hir::file_item_tree(db, file).language {
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
+        _ => java::pending_parameter_names(db, file, method, constructor),
+    }
+}

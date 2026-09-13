@@ -361,6 +361,19 @@ impl Analysis {
         self.with_db(|db| inlay_hints::inlay_hints(db, file_id, range, config))
     }
 
+    /// The library files the inlay hints of `range` need loaded before their
+    /// parameter names can be rendered — the LSP layer materializes them and
+    /// re-runs `textDocument/inlayHint`, exactly as it does for a hover or a
+    /// goto-definition. Empty when nothing a hint reads is pending.
+    pub fn inlay_hint_pending_library_files(
+        &self,
+        file_id: FileId,
+        range: rowan::TextRange,
+        config: &InlayHintsConfig,
+    ) -> Cancellable<Vec<LibraryFileRef>> {
+        self.with_db(|db| inlay_hints::pending_library_files(db, file_id, range, config))
+    }
+
     /// The detail of the one hint a resolve names — the tooltip, the label
     /// parts' declarations and the edits accepting the hint applies. `None`
     /// when no hint is anchored at `(offset, kind)` any more (see

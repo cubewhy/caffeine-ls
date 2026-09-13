@@ -5836,6 +5836,70 @@ fn test_inlay_hints_disabled_by_config() {
     );
 }
 
+/// A parameter-name hint on a library invocation materializes the member's
+/// declaring source itself: the first request defers, the main loop reads the
+/// archive entry — `lib/foo-sources.jar` beside the classpath's `foo.jar` — and
+/// the retried request renders the source's parameter name. The hint never
+/// waits for a user to open the declaration by hand.
+///
+/// The fixture's shim build system makes the jar the project's classpath; the
+/// hand-built classfile carries no `MethodParameters` attribute, so `count` can
+/// only have come from the materialized source, and the decompiler is never
+/// started for a library that ships sources.
+#[test]
+fn inlay_hint_names_library_member_from_source() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let foo_source =
+        "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
+    let app_source = "package app;\n\nclass App {\n    void call(com.example.Foo f) {\n        f.greet(1);\n    }\n}\n";
+    let app_path = "/src/main/java/app/App.java";
+
+    let decompiler = Decompiler::new(foo_source);
+    let lsp = create_lsp_with_config(decompiler.config(), |root| {
+        decompiler.setup_workspace(root, app_source);
+        lsp_test::classfile::build_jar(
+            &root.join("lib/foo-sources.jar"),
+            &[("com/example/Foo.java", foo_source.as_bytes().to_vec())],
+        )
+        .unwrap();
+    });
+
+    lsp.open_document(app_path);
+    lsp.wait_until_workspace_is_loaded();
+
+    // A literal argument is a shape whose role a reader cannot infer, so the
+    // invocation is hinted once the names are readable.
+    let response = request_until(
+        &lsp,
+        "textDocument/inlayHint",
+        json!({
+            "textDocument": { "uri": lsp.uri(app_path) },
+            "range": whole_file_range(app_source),
+        }),
+        |response| response.as_array().is_some_and(|hints| !hints.is_empty()),
+    );
+    let rows = render_inlay_hints(&response);
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+
+    let at = app_source.find("f.greet(1)").expect("`f.greet(1)`") + "f.greet(".len();
+    let (line, character) = position_at(app_source, at);
+    assert_eq!(rows[0], format!("{line}:{character} parameter count:"));
+
+    // The deferral materialized the declaring source; the test never opened it.
+    let cache_sources = lsp.cache_dir().join("sources").join("v1");
+    assert!(
+        java_file_names(&cache_sources).contains(&"Foo.java".to_string()),
+        "the hint's deferral must materialize the declaring source: {}",
+        cache_sources.display()
+    );
+    assert_eq!(
+        decompiler.jvm_runs(),
+        0,
+        "a library that ships sources must never be decompiled"
+    );
+}
+
 /// The workspace-load index stage indexes each library's *sources* as well as
 /// its classfiles, and says so: the progress it reports names them, which is
 /// what a client shows a user instead of an unexplained stall.

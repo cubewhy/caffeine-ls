@@ -85,10 +85,47 @@ pub(super) fn hints(
     config: &InlayHintsConfig,
 ) -> Vec<InlayHint> {
     let mut out = Vec::new();
-    collect(db, file, Search::Range(range), config, &mut out);
+    let mut pending = Vec::new();
+    collect(
+        db,
+        file,
+        Search::Range(range),
+        config,
+        &mut out,
+        &mut pending,
+    );
     let mut hints: Vec<InlayHint> = out.into_iter().map(|detail| detail.hint).collect();
     hints.sort_by_key(|hint| hint.offset);
     hints
+}
+
+/// The library files the hints over `range` need loaded before their parameter
+/// names can be rendered: the declaring sources of the library members their
+/// invocations selected, where the source is in the library's archive but not
+/// materialized. The LSP layer materializes them and re-runs the request —
+/// exactly the deferral goto-definition and hover drive — so a library member's
+/// names render on the first request instead of only once its source happens to
+/// be open.
+///
+/// Empty for a request the parameter-name category is off for, and for the
+/// calls whose arguments would render no hint anyway.
+pub(super) fn pending_library_files(
+    db: &RootDatabase,
+    file: FileId,
+    range: TextRange,
+    config: &InlayHintsConfig,
+) -> Vec<nav::LibraryFileRef> {
+    let mut out = Vec::new();
+    let mut pending = Vec::new();
+    collect(
+        db,
+        file,
+        Search::Range(range),
+        config,
+        &mut out,
+        &mut pending,
+    );
+    pending
 }
 
 /// The one hint a resolve names, with its deferred detail.
@@ -100,19 +137,29 @@ pub(super) fn resolve(
     config: &InlayHintsConfig,
 ) -> Option<InlayHintDetail> {
     let mut out = Vec::new();
-    collect(db, file, Search::At { offset, kind }, config, &mut out);
+    let mut pending = Vec::new();
+    collect(
+        db,
+        file,
+        Search::At { offset, kind },
+        config,
+        &mut out,
+        &mut pending,
+    );
     out.into_iter()
         .find(|detail| detail.hint.offset == offset && detail.hint.kind == kind)
 }
 
 /// Runs every collector over the file's body-carrying items, keeping the hints
-/// `search` asks for.
+/// `search` asks for and recording the library files a parameter-name hint
+/// needs loaded first.
 fn collect(
     db: &RootDatabase,
     file: FileId,
     search: Search,
     config: &InlayHintsConfig,
     out: &mut Vec<InlayHintDetail>,
+    pending: &mut Vec<nav::LibraryFileRef>,
 ) {
     let tree = hir::file_item_tree(db, file);
     let language = tree.language;
@@ -142,7 +189,7 @@ fn collect(
         };
         var_type_hints(db, source, &bodies, &inits, &types, &search, config, out);
         lambda_parameter_hints(db, file, source, &bodies, &types, &search, config, out);
-        parameter_name_hints(db, file, &bodies, &types, &search, config, out);
+        parameter_name_hints(db, file, &bodies, &types, &search, config, out, pending);
         method_chain_hints(db, file, &bodies, &types, &search, config, out);
     }
 }
@@ -461,6 +508,12 @@ fn lambda_parameter_hints(
 
 /// A method's parameter names at the arguments it is passed, where the argument
 /// does not already name it (`foo(size: 3)`).
+///
+/// A library member whose declaring source is not loaded yet is not hinted —
+/// instead its file is recorded in `pending`, which a caller turns into the
+/// same deferral goto-definition and hover drive (see
+/// [`pending_library_files`]).
+#[allow(clippy::too_many_arguments)]
 fn parameter_name_hints(
     db: &RootDatabase,
     file: FileId,
@@ -469,6 +522,7 @@ fn parameter_name_hints(
     search: &Search,
     config: &InlayHintsConfig,
     out: &mut Vec<InlayHintDetail>,
+    pending: &mut Vec<nav::LibraryFileRef>,
 ) {
     if !config.parameter_names {
         return;
@@ -491,32 +545,53 @@ fn parameter_name_hints(
         let Some(ResolvedMember::Method(method)) = types.resolved.get(&expr_id) else {
             continue;
         };
+        // A call that renders no hint whatever the parameter names are never
+        // needs a declaring source materialized: no parameter to name, an
+        // argument the parser could not lower (error recovery), an argument
+        // list the parameters cannot absorb, or arguments that all speak for
+        // themselves — in a well-typed call an argument of any other shape was
+        // inferred *against* the parameter it was selected for, so its type
+        // already names it. This runs before the names are consulted so the
+        // pending set names only the sources a hint actually waits on.
+        if method.params.is_empty()
+            || args
+                .iter()
+                .any(|arg| matches!(bodies.expr(*arg), ExprData::Missing))
+            || (!method.varargs && args.len() > method.params.len())
+            || !args
+                .iter()
+                .any(|&arg| is_unclear_argument(bodies, types, arg))
+        {
+            continue;
+        }
         // §8.4.1: the names are the selected declaration's own. A source
         // declaration carries them in its item tree; a *library* member records
         // none (a classfile writes them only in a `MethodParameters` attribute
         // this server does not read), so they are read back from its declaring
-        // source when that is loaded — and a library whose source is not, or a
-        // synthesized implicit member, gets no hint rather than an invented
-        // `arg0`-style name ([`nav::declared_parameter_names`]). A name list
-        // that does not line up with the parameter list is equally unusable.
+        // source when that is loaded. A source that is not loaded yet is
+        // recorded as pending, for the caller to materialize; a library that
+        // ships none, a decompiled declaring view, or a synthesized implicit
+        // member gets no hint rather than an invented `arg0`-style name
+        // ([`nav::declared_parameter_names`], [`nav::pending_parameter_names`]).
+        // A name list that does not line up with the parameter list is equally
+        // unusable.
         let names: Vec<String> = match method.param_names.clone() {
             Some(names) => names,
             None => match nav::declared_parameter_names(db, file, method, constructor) {
                 Some(names) => names,
-                None => continue,
+                None => {
+                    if let Some(pending_file) =
+                        nav::pending_parameter_names(db, file, method, constructor)
+                        && !pending.contains(&pending_file)
+                    {
+                        pending.push(pending_file);
+                    }
+                    continue;
+                }
             },
         };
         let names = names.as_slice();
-        if names.len() != method.params.len() || method.params.is_empty() {
-            continue;
-        }
-        // An argument the parser could not lower is error recovery, and an
-        // over-long argument list cannot be attributed to the parameters.
-        if args
-            .iter()
-            .any(|arg| matches!(bodies.expr(*arg), ExprData::Missing))
-            || (!method.varargs && args.len() > method.params.len())
-        {
+        if names.len() != method.params.len() {
             continue;
         }
         if names_say_nothing(method, names) {

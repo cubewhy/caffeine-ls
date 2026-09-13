@@ -2414,12 +2414,60 @@ fn library_member_hover(
 ///   or a decompiler are configured for it;
 /// * a declaring view that exists but is not materialized yet is *not* written
 ///   back: it can name the member once it is, so the miss stays a miss.
+///
+/// The pending case is not lost: [`pending_parameter_names`] reports the file
+/// that has to be loaded for it, which the inlay-hint layer defers on — so a
+/// library member's names render on the first request rather than only once its
+/// source happens to be open.
 pub(super) fn declared_parameter_names(
     db: &RootDatabase,
     file: FileId,
     method: &hir_ty::MethodData,
     constructor: bool,
 ) -> Option<Vec<String>> {
+    match declared_parameter_names_of(db, file, method, constructor) {
+        DeclaredParameterNames::Names(names) => Some(names),
+        DeclaredParameterNames::Pending(_) | DeclaredParameterNames::Unavailable => None,
+    }
+}
+
+/// The library file that has to be loaded before the member the invocation
+/// `method` selected can be named — the pending source of its declaring class,
+/// when there is one. The inlay-hint path drives the load with it, exactly as
+/// goto-definition and hover defer through [`pending_library_files`]; `None`
+/// when no load can name the member.
+pub(super) fn pending_parameter_names(
+    db: &RootDatabase,
+    file: FileId,
+    method: &hir_ty::MethodData,
+    constructor: bool,
+) -> Option<LibraryFileRef> {
+    match declared_parameter_names_of(db, file, method, constructor) {
+        DeclaredParameterNames::Pending(file) => Some(file),
+        DeclaredParameterNames::Names(_) | DeclaredParameterNames::Unavailable => None,
+    }
+}
+
+/// What the parameter-name lookup found for the declaration an invocation
+/// selected.
+enum DeclaredParameterNames {
+    /// The declaration's own names, in order.
+    Names(Vec<String>),
+    /// The declaring source is in the library's archive but not materialized:
+    /// the caller can load it and ask again.
+    Pending(LibraryFileRef),
+    /// No source this session reads will ever name the member: the library
+    /// ships none and no decompiler is configured for it, its declaring view
+    /// is decompiled rather than sourced, or the member is synthesized.
+    Unavailable,
+}
+
+fn declared_parameter_names_of(
+    db: &RootDatabase,
+    file: FileId,
+    method: &hir_ty::MethodData,
+    constructor: bool,
+) -> DeclaredParameterNames {
     let reference = if constructor {
         Reference::Constructor
     } else {
@@ -2427,28 +2475,46 @@ pub(super) fn declared_parameter_names(
     };
     // A classpath member is always named and described; one without either is
     // no library member, and no declaring source to read names from exists.
-    let owner = method.owner.as_fqn()?;
-    let descriptor = method.descriptor.as_deref()?;
-    let library = library_of(db, file, owner.as_str())?;
+    // Every early exit past this point that finds no source is `Unavailable`.
+    let unavailable = DeclaredParameterNames::Unavailable;
+    let (Some(owner), Some(descriptor)) = (method.owner.as_fqn(), method.descriptor.as_deref())
+    else {
+        return unavailable;
+    };
+    let Some(library) = library_of(db, file, owner.as_str()) else {
+        return unavailable;
+    };
     if let Some(cached) =
         hir::cached_member_params(db, library, owner.as_str(), &method.name, descriptor)
     {
-        return cached.into_names();
+        return cached
+            .into_names()
+            .map_or(unavailable, DeclaredParameterNames::Names);
     }
     let Some(decl) = hir::library_source_decl(db, library, owner.as_str()) else {
         // Nothing will ever declare the class from a source this session reads:
         // the library ships no sources, and no decompiler is configured for it.
         hir::cache_member_params(db, library, owner.as_str(), &method.name, descriptor, None);
-        return None;
+        return unavailable;
     };
-    let hir::LibrarySourceDecl::Loaded {
-        file: decl_file,
-        item,
-    } = decl
-    else {
-        // The declaring view is not materialized yet, and the hint path does
-        // not drive a materialization.
-        return None;
+    let (decl_file, item) = match decl {
+        hir::LibrarySourceDecl::Loaded { file, item } => (file, item),
+        // The declaring view is not materialized yet. A sourced one can name
+        // the member once it is loaded, so the caller is handed the file to
+        // materialize; a decompiled one would start a JVM the hint path does
+        // not drive.
+        hir::LibrarySourceDecl::Pending { entry, path } => {
+            return match hir::library_sources(db, library) {
+                Some(sources) => DeclaredParameterNames::Pending(LibraryFileRef::Source {
+                    library,
+                    archive: sources.archive,
+                    entry,
+                    path,
+                }),
+                None => unavailable,
+            };
+        }
+        hir::LibrarySourceDecl::Decompiled { .. } => return unavailable,
     };
     let tree = hir::file_item_tree(db, decl_file);
     let member = member_item(
@@ -2485,7 +2551,7 @@ pub(super) fn declared_parameter_names(
         descriptor,
         names.as_deref(),
     );
-    names
+    names.map_or(unavailable, DeclaredParameterNames::Names)
 }
 
 /// The library the class-like type `owner_fqn` denotes in `file`'s scope —
