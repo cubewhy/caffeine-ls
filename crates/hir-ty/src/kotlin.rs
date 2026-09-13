@@ -23,9 +23,13 @@
 //! * [`ty`] — building a [`crate::ty::Ty`] from an item tree type reference;
 //! * [`db`] — the memoized per-item queries;
 //! * [`subtyping`] — Kotlin's subtype and assignability rules;
-//! * [`method`] — a receiver's member set and overload selection.
+//! * [`method`] — a receiver's member set and overload selection;
+//! * [`diagnostics`] — the Kotlin type errors, with the compiler's wordings;
+//! * [`infer`] — body inference over the lowered body IR.
 
 pub mod db;
+pub mod diagnostics;
+pub mod infer;
 pub mod method;
 pub mod resolve;
 pub mod subtyping;

@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/kotlin_item_types.rs
+expression: "{\n    let source =\n    r#\"\nclass Holder(val value: Int)\n\nfun compute(holder: Holder): String {\n    val first = holder.value\n    val name: String = \"x\"\n    val optional: String? = name\n    val asserted = optional!!\n    val chosen = optional ?: name\n    val text = \"value is $first\"\n    val returned = if (first > 0) first else 0\n    val sum = first + 1\n    return name\n}\n\"#;\n    let (db, file) =\n    kotlin_fixture(&[(\"/src/main/kotlin/Sample.kt\", source)]); let rendered =\n    render_bodies(&db, file);\n    assert!(!rendered.contains(\"kotlin.\"),\n    \"the diagnostics of a clean fixture: {rendered}\"); rendered\n}"
+---
+e0: Holder
+e10: String
+e11: Int
+e12: Int
+e13: Boolean
+e14: Int
+e15: Int
+e16: Int
+e17: Int
+e18: Int
+e19: Int
+e1: Int
+e20: String
+e21: Nothing
+e2: String
+e3: String
+e4: String?
+e5: String
+e6: String?
+e7: String
+e8: String
+e9: <error>

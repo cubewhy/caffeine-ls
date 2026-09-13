@@ -119,8 +119,10 @@ pub use java::resolve::{
 };
 pub use java::subtyping::{is_assignable, is_subtype, supertypes};
 pub use java::ty::{capture_conversion, ty_from_source};
+pub use kotlin::db::body_types as kotlin_body_types;
 pub use kotlin::db::type_params as kotlin_type_params;
 pub use kotlin::db::{item_ty as kotlin_item_ty, supertypes as kotlin_supertypes};
+pub use kotlin::diagnostics::KotlinTypeError;
 pub use kotlin::resolve::KotlinResolver;
 pub use kotlin::subtyping::{is_assignable as kotlin_assignable, is_subtype as kotlin_subtype};
 pub use kotlin::ty::display_kotlin;

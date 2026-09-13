@@ -531,16 +531,42 @@ pub enum JavaDiagnosticCode {
     NotAStatement,
 }
 
-/// Kotlin diagnostic codes — none defined yet.
+/// The Kotlin type-system diagnostic codes.
+///
+/// Each names the error kotlinc reports for the same source, so the code and
+/// the message agree: the message is the compiler's wording (see
+/// `hir_ty::kotlin::diagnostics`), and the code is the stable identifier a
+/// client keys on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum KotlinDiagnosticCode {}
+pub enum KotlinDiagnosticCode {
+    /// `unresolved reference '<name>'.`
+    UnresolvedReference,
+    /// `initializer type mismatch: expected '<T>', actual '<S>'.`
+    TypeMismatch,
+    /// `null cannot be a value of a non-null type '<T>'.`
+    NullabilityMismatch,
+    /// `'val' cannot be reassigned.`
+    ValReassignment,
+}
+
+impl KotlinDiagnosticCode {
+    /// The stable machine-readable code string, without a language prefix.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KotlinDiagnosticCode::UnresolvedReference => "kotlin.unresolved-reference",
+            KotlinDiagnosticCode::TypeMismatch => "kotlin.type-mismatch",
+            KotlinDiagnosticCode::NullabilityMismatch => "kotlin.nullability-mismatch",
+            KotlinDiagnosticCode::ValReassignment => "kotlin.val-reassignment",
+        }
+    }
+}
 
 impl DiagnosticCode {
     /// The stable machine-readable code string, without a language prefix.
     pub fn as_str(&self) -> &'static str {
         match self {
             DiagnosticCode::Java(code) => code.as_str(),
-            DiagnosticCode::Kotlin(code) => match *code {},
+            DiagnosticCode::Kotlin(code) => code.as_str(),
         }
     }
 }

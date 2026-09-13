@@ -165,3 +165,27 @@ pub fn supertypes(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Arc<
 pub fn type_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Arc<[Ty]> {
     kotlin_type_params_query(db, KotlinItemKey::new(db, file_id, item_id))
 }
+
+/// The inferred types of a declaration's body, memoized per `(file, item)`.
+///
+/// SAFETY: the value holds `Ty` (interned handles) and `KotlinTypeError`s over
+/// `rowan::TextRange`s — no database-lifetime references — so salsa may retain
+/// it across revisions.
+#[salsa::tracked(returns(clone))]
+pub(crate) fn kotlin_body_types_query<'db>(
+    db: &'db dyn TyDatabase,
+    key: KotlinItemKey<'db>,
+) -> Arc<super::infer::KotlinBodyTypes> {
+    let file_id = key.file(db);
+    let item_id = key.item(db);
+    Arc::new(super::infer::infer_item(db, file_id, item_id))
+}
+
+/// The inferred types of a declaration's body, memoized per `(file, item)`.
+pub fn body_types(
+    db: &dyn TyDatabase,
+    file_id: FileId,
+    item_id: ItemId,
+) -> Arc<super::infer::KotlinBodyTypes> {
+    kotlin_body_types_query(db, KotlinItemKey::new(db, file_id, item_id))
+}

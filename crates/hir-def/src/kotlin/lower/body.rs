@@ -443,7 +443,14 @@ fn stmt_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
 /// carrying the declared or initializer expression.
 fn local_property(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtData {
     let initializer = lower_property_initializer(ctx, owner, node);
-    let declared = declared_type(ctx, node);
+    // The declared type of `val x: T` sits on the *variable declaration* child
+    // ([spec: grammar-rule-variableDeclaration]), not on the property node.
+    let declaration = node
+        .children()
+        .find(|child| is(child, K::VARIABLE_DECLARATION));
+    let declared = declaration
+        .as_ref()
+        .and_then(|declaration| declared_type(ctx, declaration));
 
     // A destructuring declaration (`val (a, b) = pair`) binds one local per
     // component ([KLS

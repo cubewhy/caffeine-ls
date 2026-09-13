@@ -315,3 +315,101 @@ mod subtyping {
         );
     }
 }
+
+// -- body inference ---------------------------------------------------------
+
+/// The inferred types and diagnostics of a fixture's bodies, rendered one
+/// line per inferred expression in arena order plus one per error.
+fn render_bodies(db: &TestDatabase, file: FileId) -> String {
+    let tree = hir::file_item_tree(db, file);
+    let tree = tree.as_kotlin().expect("a Kotlin file").clone();
+    let mut lines = Vec::new();
+    for (id, data) in tree.items.iter() {
+        let Some(body) = data.body_id() else {
+            continue;
+        };
+        let _ = body;
+        let types = hir_ty::kotlin_body_types(db, file, hir_expand::ids::ItemId(id));
+        for (expr, ty) in types.exprs.iter() {
+            lines.push(format!(
+                "e{}: {}",
+                expr.0.0,
+                hir_ty::display_kotlin(db, *ty)
+            ));
+        }
+        for diagnostic in &types.diagnostics {
+            lines.push(format!(
+                "{}: {}",
+                diagnostic.code().as_str(),
+                diagnostic.message(db)
+            ));
+        }
+    }
+    lines.sort();
+    lines.join("\n")
+}
+
+/// Every fixture here is a source kotlinc 2.4.20 either accepts (exit 0, no
+/// output) or rejects with exactly the message the diagnostic renders.
+#[test]
+fn inferred_expression_types_match_the_compiler() {
+    insta::assert_snapshot!("kotlin_infer_expression_types", {
+        // Source-declared members only: a *library* member is not
+        // collected yet (see `hir_ty::kotlin::method`), and this fixture
+        // pins the inference, not that gap.
+        let source = r#"
+class Holder(val value: Int)
+
+fun compute(holder: Holder): String {
+    val first = holder.value
+    val name: String = "x"
+    val optional: String? = name
+    val asserted = optional!!
+    val chosen = optional ?: name
+    val text = "value is $first"
+    val returned = if (first > 0) first else 0
+    val sum = first + 1
+    return name
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "the diagnostics of a clean fixture: {rendered}"
+        );
+        rendered
+    });
+}
+
+/// The negative cases, each of which kotlinc rejects with the message the
+/// diagnostic renders:
+///
+/// * `val x: String = null` →
+///   `null cannot be a value of a non-null type 'String'.`
+/// * `val x: String = listOf(1, 2)` →
+///   `initializer type mismatch: expected 'String', actual 'List<Int>'.`
+/// * `x` unresolved → `unresolved reference 'x'.`
+#[test]
+fn diagnostics_match_the_compiler_wordings() {
+    let source = r#"
+fun broken() {
+    val a: String = null
+    val b: String = missing()
+    val c: String = 1
+    undefinedName
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    for expected in [
+        "kotlin.nullability-mismatch: null cannot be a value of a non-null type 'String'.",
+        "kotlin.unresolved-reference: unresolved reference 'undefinedName'.",
+        "kotlin.type-mismatch: initializer type mismatch: expected 'String', actual 'Int'.",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "expected {expected:?} in:\n{rendered}"
+        );
+    }
+}
