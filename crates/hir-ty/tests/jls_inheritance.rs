@@ -666,3 +666,37 @@ sealed final class SF {}
     )])
 );
 // Red: `sealed` and `final` are contradictory ([§8.1.1.2]).
+
+// JLS §8.9.1/[§15.9.1]: a constant's class body declares members of the
+// anonymous class the constant denotes — an ordinary subclass of the enum —
+// so those members see the enum's own members (a static helper, the abstract
+// `matches` they override) and nothing about them is unresolved. javac:
+// ```text
+// (no output)
+// ```
+snapshot!(
+    enum_constant_body_members_are_members,
+    check_class_diagnostics(&[(
+        "/src/com/example/Side.java",
+        "\
+package com.example;
+
+enum Side {
+    OLD {
+        @Override boolean matches(int n) { return n < 0; }
+
+        int cached = helper();
+
+        void local() { helper(); }
+    },
+    NEW {
+        @Override boolean matches(int n) { return true; }
+    };
+
+    abstract boolean matches(int n);
+
+    static int helper() { return 1; }
+}
+",
+    )])
+);

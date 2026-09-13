@@ -421,3 +421,40 @@ class Cat {
 ",
     )])
 );
+
+// JLS §9.6.4.5/[§8.9.1]: an enum constant is a declaration, and §9.6.4.5
+// scopes a suppression to "the annotated declaration or any of its parts" —
+// the constant's class body is one of them. The grammar has no modifier list
+// for an `ENUM_CONSTANT`, so its annotations are children of the constant
+// itself; they nonetheless suppress within that constant and no sibling, and
+// the members of the body are members of the anonymous class it denotes
+// ([§15.9.1]), so their declared types are checked like any other field's.
+// javac reports only the sibling:
+// ```text
+// Cases.java:11: warning: [rawtypes] found raw type: List
+//         List raw;
+//         ^
+//   missing type arguments for generic class List<E>
+// 1 warning
+// ```
+snapshot!(
+    enum_constant_body_scope,
+    check_class_diagnostics(&[(
+        "/src/com/example/Cases.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+enum Cases {
+    @SuppressWarnings(\"rawtypes\")
+    A {
+        List raw;
+    },
+    B {
+        List raw;
+    };
+}
+",
+    )])
+);

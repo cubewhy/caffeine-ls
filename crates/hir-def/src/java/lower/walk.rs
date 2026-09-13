@@ -572,6 +572,7 @@ fn enum_body_members(ctx: &mut LowerCtx<'_>, body: &SyntaxNode<Lang>) -> Vec<Ite
             let constant_id = ctx.alloc(ItemData::EnumConstant(EnumConstantData {
                 name,
                 argument_exprs: Vec::new(),
+                body: Vec::new(),
                 ast: ctx
                     .map
                     .ast_id(&node_ptr(&child))
@@ -587,6 +588,16 @@ fn enum_body_members(ctx: &mut LowerCtx<'_>, body: &SyntaxNode<Lang>) -> Vec<Ite
                     unreachable!("enum constant");
                 };
                 data.argument_exprs = exprs;
+            }
+            // §8.9.1/[§15.9.1]: the constant's class body declares members of
+            // the anonymous class it denotes — an ordinary class body, lowered
+            // like any other so its declarations are checked and navigable.
+            let members = body_members(ctx, &child, J::CLASS_BODY);
+            if !members.is_empty() {
+                let ItemData::EnumConstant(data) = ctx.tree.items.get_mut(constant_id.0) else {
+                    unreachable!("enum constant");
+                };
+                data.body = members;
             }
             ids.push(constant_id);
         } else if is(&child, J::FIELD_DECL) {

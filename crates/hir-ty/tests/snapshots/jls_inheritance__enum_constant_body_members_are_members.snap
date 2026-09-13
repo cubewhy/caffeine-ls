@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Side.java:
+package com.example;
+
+enum Side {
+    OLD {
+        @Override boolean matches(int n) { return n < 0; }
+
+        int cached = helper();
+
+        void local() { helper(); }
+    },
+    NEW {
+        @Override boolean matches(int n) { return true; }
+    };
+
+    abstract boolean matches(int n);
+
+    static int helper() { return 1; }
+}

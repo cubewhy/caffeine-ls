@@ -146,14 +146,16 @@ impl AstIdMap {
     ///   applies this same rule. The rest of the block is still traversed —
     ///   a lambda body or a nested block may declare a local class too — but
     ///   nothing in it is indexed;
-    /// - `CLASS_BODY` not directly under a `CLASS_DECL` — anonymous and
-    ///   enum-constant class bodies, which are pruned whole (the members of a
-    ///   *named* class are declaration skeleton and are descended into);
+    /// - `CLASS_BODY` not directly under a `CLASS_DECL` — an *anonymous*
+    ///   class body, pruned whole (its members are not lowered), while an
+    ///   enum constant's class body is descended into exactly like a named
+    ///   class's: the members of the anonymous class a constant denotes are
+    ///   declarations ([JLS §8.9.1], [§15.9.1]);
     /// - `VARIABLE_DECLARATOR` — the declarator itself is indexed, its
     ///   initializer expression is body-side and re-walked at resolution
     ///   time (a lambda in it may still declare a local class);
-    /// - `ENUM_CONSTANT` — the constant itself is indexed, its arguments and
-    ///   constant class body are body-side;
+    /// - `ENUM_CONSTANT` — the constant itself is indexed, its arguments are
+    ///   body-side, and its class body is a declaration region (above);
     /// - `ANNOTATION_TYPE_ELEMENT_DECL` — indexed, and only its
     ///   `MODIFIER_LIST` and `TYPE` children are declaration skeleton; the
     ///   default value expression is body-side (`default_expr`).
@@ -201,11 +203,16 @@ impl AstIdMap {
                                 stack.push((child, Some(kind), body));
                             }
                         }
-                        // The members of a named class are declarations; the
-                        // class body of an anonymous class or an enum
-                        // constant is body content, pruned whole (its local
-                        // declarations are not lowered).
-                        J::CLASS_BODY if parent != Some(J::CLASS_DECL) => {}
+                        // The members of a named class are declarations, and
+                        // so are those of an enum constant's class body — the
+                        // anonymous class the constant denotes ([§8.9.1],
+                        // [§15.9.1]). An *anonymous* class body's members are
+                        // not lowered, so its body stays pruned whole.
+                        J::CLASS_BODY if parent != Some(J::CLASS_DECL) => {
+                            if parent == Some(J::ENUM_CONSTANT) {
+                                push(&mut stack, children, false);
+                            }
+                        }
                         // The declarator itself is indexed; its name, dims and
                         // initializer are re-walked at resolution time.
                         J::VARIABLE_DECLARATOR | J::ENUM_CONSTANT => {
@@ -487,6 +494,93 @@ class Foo {
         assert_eq!(id_sequence(text), id_sequence(&body_edit));
         let added = text.replace("int local = 1;", "int local = 1;\n        class Other {}");
         assert_ne!(id_sequence(text), id_sequence(&added));
+    }
+
+    /// An enum constant's class body is the body of the anonymous class the
+    /// constant denotes ([JLS §8.9.1], [§15.9.1]), so its members are
+    /// declarations and are anchored — unlike an *anonymous* class body's,
+    /// which nothing lowers and which stays body content.
+    #[test]
+    fn enum_constant_bodies_are_indexed() {
+        let text = "\
+enum Tree {
+    OLD {
+        int f;
+        void m() {
+        }
+    },
+    NEW {
+        int g;
+    };
+}
+";
+        let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
+        let SourceFile::Java(file) = &parse.syntax_node(LanguageKind::Java) else {
+            panic!("expected a Java source file");
+        };
+        let root = &file.syntax_node;
+        let map = AstIdMap::from_source_file(&parse.syntax_node(LanguageKind::Java));
+
+        let indexed: Vec<_> = map
+            .arena
+            .iter()
+            .map(|(_, ptr)| {
+                let node = map.try_to_node(ptr, root).expect("resolvable pointer");
+                (node.kind(), ptr.range)
+            })
+            .collect();
+        let count = |kind| indexed.iter().filter(|(k, _)| *k == kind).count();
+        assert_eq!(count(J::ENUM_CONSTANT), 2, "{indexed:?}");
+        assert_eq!(count(J::FIELD_DECL), 2, "{indexed:?}");
+        assert_eq!(count(J::METHOD_DECL), 1, "{indexed:?}");
+
+        // Naming a local or rewriting an initializer inside a constant's
+        // member is still body-side; declaring another member is structural.
+        fn id_sequence(text: &str) -> Vec<(u16, u32)> {
+            let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
+            let map = AstIdMap::from_source_file(&parse.syntax_node(LanguageKind::Java));
+            map.arena
+                .iter()
+                .map(|(id, ptr)| (ptr.kind.0, id.0))
+                .collect()
+        }
+        let body_edit = text.replace(
+            "        void m() {\n",
+            "        void m() {\n            int local = 1;\n",
+        );
+        assert_eq!(id_sequence(text), id_sequence(&body_edit));
+        let added = text.replace("        int g;", "        int g;\n        int h;");
+        assert_ne!(id_sequence(text), id_sequence(&added));
+    }
+
+    /// An anonymous class body (`new Foo() { … }`) has no item tree, so
+    /// nothing in it is indexed.
+    #[test]
+    fn anonymous_class_bodies_are_pruned() {
+        let text = "\
+class Foo {
+    Runnable r = new Runnable() {
+        public void run() {
+        }
+    };
+}
+";
+        let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
+        let SourceFile::Java(file) = &parse.syntax_node(LanguageKind::Java) else {
+            panic!("expected a Java source file");
+        };
+        let root = &file.syntax_node;
+        let map = AstIdMap::from_source_file(&parse.syntax_node(LanguageKind::Java));
+        let kinds: Vec<_> = map
+            .arena
+            .iter()
+            .map(|(_, ptr)| {
+                map.try_to_node(ptr, root)
+                    .expect("resolvable pointer")
+                    .kind()
+            })
+            .collect();
+        assert!(!kinds.contains(&J::METHOD_DECL), "{kinds:?}");
     }
 
     /// A local declaration is reachable through every block a body nests —

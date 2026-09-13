@@ -338,6 +338,9 @@ impl ItemData {
             ItemData::Enum(d) => &d.body,
             ItemData::Record(d) => &d.body,
             ItemData::Annotation(d) => &d.body,
+            // §8.9.1/[§15.9.1]: an enum constant's class body declares
+            // members of the anonymous class the constant denotes.
+            ItemData::EnumConstant(d) => &d.body,
             _ => &[],
         }
     }
@@ -885,6 +888,14 @@ pub struct FieldData {
 pub struct EnumConstantData {
     pub name: Name,
     pub argument_exprs: Vec<ExprId>,
+    /// The members of the constant's class body, in source order — the
+    /// ordinary class body an enum constant may carry
+    /// ([§8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1),
+    /// [§15.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.1)):
+    /// the constant denotes an anonymous class that extends the enum, so its
+    /// fields, methods and initializers are members of that class, declared
+    /// *inside* the constant. Empty for a constant without a class body.
+    pub body: Vec<ItemId>,
     /// The `ENUM_CONSTANT` syntax node of the constant; its argument list and
     /// constant class body ranges are derived from it on demand.
     pub ast: FileAstId<EnumConstantNode>,

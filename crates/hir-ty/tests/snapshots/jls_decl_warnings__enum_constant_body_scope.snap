@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_decl_warnings.rs
+expression: out
+---
+FILE /src/com/example/Cases.java:
+package com.example;
+
+import java.util.List;
+
+enum Cases {
+    @SuppressWarnings("rawtypes")
+    A {
+        List raw;
+    },
+    B {
+        List raw;
+    };
+}
+
+@10:8: raw-type-use: Raw use of parameterized class 'List'
