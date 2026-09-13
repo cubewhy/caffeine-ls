@@ -1,0 +1,9 @@
+---
+source: crates/ide/tests/inlay_hints.rs
+expression: render_hints(&hints)
+---
+Parameter @208 size:
+Parameter @211 count:
+Parameter @214 other:
+Parameter @220 sum:
+Parameter @233 delta:

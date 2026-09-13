@@ -28,8 +28,8 @@
 //! hint's edit replaces ([`var_keyword_range`]); everything else comes from the
 //! HIR.
 
-use hir_expand::body::{BodyTree, ExprData, ExprId, LocalId, StmtData};
-use hir_ty::{BodyTypes, BoundKind, Ty, TyDatabase, TyKind};
+use hir_expand::body::{BodyTree, ExprData, ExprId, LocalId, StmtData, UnaryOp};
+use hir_ty::{BodyTypes, BoundKind, MethodData, ResolvedMember, Ty, TyDatabase, TyKind};
 use rowan::{SyntaxNode, TextRange, TextSize};
 use rustc_hash::FxHashMap;
 use syntax::SourceFile;
@@ -470,13 +470,228 @@ fn lambda_parameter_hints(
 /// does not already name it (`foo(size: 3)`).
 #[allow(clippy::too_many_arguments)]
 fn parameter_name_hints(
-    _db: &dyn TyDatabase,
-    _bodies: &BodyTree,
-    _types: &BodyTypes,
-    _search: &Search,
-    _config: &InlayHintsConfig,
-    _out: &mut Vec<InlayHintDetail>,
+    db: &dyn TyDatabase,
+    bodies: &BodyTree,
+    types: &BodyTypes,
+    search: &Search,
+    config: &InlayHintsConfig,
+    out: &mut Vec<InlayHintDetail>,
 ) {
+    if !config.parameter_names {
+        return;
+    }
+    // The expression arena is in lowering order, so the hints come out in
+    // source order without a hash iteration order to sort out afterwards.
+    for (id, expr) in bodies.exprs.iter() {
+        let expr_id = ExprId(id);
+        // The calls a parameter list belongs to: an invocation, a class
+        // instance creation ([JLS §15.9]) and an explicit constructor
+        // invocation ([§8.8.7.1]) — IntelliJ's `PsiCall` set.
+        let args: &[ExprId] = match expr {
+            ExprData::MethodCall { args, .. } => args,
+            ExprData::New { args, .. } => args,
+            ExprData::CtorCall { args, .. } => args,
+            _ => continue,
+        };
+        // The *declaration form* the invocation selected. An unresolved or
+        // ambiguous invocation names no single declaration to read names from.
+        let Some(ResolvedMember::Method(method)) = types.resolved.get(&expr_id) else {
+            continue;
+        };
+        // A library member records no parameter names ([`MethodData::param_names`]
+        // is `Some` only for source declarations), and this feature refuses to
+        // invent `arg0`-style ones. A name list that does not line up with the
+        // parameter list is equally unusable.
+        let Some(names) = method.param_names.as_deref() else {
+            continue;
+        };
+        if names.len() != method.params.len() || method.params.is_empty() {
+            continue;
+        }
+        // An argument the parser could not lower is error recovery, and an
+        // over-long argument list cannot be attributed to the parameters.
+        if args
+            .iter()
+            .any(|arg| matches!(bodies.expr(*arg), ExprData::Missing))
+            || (!method.varargs && args.len() > method.params.len())
+        {
+            continue;
+        }
+        if names_say_nothing(method, names) {
+            continue;
+        }
+        // §8.4.1: the varargs formal is the *array* of its element, so it is
+        // the last parameter and the arguments from its index on are its
+        // elements.
+        let regular = if method.varargs {
+            method.params.len() - 1
+        } else {
+            method.params.len()
+        };
+        for (index, name) in names.iter().enumerate().take(regular) {
+            let Some(&arg) = args.get(index) else {
+                continue;
+            };
+            if argument_names_parameter(bodies, name, arg)
+                || !is_unclear_argument(bodies, types, arg)
+            {
+                continue;
+            }
+            push_parameter_hint(db, method, search, bodies, arg, format!("{name}:"), out);
+        }
+        // The trailing elements of a varargs call get *one* hint for the
+        // whole group, at the first of them.
+        if method.varargs && args.len() > regular {
+            let trailing = &args[regular..];
+            if trailing
+                .iter()
+                .any(|arg| is_unclear_argument(bodies, types, *arg))
+                && let Some(&first) = trailing.first()
+            {
+                let name = &names[regular];
+                push_parameter_hint(
+                    db,
+                    method,
+                    search,
+                    bodies,
+                    first,
+                    format!("...{name}:"),
+                    out,
+                );
+            }
+        }
+    }
+}
+
+/// Whether the declaration's parameter names already say nothing worth
+/// rendering: a lone parameter named after the method it belongs to
+/// (`setName(String name)`), or a run of numbered names sharing one prefix
+/// (`arg0, arg1`, `p1, p2, p3`).
+fn names_say_nothing(method: &MethodData, names: &[String]) -> bool {
+    if names.len() == 1
+        && names[0].len() > 1
+        && method
+            .name
+            .to_lowercase()
+            .contains(&names[0].to_lowercase())
+    {
+        return true;
+    }
+    are_numbered_parameters(names)
+}
+
+/// Whether every name is `{prefix}{n}` for one shared prefix with consecutive
+/// numbers starting at 0 or 1 — a naming scheme that describes position, not
+/// role.
+fn are_numbered_parameters(names: &[String]) -> bool {
+    let mut prefix: Option<&str> = None;
+    let mut previous: Option<u32> = None;
+    for name in names {
+        let digits = name.len() - name.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+        // A name with no digits, or nothing but digits, is not this scheme.
+        if digits == 0 || digits == name.len() {
+            return false;
+        }
+        let (this_prefix, number) = name.split_at(name.len() - digits);
+        let Ok(number) = number.parse::<u32>() else {
+            return false;
+        };
+        match prefix {
+            // The run starts at 0 or 1.
+            None if number > 1 => return false,
+            None => prefix = Some(this_prefix),
+            Some(prefix) if prefix != this_prefix => return false,
+            Some(_) if previous.is_some_and(|prev| number != prev + 1) => return false,
+            Some(_) => {}
+        }
+        previous = Some(number);
+    }
+    true
+}
+
+/// Whether the argument already says the parameter's name — IntelliJ hides a
+/// hint whose value names it itself. Only a bare variable reference or a
+/// called method's name is read (never a field access), and a name shorter
+/// than three characters is too short to mean anything either way.
+fn argument_names_parameter(bodies: &BodyTree, parameter: &str, arg: ExprId) -> bool {
+    let Some(argument) = (match bodies.expr(arg) {
+        ExprData::Var(name) => Some(name.as_str()),
+        ExprData::MethodCall { name, .. } => Some(name.as_str()),
+        _ => None,
+    }) else {
+        return false;
+    };
+    let argument = argument.to_lowercase();
+    let parameter = parameter.to_lowercase();
+    argument.len() >= 3
+        && parameter.len() >= 3
+        && (argument.contains(&parameter) || parameter.contains(&argument))
+}
+
+/// Whether an argument is one whose purpose a reader cannot infer from the
+/// value alone — IntelliJ's `shouldShowHintsForExpression`: a literal, `null`,
+/// `this`, a polyadic expression, a signed numeric literal, or
+/// `java.util.Optional.empty()`.
+///
+/// The complement — an argument of any other shape — gets no hint: in a
+/// well-typed call it was inferred *against* the parameter it was selected
+/// for, so its type already names it.
+fn is_unclear_argument(bodies: &BodyTree, types: &BodyTypes, arg: ExprId) -> bool {
+    match bodies.expr(arg) {
+        ExprData::Literal(_) | ExprData::Null | ExprData::This { .. } | ExprData::Binary { .. } => {
+            true
+        }
+        ExprData::Unary {
+            op: UnaryOp::Plus | UnaryOp::Minus,
+            expr,
+        } => matches!(bodies.expr(*expr), ExprData::Literal(_)),
+        ExprData::MethodCall { name, args, .. } => {
+            name.as_str() == "empty"
+                && args.is_empty()
+                && matches!(
+                    types.resolved.get(&arg),
+                    Some(ResolvedMember::Method(method))
+                        if method.name == "empty"
+                            && method
+                                .owner
+                                .as_fqn()
+                                .is_some_and(|fqn| fqn.as_str() == "java.util.Optional")
+                )
+        }
+        _ => false,
+    }
+}
+
+/// Records one parameter-name hint at the argument's own start
+/// (`foo(size: 3)`).
+#[allow(clippy::too_many_arguments)]
+fn push_parameter_hint(
+    db: &dyn TyDatabase,
+    method: &MethodData,
+    search: &Search,
+    bodies: &BodyTree,
+    arg: ExprId,
+    value: String,
+    out: &mut Vec<InlayHintDetail>,
+) {
+    let Some(range) = bodies.expr_range(arg) else {
+        return;
+    };
+    let offset = range.start();
+    if !search.matches_hint(offset, InlayHintKind::Parameter) {
+        return;
+    }
+    out.push(InlayHintDetail {
+        hint: InlayHint {
+            offset,
+            label: vec![part(value)],
+            kind: InlayHintKind::Parameter,
+            padding_left: false,
+            padding_right: true,
+        },
+        tooltip: method.display(db).to_string(),
+        edits: Vec::new(),
+    });
 }
 
 // -- method chain types ---------------------------------------------------------------

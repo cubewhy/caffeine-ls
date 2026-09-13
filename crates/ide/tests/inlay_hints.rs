@@ -3,11 +3,12 @@
 use triomphe::Arc;
 
 use ide::{
-    Analysis, AnalysisHost, Change, Classpath, InlayHint, InlayHintKind, InlayHintsConfig,
-    ProjectGraphData, SourceSetId,
+    Analysis, AnalysisHost, Change, Classpath, ClasspathEntry, InlayHint, InlayHintKind,
+    InlayHintsConfig, LibraryId, LibraryInfo, LibraryKind, ProjectGraphData, SourceSetId,
 };
 use ide_db::base_db::{SourceRoot, SourceRootId};
 use insta::assert_snapshot;
+use lsp_test::classfile::{build_jar, class_bytes};
 use rowan::{TextRange, TextSize};
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 
@@ -19,6 +20,8 @@ fn main_source_set(project: u32) -> SourceSetId {
 }
 
 struct Fixture {
+    /// Keeps a fixture's dependency jar alive for the test's lifetime.
+    _dir: Option<tempfile::TempDir>,
     host: AnalysisHost,
     file: FileId,
     text: String,
@@ -93,6 +96,57 @@ fn test_file(text: &str) -> Fixture {
     host.apply_change(change);
 
     Fixture {
+        _dir: None,
+        host,
+        file,
+        text: text.to_owned(),
+    }
+}
+
+/// A workspace file plus one dependency jar holding `com.example.Lib` with the
+/// given members. The jar's members are *library* members: no classfile
+/// without a `MethodParameters` attribute records parameter names, which is
+/// exactly the case the parameter-name hints refuse to guess at.
+fn library_file(text: &str, lib_methods: &[(&str, usize)]) -> Fixture {
+    let dir = tempfile::TempDir::new().unwrap();
+    let base = dir.path().to_path_buf();
+    let jar = base.join("lib/deps.jar");
+    let class = class_bytes("com/example/Lib", "java/lang/Object", &[], lib_methods);
+    build_jar(&jar, &[("com/example/Lib.class", class)]).unwrap();
+
+    let file = FileId::from_raw(1);
+    let mut change = Change::default();
+    let mut file_set = FileSet::default();
+    file_set.insert(
+        file,
+        VfsPath::from(AbsPathBuf::assert_utf8(
+            base.join("src/com/example/App.java"),
+        )),
+    );
+    change.change_file(file, Some(text.to_owned()));
+    change.set_roots(vec![SourceRoot::new(file_set)]);
+
+    let library = LibraryId::from_file_path(&jar).unwrap();
+    let mut data = ProjectGraphData::default();
+    data.libraries.insert(
+        library,
+        LibraryInfo::new(LibraryKind::Jar, AbsPathBuf::assert_utf8(jar)),
+    );
+    data.source_sets.insert(
+        main_source_set(0),
+        Arc::new(Classpath {
+            entries: vec![ClasspathEntry::Library(library)],
+        }),
+    );
+    data.source_root_to_source_set
+        .insert(SourceRootId(0), main_source_set(0));
+
+    let mut host = AnalysisHost::new();
+    change.set_project_graph(data);
+    host.apply_change(change);
+
+    Fixture {
+        _dir: Some(dir),
         host,
         file,
         text: text.to_owned(),
@@ -373,4 +427,182 @@ fn lambda_parameter_type_omitted() {
     // A parameter that writes its own type states it, an untargeted lambda has
     // no SAM to read, and a parameterless lambda declares none.
     assert_eq!(render_hints(&fixture.hints()), "");
+}
+
+const PARAMETER_UNCLEAR: &str = r#"package com.example;
+
+class Text {
+    int count;
+}
+
+class Sample {
+    int field;
+
+    static void foo(int size, int count, Text other, int sum, int delta) {
+    }
+
+    void run(Text b, int c) {
+        foo(1, 2, null, b.count + c, -1);
+    }
+}
+"#;
+
+#[test]
+fn parameter_names_unclear_arguments() {
+    let fixture = test_file(PARAMETER_UNCLEAR);
+    let hints = fixture.hints();
+
+    // Every hint renders the name *before* its argument, `foo(size: 1, ...)`.
+    assert_eq!(hints.len(), 5);
+    assert_eq!(hints[0].offset, fixture.offset_start("1, 2, null", 0));
+    assert_eq!(hints[0].kind, InlayHintKind::Parameter);
+    assert_eq!(hints[1].offset, fixture.offset_start("2, null", 0));
+    assert_eq!(hints[2].offset, fixture.offset_start("null, b.count", 0));
+    assert_eq!(hints[3].offset, fixture.offset_start("b.count + c", 0));
+    assert_eq!(hints[4].offset, fixture.offset_start("-1);", 0));
+
+    assert_snapshot!("parameter_names_unclear_arguments", render_hints(&hints));
+}
+
+const PARAMETER_OMITTED: &str = r#"package com.example;
+
+class Text {
+    int count;
+}
+
+class Sample {
+    static void setSize(int size) {
+    }
+
+    static void setField(Text config) {
+    }
+
+    static void add(int arg0, int arg1) {
+    }
+
+    static void pick(int x, double y) {
+    }
+
+    static void pick(double x, int y) {
+    }
+
+    static void tick(Text t) {
+    }
+
+    Text config;
+
+    void run(Text config, int size) {
+        setSize(size);
+        setField(config);
+        add(1, 2);
+        tick(this.config);
+        pick(1, 1);
+    }
+}
+"#;
+
+#[test]
+fn parameter_names_omitted() {
+    let fixture = test_file(PARAMETER_OMITTED);
+
+    // Each call's hint is suppressed by its own rule: the argument repeats the
+    // parameter's name (`setSize(size)`, `setField(config)`), every parameter
+    // name is numbered (`arg0, arg1`), the argument is not an unclear one
+    // (`this.config`), or the invocation selected no declaration at all
+    // (`pick(1, 1)` ties, [JLS §15.12.2.5]).
+    assert_eq!(render_hints(&fixture.hints()), "");
+}
+
+const PARAMETER_LIBRARY: &str = r#"package com.example;
+
+class App {
+    static void own(int value) {
+    }
+
+    void run(Lib lib) {
+        lib.from(1);
+        own(1);
+    }
+}
+"#;
+
+#[test]
+fn parameter_names_library_member_omitted() {
+    let fixture = library_file(PARAMETER_LIBRARY, &[("from", 1)]);
+    let hints = fixture.hints();
+
+    // The library member records no parameter names, so it gets no hint while
+    // the source method beside it does.
+    assert_eq!(hints.len(), 1);
+    // The second `1);` — `own(1)`'s argument, after the library call's.
+    assert_eq!(hints[0].offset, fixture.offset_start("1);", 1));
+    assert_snapshot!("parameter_names_library_member", render_hints(&hints));
+}
+
+const PARAMETER_OPTIONAL: &str = r#"package java.util;
+
+class Text {
+}
+
+class Optional<T> {
+    static <T> Optional<T> empty() {
+        return null;
+    }
+}
+
+class Sample {
+    static void use(Optional<Text> o) {
+    }
+
+    void run() {
+        use(Optional.empty());
+    }
+}
+"#;
+
+/// `java.util.Optional.empty()` is unclear regardless of its owner's shape: the
+/// empty container says nothing about what it is passed for. The fixture
+/// declares `java.util.Optional` itself — the rule's test is the owner's
+/// *canonical name*, which a source declaration carries exactly as a classpath
+/// one does ([JLS §6.7]).
+#[test]
+fn parameter_names_optional_empty() {
+    let fixture = test_file(PARAMETER_OPTIONAL);
+    let hints = fixture.hints();
+
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].offset, fixture.offset_start("Optional.empty()", 0));
+    assert_snapshot!("parameter_names_optional_empty", render_hints(&hints));
+}
+
+const PARAMETER_VARARGS: &str = r#"package com.example;
+
+class Text {
+}
+
+class Sample {
+    static void printf(Text format, int... args) {
+    }
+
+    static Text text() {
+        return null;
+    }
+
+    void run() {
+        printf(text(), 1, 2);
+    }
+}
+"#;
+
+#[test]
+fn parameter_names_varargs() {
+    let fixture = test_file(PARAMETER_VARARGS);
+    let hints = fixture.hints();
+
+    // One hint for the whole trailing group, at its first element, named after
+    // the varargs formal ([JLS §8.4.1]) — not one hint per element.
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].offset, fixture.offset_start("1, 2);", 0));
+    assert_eq!(hints[0].kind, InlayHintKind::Parameter);
+    assert_snapshot!("parameter_names_varargs", render_hints(&hints));
 }

@@ -1,0 +1,5 @@
+---
+source: crates/ide/tests/inlay_hints.rs
+expression: render_hints(&hints)
+---
+Parameter @131 value:
