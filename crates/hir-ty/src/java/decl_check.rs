@@ -2668,6 +2668,8 @@ fn body_has_ctor_call(bodies: &BodyTree, body_id: hir_expand::body::BodyId) -> b
             // A local class's own constructor bodies are separate bodies of
             // the file, not part of this one.
             StmtData::LocalClass { .. } | StmtData::Missing => {}
+            // A Kotlin local function — unreachable from a Java body.
+            StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
         }
     }
     fn walk_expr(bodies: &BodyTree, expr: hir_expand::body::ExprId, found: &mut bool) {
@@ -2762,6 +2764,19 @@ fn body_has_ctor_call(bodies: &BodyTree, body_id: hir_expand::body::BodyId) -> b
                     }
                 }
             }
+            // Kotlin-only expressions — unreachable from a Java body.
+            ExprData::Block(..)
+            | ExprData::When { .. }
+            | ExprData::Try { .. }
+            | ExprData::Elvis { .. }
+            | ExprData::SafeAccess { .. }
+            | ExprData::NullAssert { .. }
+            | ExprData::Range { .. }
+            | ExprData::InfixCall { .. }
+            | ExprData::ObjectLiteral { .. }
+            | ExprData::CallableReference { .. }
+            | ExprData::Spread { .. }
+            | ExprData::Jump { .. } => {}
         }
     }
     for &stmt in &bodies.body(body_id).stmts {
@@ -3476,6 +3491,8 @@ fn final_field_diagnostics(
                 | StmtData::Continue(_)
                 | StmtData::LocalClass { .. }
                 | StmtData::Missing => {}
+                // A Kotlin local function — unreachable from a Java body.
+                StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
                 StmtData::Decl { .. } => {
                     // A declarator's initializer may itself assign.
                     if let StmtData::Decl {
@@ -3567,7 +3584,9 @@ fn final_field_diagnostics(
                 }
                 ExprData::Unary { expr: inner, .. }
                 | ExprData::Postfix { expr: inner, .. }
-                | ExprData::Cast { ty: _, expr: inner }
+                | ExprData::Cast {
+                    ty: _, expr: inner, ..
+                }
                 | ExprData::Paren(inner) => walk_expr(bodies, *inner, name, found),
                 ExprData::Binary { lhs, rhs, .. } => {
                     walk_expr(bodies, *lhs, name, found);
@@ -3612,6 +3631,19 @@ fn final_field_diagnostics(
                 | ExprData::Var(_)
                 | ExprData::NamePath(_)
                 | ExprData::Missing => {}
+                // Kotlin-only expressions — unreachable from a Java body.
+                ExprData::Block(..)
+                | ExprData::When { .. }
+                | ExprData::Try { .. }
+                | ExprData::Elvis { .. }
+                | ExprData::SafeAccess { .. }
+                | ExprData::NullAssert { .. }
+                | ExprData::Range { .. }
+                | ExprData::InfixCall { .. }
+                | ExprData::ObjectLiteral { .. }
+                | ExprData::CallableReference { .. }
+                | ExprData::Spread { .. }
+                | ExprData::Jump { .. } => {}
             }
         }
         let mut found = false;

@@ -1212,6 +1212,8 @@ impl InferCtx<'_> {
             // the scope where it is declared. It declares a type, not a
             // value, so it has no effect on expression typing.
             StmtData::LocalClass { item } => self.declare_local_type(*item),
+            // A Kotlin local function — unreachable from a Java body.
+            StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
             StmtData::Missing => {}
         }
     }

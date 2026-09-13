@@ -197,6 +197,8 @@ impl InferCtx<'_> {
             | StmtData::Assert { .. }
             | StmtData::LocalClass { .. }
             | StmtData::Missing => false,
+            // A Kotlin local function — unreachable from a Java body.
+            StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => false,
             StmtData::Block(stmts) | StmtData::DeclGroup(stmts) => {
                 stmts.iter().any(|stmt| self.stmt_has_valued_return(*stmt))
             }
@@ -248,6 +250,8 @@ impl InferCtx<'_> {
             | StmtData::Assert { .. }
             | StmtData::LocalClass { .. }
             | StmtData::Missing => false,
+            // A Kotlin local function — unreachable from a Java body.
+            StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => false,
             StmtData::Block(stmts) | StmtData::DeclGroup(stmts) => {
                 stmts.iter().any(|stmt| self.stmt_has_bare_return(*stmt))
             }

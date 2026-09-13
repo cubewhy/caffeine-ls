@@ -261,6 +261,12 @@ pub enum PatternData {
     /// The match-all pattern `_` ([§14.30.3]): matches everything and binds
     /// nothing.
     MatchAll,
+    /// A Kotlin destructuring declaration `val (a, b) = pair` ([KLS
+    /// `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)):
+    /// one bound name per component, in source order, each the local it binds
+    /// (the type layer resolves them through the initializer's
+    /// `component1()`/`component2()`).
+    Destructuring { parts: Vec<LocalId> },
 }
 
 /// A label name for [`StmtData::Break`], [`StmtData::Continue`],
@@ -351,6 +357,21 @@ pub enum StmtData {
     LocalClass { item: ItemId },
     /// An expression or statement that could not be lowered.
     Missing,
+    /// A Kotlin destructuring declaration `val (a, b) = pair` ([KLS
+    /// `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)):
+    /// one statement binding every name the pattern declares from the
+    /// initializer's `component1()`/`component2()`, so the names are *not*
+    /// each equal to the initializer.
+    Destructuring {
+        pattern: PatternId,
+        initializer: ExprId,
+    },
+    /// A Kotlin local function declaration ([KLS
+    /// `declarations.html#local-function-declaration`](https://kotlinlang.org/spec/declarations.html#local-function-declaration)):
+    /// the declaration is an item of the file's item tree (the tree's
+    /// `local_types` list), carried rather than a name for the same reason as
+    /// [`StmtData::LocalClass`].
+    LocalFunction { item: ItemId },
 }
 
 /// One `catch (Param) Block` of a `try` statement ([§14.20]).
@@ -530,8 +551,18 @@ pub enum ExprData {
         lhs: ExprId,
         rhs: ExprId,
     },
-    /// A cast `(Type) expr` ([§15.16](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.16)).
-    Cast { ty: SpannedTypeRef, expr: ExprId },
+    /// A cast `(Type) expr` ([§15.16](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.16)),
+    /// or Kotlin's `expr as T` / `expr as? T` ([KLS
+    /// `expressions.html#cast-expressions`](https://kotlinlang.org/spec/expressions.html#cast-expressions)).
+    /// `safe` is Kotlin's `as?`, which yields `null` where the cast cannot
+    /// succeed — and is *not* the same as `as T?`, which throws (kotlinc
+    /// 2.4.20: `1 as? String` is `null`, `1 as String?` fails with
+    /// `ClassCastException`). Always `false` for a Java cast.
+    Cast {
+        ty: SpannedTypeRef,
+        expr: ExprId,
+        safe: bool,
+    },
     /// An `instanceof` test `expr instanceof Type` or, with a pattern,
     /// `expr instanceof Pattern` ([§15.20.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.20.2)).
     /// Exactly one of `ty` (a plain type test) and `pattern` (a pattern test,
@@ -570,6 +601,139 @@ pub enum ExprData {
     Paren(ExprId),
     /// An expression that could not be lowered.
     Missing,
+    /// A Kotlin block in *expression* position ([KLS
+    /// `expressions.html#expressions`](https://kotlinlang.org/spec/expressions.html#expressions)):
+    /// a branch of an `if` or a `when` (`if (c) { a; b } else { d }`), whose
+    /// value is the last expression of its statement list. The statements are
+    /// the same `StmtData::Block` the block lowers to as a statement, so the
+    /// block is not lowered twice.
+    Block(StmtId),
+    /// A Kotlin `when` expression ([KLS
+    /// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)),
+    /// with the subject it scrutinizes (`None` for a subject-less `when`).
+    /// Every Kotlin `when` lowers to this form; used as a *statement* it is
+    /// wrapped in [`StmtData::Expr`], and needs no `else` arm
+    /// (kotlinc 2.4.20: a `when` statement that is not exhaustive compiles,
+    /// while `val x: Int = when (1) { 1 -> 2 }` fails with *"'when' expression
+    /// must be exhaustive. Add an 'else' branch."*).
+    When {
+        subject: Option<ExprId>,
+        arms: Vec<WhenArm>,
+    },
+    /// A Kotlin `try` expression ([KLS
+    /// `expressions.html#try-expressions`](https://kotlinlang.org/spec/expressions.html#try-expressions)).
+    /// Unlike Java's — a statement ([`StmtData::Try`]) — a Kotlin `try` is an
+    /// expression whose value is the last expression of the block that ran.
+    /// Kotlin has no `try`-with-resources.
+    Try {
+        body: StmtId,
+        catches: Vec<CatchClause>,
+        finally: Option<StmtId>,
+    },
+    /// A Kotlin elvis expression `lhs ?: rhs` ([KLS
+    /// `expressions.html#elvis-operator-expressions`](https://kotlinlang.org/spec/expressions.html#elvis-operator-expressions)).
+    Elvis { lhs: ExprId, rhs: ExprId },
+    /// A Kotlin safe navigation `receiver?.member` ([KLS
+    /// `expressions.html#navigation-operators`](https://kotlinlang.org/spec/expressions.html#navigation-operators)).
+    /// The member is the lowered [`ExprData::FieldAccess`] or
+    /// [`ExprData::MethodCall`] the suffix names; the access is performed only
+    /// when the receiver is not null, and its result is nullable.
+    SafeAccess { receiver: ExprId, member: ExprId },
+    /// A Kotlin not-null assertion `expr!!` ([KLS
+    /// `expressions.html#not-null-assertion-expressions`](https://kotlinlang.org/spec/expressions.html#not-null-assertion-expressions)),
+    /// the one place a nullable value is used as a non-null one.
+    NullAssert { expr: ExprId },
+    /// A Kotlin range expression `lhs..rhs` / `lhs..<rhs` ([KLS
+    /// `expressions.html#range-expressions`](https://kotlinlang.org/spec/expressions.html#range-expressions)).
+    /// `inclusive` is `false` for the `..<` form.
+    Range {
+        lhs: ExprId,
+        rhs: ExprId,
+        inclusive: bool,
+    },
+    /// A Kotlin infix function call `receiver name arg` ([KLS
+    /// `declarations.html#infix-functions`](https://kotlinlang.org/spec/declarations.html#infix-functions)):
+    /// an invocation written without parentheses, resolved like any other call.
+    InfixCall {
+        receiver: ExprId,
+        name: Name,
+        arg: ExprId,
+    },
+    /// A Kotlin object literal `object : Base() { … }` ([KLS
+    /// `expressions.html#object-literals`](https://kotlinlang.org/spec/expressions.html#object-literals)):
+    /// the members are the item tree's declaration (`item`), and the expression's
+    /// type is the anonymous class it denotes.
+    ObjectLiteral { item: ItemId },
+    /// A Kotlin callable reference `receiver::name` / `::name` ([KLS
+    /// `expressions.html#callable-references`](https://kotlinlang.org/spec/expressions.html#callable-references)).
+    CallableReference {
+        receiver: Option<ExprId>,
+        name: Name,
+    },
+    /// A Kotlin spread argument `*array` ([KLS
+    /// `expressions.html#spread-operator-expressions`](https://kotlinlang.org/spec/expressions.html#spread-operator-expressions)).
+    Spread { expr: ExprId },
+    /// A Kotlin jump expression ([KLS
+    /// `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)):
+    /// `return`, `break`, `continue` and `throw` are *expressions* of type
+    /// `kotlin.Nothing`, so they can be written where a value is expected
+    /// (`val x = if (c) 1 else throw E()`). In statement position the
+    /// expression is wrapped in [`StmtData::Expr`], and the Java statements
+    /// [`StmtData::Return`]/[`StmtData::Throw`]/[`StmtData::Break`]/[`StmtData::Continue`]
+    /// stay Java-only.
+    Jump {
+        kind: JumpKind,
+        value: Option<ExprId>,
+        label: Option<LabelId>,
+    },
+}
+
+/// The kind of a Kotlin jump expression ([KLS
+/// `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JumpKind {
+    Return,
+    Throw,
+    Break,
+    Continue,
+}
+
+/// One entry of a Kotlin `when` expression ([KLS
+/// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)):
+/// the conditions it matches (`None` conditions are the `else` arm) and the
+/// expression it evaluates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhenArm {
+    /// The conditions of the entry, in source order. Empty for the `else`
+    /// arm, which is the only arm without conditions.
+    pub conditions: Vec<WhenCondition>,
+    pub body: ExprId,
+}
+
+/// One condition of a Kotlin `when` entry ([KLS
+/// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)):
+/// a value compared for equality, `in`/`!in` containment, or an `is`/`!is`
+/// type test.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WhenCondition {
+    /// A value condition: the subject is compared with it for equality
+    /// ([`ExprData::Binary`] over `EQEQ` after lowering).
+    Value(ExprId),
+    /// An `is`/`!is` type test
+    /// ([KLS `expressions.html#type-checking-expressions`](https://kotlinlang.org/spec/expressions.html#type-checking-expressions)):
+    /// `negated` is `true` for `!is`. The tested type is the condition's own.
+    TypeTest {
+        expr: ExprId,
+        ty: SpannedTypeRef,
+        negated: bool,
+    },
+    /// An `in`/`!in` containment test ([KLS
+    /// `expressions.html#containment-checking-expressions`](https://kotlinlang.org/spec/expressions.html#containment-checking-expressions)).
+    Containment {
+        element: ExprId,
+        container: ExprId,
+        negated: bool,
+    },
 }
 
 /// The kind of a literal ([JLS §3.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.10)).

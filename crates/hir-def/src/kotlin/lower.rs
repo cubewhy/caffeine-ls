@@ -31,6 +31,7 @@ use syntax::SourceFile;
 use crate::item_tree::{FileItemTree, LoweredFile};
 use crate::kotlin::item_tree::{ItemId, KotlinItemData, KotlinItemTree};
 
+pub(super) mod body;
 pub(super) mod walk;
 
 /// The per-file lowering context of the Kotlin walker: owns the
@@ -94,7 +95,11 @@ pub fn lower_kotlin_source(text: &str, map: &AstIdMap) -> LoweredFile {
 }
 
 /// Records, after the walk, the structural relation the item tree does not get
-/// for free: every item's *parent*.
+/// for free: every item's *parent*. A *local* declaration — a local class,
+/// function, type alias or object literal ([KLS
+/// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration))
+/// — records its own parent as the body walker lowers it, because only the
+/// body knows which declaration declares it.
 ///
 /// The tree stores each declaration's members as a `body` list, each property's
 /// accessors as an `accessors` list, and a classifier's primary constructor in

@@ -970,6 +970,9 @@ impl BodyAnnotations<'_> {
                     self.expr(msg, out);
                 }
             }
+            // A Kotlin local function is unreachable from a Java body: a Java
+            // body never lowers a Kotlin form.
+            S::LocalFunction { .. } | S::Destructuring { .. } => {}
             // [JLS §14.3]: a local declaration's own annotations are checked with
             // its declaration item, and its members' bodies are bodies of their own.
             S::Empty | S::Break(_) | S::Continue(_) | S::LocalClass { .. } | S::Missing => {}
@@ -981,7 +984,9 @@ impl BodyAnnotations<'_> {
     fn expr(&mut self, expr: ExprId, out: &mut Vec<DeclDiagnostic>) {
         use hir_expand::body::{ExprData as E, LambdaBody as L, SwitchLabel as SL};
         match self.cx.bodies.expr(expr).clone() {
-            E::Cast { ty, expr: inner } => {
+            E::Cast {
+                ty, expr: inner, ..
+            } => {
                 self.type_use(&ty, out);
                 self.expr(inner, out);
             }
@@ -1145,6 +1150,20 @@ impl BodyAnnotations<'_> {
                     self.expr(target, out);
                 }
             }
+            // A Kotlin-only expression form is unreachable from a Java body: a
+            // Java body never lowers a Kotlin form.
+            E::Block(..)
+            | E::When { .. }
+            | E::Try { .. }
+            | E::Elvis { .. }
+            | E::SafeAccess { .. }
+            | E::NullAssert { .. }
+            | E::Range { .. }
+            | E::InfixCall { .. }
+            | E::ObjectLiteral { .. }
+            | E::CallableReference { .. }
+            | E::Spread { .. }
+            | E::Jump { .. } => {}
             E::This { .. }
             | E::Super { .. }
             | E::Var(_)
@@ -1178,6 +1197,9 @@ impl BodyAnnotations<'_> {
                     self.pattern(component, out);
                 }
             }
+            // A Kotlin destructuring declaration is unreachable from a Java
+            // body: a Java body never lowers a Kotlin form.
+            P::Destructuring { .. } => {}
             P::MatchAll => {}
         }
     }

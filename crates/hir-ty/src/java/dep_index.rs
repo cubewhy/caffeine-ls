@@ -298,6 +298,9 @@ fn walk_stmt_members(bodies: &BodyTree, id: StmtId, out: &mut FxHashSet<Name>) {
         // are reached through the item tree, not through this body
         // ([`all_items_data`]); its members' bodies are bodies of their own.
         Empty | Missing | LocalClass { .. } => {}
+        // A Kotlin local function is unreachable from a Java body: a Java body
+        // never lowers a Kotlin form.
+        LocalFunction { .. } | Destructuring { .. } => {}
         Block(stmts) => {
             for &stmt in stmts {
                 walk_stmt_members(bodies, stmt, out);
@@ -500,6 +503,20 @@ fn walk_expr_members(bodies: &BodyTree, id: ExprId, out: &mut FxHashSet<Name>) {
         }
         Paren(expr) => walk_expr_members(bodies, *expr, out),
         Missing => {}
+        // A Kotlin-only expression form is unreachable from a Java body: a
+        // Java body never lowers a Kotlin form.
+        Block(..)
+        | When { .. }
+        | Try { .. }
+        | Elvis { .. }
+        | SafeAccess { .. }
+        | NullAssert { .. }
+        | Range { .. }
+        | InfixCall { .. }
+        | ObjectLiteral { .. }
+        | CallableReference { .. }
+        | Spread { .. }
+        | Jump { .. } => {}
         // A lambda's parameter types are collected by the type-ref walk, so
         // only its body contributes member names here.
         Lambda { body, .. } => match body {

@@ -138,6 +138,8 @@ impl InferCtx<'_> {
                 ty
             }
             PatternData::MatchAll => self.error(),
+            // A Kotlin destructuring pattern — unreachable from a Java body.
+            PatternData::Destructuring { .. } => self.error(),
         }
     }
 
@@ -177,6 +179,8 @@ impl InferCtx<'_> {
                 .flat_map(|&c| self.pattern_bindings_of(c))
                 .collect(),
             PatternData::MatchAll => Vec::new(),
+            // A Kotlin destructuring pattern — unreachable from a Java body.
+            PatternData::Destructuring { .. } => Vec::new(),
         }
     }
 

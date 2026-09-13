@@ -151,6 +151,14 @@ fn record_nesting(tree: &mut ItemTree, bodies: &BodyTree, source: &SourceFile, m
 fn collect_local_decls(bodies: &BodyTree, stmt: StmtId, out: &mut Vec<ItemId>) {
     match bodies.stmt(stmt) {
         StmtData::LocalClass { item } => out.push(*item),
+        // A Kotlin local function ([KLS
+        // `declarations.html#local-function-declaration`]): the same kind of
+        // local declaration, named here so the walk is total. A Java body
+        // never carries one.
+        StmtData::LocalFunction { item } => out.push(*item),
+        // A Kotlin destructuring declaration binds locals, not declarations;
+        // named here so the walk is total.
+        StmtData::Destructuring { .. } => {}
         StmtData::Block(inner) | StmtData::DeclGroup(inner) => {
             for stmt in inner {
                 collect_local_decls(bodies, *stmt, out);

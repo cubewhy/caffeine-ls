@@ -21,6 +21,7 @@ use syntax::stub::{TypeBound, TypeRef};
 use hir_expand::{ast_id_map::FileAstId, name::Name};
 
 use super::LowerCtx;
+use super::body;
 use crate::kotlin::item_tree::{
     AccessorData, AnonymousInitializerNode, ClassData, ClassDeclNode, ConstructorData,
     ConstructorDeclNode, EnumEntryData, EnumEntryNode, FileAnnotationNode, FunctionData,
@@ -285,7 +286,7 @@ fn lower_primary_constructor(
     let id = ctx.alloc(KotlinItemData::Constructor(ConstructorData {
         params: parameters
             .iter()
-            .map(|parameter| lower_param(ctx, parameter, None))
+            .map(|parameter| lower_param(ctx, parameter))
             .collect(),
         modifiers,
         annotations,
@@ -309,7 +310,7 @@ fn lower_primary_constructor(
 /// [spec: grammar-rule-secondaryConstructor] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-secondaryConstructor
 fn lower_secondary_constructor(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let (modifiers, annotations) = modifiers_of(ctx, node);
-    ctx.alloc(KotlinItemData::Constructor(ConstructorData {
+    let id = ctx.alloc(KotlinItemData::Constructor(ConstructorData {
         params: lower_params(ctx, node),
         modifiers,
         annotations,
@@ -319,16 +320,30 @@ fn lower_secondary_constructor(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) 
             .map(|child| ast_id_of(ctx.map, &child)),
         body: None,
         ast: ast_id_of::<ConstructorDeclNode, _>(ctx.map, node),
-    }))
+    }));
+    if let Some(body) = body::lower_constructor_body(ctx, id, node) {
+        let KotlinItemData::Constructor(data) = ctx.tree.items.get_mut(id.0) else {
+            unreachable!("just allocated a constructor");
+        };
+        data.body = Some(body);
+    }
+    id
 }
 
 /// `anonymousInitializer`: 'init' {NL} block
 /// [spec: grammar-rule-anonymousInitializer] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-anonymousInitializer
 fn lower_init(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
-    ctx.alloc(KotlinItemData::AnonymousInitializer(InitData {
+    let id = ctx.alloc(KotlinItemData::AnonymousInitializer(InitData {
         body: None,
         ast: ast_id_of::<AnonymousInitializerNode, _>(ctx.map, node),
-    }))
+    }));
+    if let Some(body) = body::lower_init_body(ctx, id, node) {
+        let KotlinItemData::AnonymousInitializer(data) = ctx.tree.items.get_mut(id.0) else {
+            unreachable!("just allocated an initializer");
+        };
+        data.body = Some(body);
+    }
+    id
 }
 
 /// `functionDeclaration`: [modifiers] 'fun' [typeParameters] [receiverType '.']
@@ -337,7 +352,7 @@ fn lower_init(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
 /// [spec: grammar-rule-functionDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionDeclaration
 fn lower_function(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let (modifiers, annotations) = modifiers_of(ctx, node);
-    ctx.alloc(KotlinItemData::Function(FunctionData {
+    let id = ctx.alloc(KotlinItemData::Function(FunctionData {
         name: function_name(node).unwrap_or_else(missing_name),
         modifiers,
         annotations,
@@ -347,7 +362,14 @@ fn lower_function(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         ret: declared_type(ctx, node),
         body: None,
         ast: ast_id_of::<FunctionDeclNode, _>(ctx.map, node),
-    }))
+    }));
+    if let Some(body) = body::lower_function_body(ctx, id, node) {
+        let KotlinItemData::Function(data) = ctx.tree.items.get_mut(id.0) else {
+            unreachable!("just allocated a function");
+        };
+        data.body = Some(body);
+    }
+    id
 }
 
 /// `propertyDeclaration`: [modifiers] ('val' | 'var') [typeParameters]
@@ -414,17 +436,25 @@ fn lower_property(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemId
         })));
     }
 
+    // The initializer, the delegate expression and the accessors belong to
+    // every property the declaration binds (a destructuring declaration binds
+    // several; only a plain one can declare accessors).
+    let initializer = body::lower_property_initializer(ctx, ids[0], node);
+    let delegate = body::lower_property_delegate(ctx, ids[0], node);
+    for &id in &ids {
+        let KotlinItemData::Property(data) = ctx.tree.items.get_mut(id.0) else {
+            unreachable!("just allocated a property");
+        };
+        data.initializer_expr = initializer;
+        data.delegate_expr = delegate;
+    }
+
     let accessors: Vec<ItemId> = node
         .children()
         .filter(|child| matches!(child.kind(), K::GETTER | K::SETTER))
         .map(|accessor| {
             let is_setter = is(&accessor, K::SETTER);
-            lower_accessor(
-                ctx,
-                &accessor,
-                is_setter,
-                declared_types.first().and_then(|ty| ty.as_ref()),
-            )
+            lower_accessor(ctx, &accessor, is_setter)
         })
         .collect();
     if let (Some(&first), false) = (ids.first(), accessors.is_empty())
@@ -444,25 +474,27 @@ fn lower_property(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemId
 /// `property_ty` is the property's declared type: a setter parameter that
 /// writes no type takes it ([KLS
 /// `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)).
-fn lower_accessor(
-    ctx: &mut LowerCtx<'_>,
-    node: &SyntaxNode<Lang>,
-    is_setter: bool,
-    property_ty: Option<&ItemTypeRef>,
-) -> ItemId {
+fn lower_accessor(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>, is_setter: bool) -> ItemId {
     let (modifiers, annotations) = modifiers_of(ctx, node);
-    ctx.alloc(KotlinItemData::Accessor(AccessorData {
+    let id = ctx.alloc(KotlinItemData::Accessor(AccessorData {
         is_setter,
         modifiers,
         annotations,
         params: node
             .children()
             .filter(|child| is(child, K::VALUE_PARAMETER))
-            .map(|parameter| lower_param(ctx, &parameter, property_ty))
+            .map(|parameter| lower_param(ctx, &parameter))
             .collect(),
         body: None,
         ast: ast_id_of(ctx.map, node),
-    }))
+    }));
+    if let Some(body) = body::lower_accessor_body(ctx, id, node) {
+        let KotlinItemData::Accessor(data) = ctx.tree.items.get_mut(id.0) else {
+            unreachable!("just allocated an accessor");
+        };
+        data.body = Some(body);
+    }
+    id
 }
 
 /// `enumEntry`: [modifiers] simpleIdentifier [valueArguments] [classBody]
@@ -480,13 +512,19 @@ fn lower_enum_entry(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         .find(|child| is(child, K::CLASS_BODY))
         .map(|body| lower_class_members(ctx, &body))
         .unwrap_or_default();
-    ctx.alloc(KotlinItemData::EnumEntry(EnumEntryData {
+    let id = ctx.alloc(KotlinItemData::EnumEntry(EnumEntryData {
         name,
         annotations,
         argument_exprs: Vec::new(),
         body,
         ast: ast_id_of::<EnumEntryNode, _>(ctx.map, node),
-    }))
+    }));
+    let arguments = body::lower_enum_entry_arguments(ctx, id, node);
+    let KotlinItemData::EnumEntry(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("just allocated an enum entry");
+    };
+    data.argument_exprs = arguments;
+    id
 }
 
 /// `typeAlias`: [modifiers] 'typealias' simpleIdentifier [typeParameters]
@@ -502,6 +540,54 @@ fn lower_type_alias(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         target: declared_type(ctx, node).unwrap_or_else(|| ItemTypeRef::synthetic(TypeRef::Error)),
         ast: ast_id_of::<TypeAliasNode, _>(ctx.map, node),
     }))
+}
+
+/// Lowers a *local* declaration the body walker found in a block or in an
+/// expression: a local class, object, function, type alias or an object
+/// literal. The item is recorded as a local declaration of the file (the tree's
+/// `local_types`) and given its declaring item as its parent — only the body
+/// knows which declaration declares it — so the workspace symbol index, which
+/// walks `top` and `body()` only, never surfaces it ([KLS
+/// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)).
+pub(super) fn lower_local_declaration(
+    ctx: &mut LowerCtx<'_>,
+    node: &SyntaxNode<Lang>,
+) -> Option<ItemId> {
+    let item = match node.kind() {
+        K::CLASS_DECL | K::OBJECT_DECL | K::COMPANION_OBJECT => lower_class(ctx, node),
+        K::FUNCTION_DECL => lower_function(ctx, node),
+        K::TYPE_ALIAS => lower_type_alias(ctx, node),
+        K::OBJECT_LITERAL => lower_object_literal(ctx, node)?,
+        _ => return None,
+    };
+    record_local(ctx, item);
+    Some(item)
+}
+
+/// An object literal `object : Base() { … }` ([KLS
+/// `expressions.html#object-literals`](https://kotlinlang.org/spec/expressions.html#object-literals)):
+/// the anonymous class its body declares, lowered as an `object` classifier
+/// with no name of its own.
+fn lower_object_literal(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemId> {
+    lower_class(ctx, node);
+    // `lower_class` reads the classifier's own keyword; an object literal has
+    // none, so the item it allocated carries the missing name — the class of
+    // the anonymous type, named the way the compiler names it.
+    Some(
+        *ctx.tree
+            .top
+            .last()
+            .unwrap_or(&ItemId(hir_expand::arena::ArenaId(u32::MAX))),
+    )
+}
+
+/// Marks `item` as a local declaration of the file: it joins `local_types`
+/// (in lowering order, which is source order) and takes the declaration whose
+/// body is being lowered as its parent.
+fn record_local(ctx: &mut LowerCtx<'_>, item: ItemId) {
+    if !ctx.tree.local_types.contains(&item) {
+        ctx.tree.local_types.push(item);
+    }
 }
 
 /// The property a `val`/`var` class parameter declares ([KLS
@@ -553,7 +639,7 @@ fn lower_params(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Param> {
         .unwrap_or_else(|| node.clone());
     list.children()
         .filter(|child| matches!(child.kind(), K::VALUE_PARAMETER | K::CLASS_PARAMETER))
-        .map(|child| lower_param(ctx, &child, None))
+        .map(|child| lower_param(ctx, &child))
         .collect()
 }
 
@@ -567,11 +653,7 @@ fn lower_params(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Param> {
 ///
 /// `fallback_ty` is the type of a parameter that writes none — only a setter's
 /// parameter may ([`lower_accessor`]).
-fn lower_param(
-    ctx: &LowerCtx<'_>,
-    node: &SyntaxNode<Lang>,
-    fallback_ty: Option<&ItemTypeRef>,
-) -> Param {
+fn lower_param(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Param {
     let mut annotations = Vec::new();
     let mut varargs = false;
     if let Some(modifiers) = node.children().find(|child| is(child, K::MODIFIER_LIST)) {
@@ -599,9 +681,13 @@ fn lower_param(
 
     Param {
         name: parameter_name(node).unwrap_or_else(missing_name),
-        ty: declared_type(ctx, node)
-            .or_else(|| fallback_ty.cloned())
-            .unwrap_or_else(|| ItemTypeRef::synthetic(TypeRef::Error)),
+        // A parameter without a declared type is a *setter*'s, whose type is
+        // the property's ([KLS
+        // `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)):
+        // the parameter records no type, and the type layer takes the
+        // property's — a parameter with no type anywhere is an erroneous
+        // declaration, and its type is the error type.
+        ty: declared_type(ctx, node).unwrap_or_else(|| ItemTypeRef::synthetic(TypeRef::Error)),
         varargs,
         annotations,
     }

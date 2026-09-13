@@ -21,8 +21,8 @@ file (kotlin)
 enum class Direction @1..183
   primary constructor(deg: Int) @21..35
   val deg: Int @22..34
-  entry NORTH @42..50
-  entry EAST @56..122
+  entry NORTH(…) @42..50
+  entry EAST(…) @56..122
     fun opposite(): Direction override @75..116
-  entry WEST @128..137
+  entry WEST(…) @128..137
   fun opposite(): Direction open @144..181

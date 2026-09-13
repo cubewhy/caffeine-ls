@@ -337,7 +337,7 @@ impl InferCtx<'_> {
             // typed against the cast type. (A cast of a poly *invocation* is a
             // standalone expression per §15.16, so plain method calls are not
             // given the target here.)
-            ExprData::Cast { ty, expr } => {
+            ExprData::Cast { ty, expr, .. } => {
                 // §4.5.1: a cast type argument that is not within bounds.
                 self.check_type_argument_bounds(DiagLocation::Expr(expr), &ty);
                 if expr_is_poly(&self.tree, expr) {
@@ -669,6 +669,21 @@ impl InferCtx<'_> {
                 }
                 self.string()
             }
+            // A Kotlin-only expression form is unreachable from a Java body: a
+            // Java body never lowers a Kotlin form, so there is no type to
+            // infer.
+            ExprData::Block(..)
+            | ExprData::When { .. }
+            | ExprData::Try { .. }
+            | ExprData::Elvis { .. }
+            | ExprData::SafeAccess { .. }
+            | ExprData::NullAssert { .. }
+            | ExprData::Range { .. }
+            | ExprData::InfixCall { .. }
+            | ExprData::ObjectLiteral { .. }
+            | ExprData::CallableReference { .. }
+            | ExprData::Spread { .. }
+            | ExprData::Jump { .. } => self.error(),
             ExprData::Missing => self.error(),
         };
         self.types.insert(id, ty);

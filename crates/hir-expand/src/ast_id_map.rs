@@ -389,11 +389,23 @@ impl Skeleton for syntax::kotlin::Lang {
             children.into_iter().map(|child| (child, body)).collect()
         };
         match node.kind() {
-            // A block is body content: its local declarations (a local class,
-            // a local function) are not members of any declaration. The
-            // expression-bodied members (`fun f() = …`, `val x = …`) are
-            // covered by the `EQUAL` rule below.
-            K::BLOCK => Vec::new(),
+            // A block's *local* declarations — a local class, object or
+            // function, a local type alias, and an object literal's anonymous
+            // class ([KLS
+            // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration))
+            // — are declaration skeleton: each is indexed with its own
+            // skeleton. Every other statement and expression in the block
+            // stays body content, so naming a local variable, adding a
+            // statement or rewriting an expression leaves the indexed sequence
+            // untouched. The expression-bodied members (`fun f() = …`,
+            // `val x = …`) are covered by the `EQUAL` rule below.
+            K::BLOCK => children
+                .into_iter()
+                .map(|child| {
+                    let in_body = !is_local_declaration(child.kind());
+                    (child, in_body)
+                })
+                .collect(),
             // A function's, accessor's or property's expression body and a
             // parameter's default value are body content: everything *before*
             // the `=` belongs to the declaration (its name, receiver, type
@@ -455,6 +467,23 @@ impl Skeleton for syntax::kotlin::Lang {
     }
 }
 
+/// The declarations a Kotlin block may declare *locally* ([KLS
+/// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration),
+/// [`#local-function-declaration`](https://kotlinlang.org/spec/declarations.html#local-function-declaration)):
+/// they are declaration skeleton even inside a block, and so is an object
+/// literal's anonymous class.
+fn is_local_declaration(kind: K) -> bool {
+    matches!(
+        kind,
+        K::CLASS_DECL
+            | K::OBJECT_DECL
+            | K::COMPANION_OBJECT
+            | K::FUNCTION_DECL
+            | K::TYPE_ALIAS
+            | K::OBJECT_LITERAL
+    )
+}
+
 /// Whether a Kotlin node kind is a type node, in the shapes `type_` produces
 /// ([spec: grammar-rule-type]): the wrapper nodes and the two leaves.
 fn is_type_node(kind: K) -> bool {
@@ -483,6 +512,7 @@ fn is_indexable_kotlin(kind: K) -> bool {
             | K::CLASS_DECL
             | K::OBJECT_DECL
             | K::COMPANION_OBJECT
+            | K::OBJECT_LITERAL
             | K::CLASS_BODY
             | K::ENUM_CLASS_BODY
             | K::ENUM_ENTRIES

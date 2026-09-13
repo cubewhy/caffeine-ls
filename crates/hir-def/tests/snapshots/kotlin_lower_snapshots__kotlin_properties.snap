@@ -33,7 +33,7 @@ var counter: Int @29..67
   set() private @54..65
 val total: Int @67..107
   get() @86..105
-val delegated: String @107..146
+val delegated: String by @107..146
 var initialised: String lateinit @146..180
 val Response.body: String @180..226
   get() @210..224

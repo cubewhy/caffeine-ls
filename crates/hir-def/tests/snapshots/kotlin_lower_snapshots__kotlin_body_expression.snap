@@ -1,0 +1,36 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Point(val x: Int, val y: Int) {
+    fun length(): Double = x * x + y * y
+}
+
+val doubled: Int = 2 * 3
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Point @1..81
+  primary constructor(x: Int, y: Int) @12..36
+  val x: Int @13..23
+  val y: Int @25..35
+  fun length(): Double @43..79
+val doubled: Int @83..108
+
+BODIES:
+fun length body b0:
+  s0: expr e6
+  expr e0: var x 
+  expr e1: var x 
+  expr e2: binary Mul [e0, e1]
+  expr e3: var y 
+  expr e4: var y 
+  expr e5: binary Mul [e3, e4]
+  expr e6: binary Add [e2, e5]
+  expr e7: literal Int(2) 
+  expr e8: literal Int(3) 
+  expr e9: binary Mul [e7, e8]

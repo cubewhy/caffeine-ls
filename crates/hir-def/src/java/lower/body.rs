@@ -1058,7 +1058,12 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
                 .map(|t| type_from(&t))
                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             let expr_ = first_expr(ctx, owner, node);
-            ExprData::Cast { ty, expr: expr_ }
+            ExprData::Cast {
+                ty,
+                expr: expr_,
+                // A Java cast is never the Kotlin `as?` form.
+                safe: false,
+            }
         }
         PAREN_EXPR | PARENTHESIZED_EXPR => ExprData::Paren(first_expr(ctx, owner, node)),
         ARRAY_ACCESS => {

@@ -1,0 +1,83 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun scan(items: List<Int>): Int {
+    var total = 0
+    for (item in items) {
+        total += item
+    }
+    while (total > 100) {
+        total -= 1
+    }
+    do {
+        total += 1
+    } while (total < 0)
+    try {
+        total = risky(total)
+    } catch (e: IllegalStateException) {
+        total = 0
+    } finally {
+        println(total)
+    }
+    return total
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun scan(items: List<Int>): Int @1..371
+
+BODIES:
+fun scan body b0:
+  param l0: items: List<Int>
+  s0: decl l1 = e0
+  s3: for l2 in e4
+    s2: block
+      s1: expr e3
+  s6: while e10
+    s5: block
+      s4: expr e7
+  s9: do-while e16
+    s8: block
+      s7: expr e13
+  s16: expr e28
+  s17: expr e30
+  local l0: items: List<Int>
+  local l1: total
+  local l2: item
+  local l3: catch: IllegalStateException
+  expr e0: literal Int(0) 
+  expr e1: var total 
+  expr e2: var item 
+  expr e3: assign Add [e1, e2]
+  expr e4: var items 
+  expr e5: var total 
+  expr e6: literal Int(1) 
+  expr e7: assign Sub [e5, e6]
+  expr e8: var total 
+  expr e9: literal Int(100) 
+  expr e10: binary Gt [e8, e9]
+  expr e11: var total 
+  expr e12: literal Int(1) 
+  expr e13: assign Add [e11, e12]
+  expr e14: var total 
+  expr e15: literal Int(0) 
+  expr e16: binary Lt [e14, e15]
+  expr e17: var total 
+  expr e18: var risky 
+  expr e19: var total 
+  expr e20: call risky [e19]
+  expr e21: assign Assign [e17, e20]
+  expr e22: var total 
+  expr e23: literal Int(0) 
+  expr e24: assign Assign [e22, e23]
+  expr e25: var println 
+  expr e26: var total 
+  expr e27: call println [e26]
+  expr e28: try (1 catches) [s11, s13, s15]
+  expr e29: var total 
+  expr e30: jump Return [e29]

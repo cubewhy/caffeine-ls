@@ -1,0 +1,54 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun local(): Int {
+    class Counter(val start: Int) {
+        fun next(): Int = start + 1
+    }
+
+    fun twice(value: Int): Int = value * 2
+
+    val anonymous = object : Runnable {
+        override fun run() {}
+    }
+
+    return twice(Counter(1).next())
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun local(): Int @1..257
+
+BODIES:
+fun local body b2:
+  s1: local class item1
+  s3: local fun item5
+  s4: decl l1 = e6
+  s5: expr e14
+fun next body b0:
+  s0: expr e2
+fun twice body b1:
+  param l0: value: Int
+  s2: expr e5
+  local l0: value: Int
+  local l1: anonymous
+  expr e0: var start 
+  expr e1: literal Int(1) 
+  expr e2: binary Add [e0, e1]
+  expr e3: var value 
+  expr e4: literal Int(2) 
+  expr e5: binary Mul [e3, e4]
+  expr e6: object-literal item4294967295 
+  expr e7: var twice 
+  expr e8: var Counter 
+  expr e9: literal Int(1) 
+  expr e10: call Counter [e9]
+  expr e11: field next [e10]
+  expr e12: call next [e10]
+  expr e13: call twice [e12]
+  expr e14: jump Return [e13]

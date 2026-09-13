@@ -1,0 +1,53 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun render(item: Item?): String {
+    val name = item?.name ?: "unknown"
+    val length = item!!.length
+    val cast = item as? String
+    val forced = item as String
+    val text = "item $name is ${length} long"
+    return text
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun render(item: Item?): String @1..231
+
+BODIES:
+fun render body b0:
+  param l0: item: Item?
+  s0: decl l1 = e4
+  s1: decl l2 = e7
+  s2: decl l3 = e9
+  s3: decl l4 = e11
+  s4: decl l5 = e14
+  s5: expr e16
+  local l0: item: Item?
+  local l1: name
+  local l2: length
+  local l3: cast
+  local l4: forced
+  local l5: text
+  expr e0: var item 
+  expr e1: field name 
+  expr e2: safe-access [e0, e1]
+  expr e3: literal Str("unknown") 
+  expr e4: elvis [e2, e3]
+  expr e5: var item 
+  expr e6: not-null [e5]
+  expr e7: field length [e6]
+  expr e8: var item 
+  expr e9: castString [e8]
+  expr e10: var item 
+  expr e11: castString [e10]
+  expr e12: <missing> 
+  expr e13: var length 
+  expr e14: template (2 parts) [e12, e13]
+  expr e15: var text 
+  expr e16: jump Return [e15]

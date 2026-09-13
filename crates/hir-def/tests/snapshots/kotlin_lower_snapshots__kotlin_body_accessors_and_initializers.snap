@@ -1,0 +1,87 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Holder {
+    val computed: Int
+        get() = 1 + 2
+
+    var stored: Int = 0
+        set(value) {
+            println(value)
+        }
+
+    val delegated: String by lazy { "x" }
+
+    init {
+        println(computed)
+    }
+
+    constructor(seed: Int) : this() {
+        println(seed)
+    }
+}
+
+enum class Level {
+    LOW {
+        override fun label(): String = "low"
+    };
+
+    open fun label(): String = "level"
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Holder @1..298
+  val computed: Int @20..61
+    get() @46..59
+  var stored: Int @65..144
+    set(value: <error>) @93..142
+  val delegated: String by @148..187
+  init @191..229
+  constructor(seed: Int) delegation @260..266 @235..296
+enum class Level @300..422
+  entry LOW @323..379
+    fun label(): String override @337..373
+  fun label(): String open @386..420
+
+BODIES:
+get  body b0:
+  s0: expr e2
+set  body b1:
+  param l0: value
+  s1: expr e6
+init  body b2:
+  s4: expr e13
+constructor  body b3:
+  param l1: seed: Int
+  s5: expr e16
+fun label body b4:
+  s6: expr e17
+fun label body b5:
+  s7: expr e18
+  local l0: value
+  local l1: seed: Int
+  expr e0: literal Int(1) 
+  expr e1: literal Int(2) 
+  expr e2: binary Add [e0, e1]
+  expr e3: literal Int(0) 
+  expr e4: var println 
+  expr e5: var value 
+  expr e6: call println [e5]
+  expr e7: var lazy 
+  expr e8: literal Str("x") 
+  expr e9: lambda (0 params) [s3]
+  expr e10: call lazy [e9]
+  expr e11: var println 
+  expr e12: var computed 
+  expr e13: call println [e12]
+  expr e14: var println 
+  expr e15: var seed 
+  expr e16: call println [e15]
+  expr e17: literal Str("low") 
+  expr e18: literal Str("level")

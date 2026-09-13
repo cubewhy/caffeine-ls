@@ -768,6 +768,11 @@ fn render_stmt(out: &mut String, tree: &ItemTree, bodies: &BodyTree, id: StmtId,
             out.push_str(&format!("{indent}{id}: local-class {}\n", name.as_str()))
         }
         StmtData::Missing => out.push_str(&format!("{indent}{id}: <missing>\n")),
+        // A Kotlin local function: this renderer is the Java surface, and a
+        // Kotlin body renders through [`crate::kotlin::pretty`].
+        StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {
+            unreachable!("a Java body never lowers a Kotlin local function")
+        }
     }
 }
 
@@ -906,7 +911,7 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
         ExprData::Assign { op, lhs, rhs } => {
             out.push_str(&format!("{id}: assign {} {lhs} {rhs}", render_assign(*op)))
         }
-        ExprData::Cast { ty, expr } => {
+        ExprData::Cast { ty, expr, .. } => {
             out.push_str(&format!("{id}: cast ({}) {expr}", render_type(ty)))
         }
         ExprData::InstanceOf { expr, ty, pattern } => {
@@ -965,6 +970,20 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
                 .join(", ")
         )),
         ExprData::Missing => out.push_str(&format!("{id}: <missing>")),
+        // The Kotlin expression forms: this renderer is the Java surface, and
+        // a Kotlin body renders through [`crate::kotlin::pretty`].
+        ExprData::Block(_)
+        | ExprData::When { .. }
+        | ExprData::Try { .. }
+        | ExprData::Elvis { .. }
+        | ExprData::SafeAccess { .. }
+        | ExprData::NullAssert { .. }
+        | ExprData::Range { .. }
+        | ExprData::InfixCall { .. }
+        | ExprData::ObjectLiteral { .. }
+        | ExprData::CallableReference { .. }
+        | ExprData::Spread { .. }
+        | ExprData::Jump { .. } => unreachable!("a Java body never lowers a Kotlin expression"),
     }
 }
 
@@ -993,6 +1012,9 @@ fn render_pattern(bodies: &BodyTree, id: PatternId) -> String {
                 .join(", ")
         ),
         PatternData::MatchAll => format!("{id} _"),
+        PatternData::Destructuring { .. } => {
+            unreachable!("a Java body never lowers a Kotlin destructuring pattern")
+        }
     }
 }
 

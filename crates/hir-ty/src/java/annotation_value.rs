@@ -241,7 +241,7 @@ fn expr_kind(
         ExprData::Paren(inner) => expr_kind(cx, inner, visited),
         // §15.29: "casts to primitive types and casts to `String`" are among
         // the forms a constant expression is composed of.
-        ExprData::Cast { ty, expr } => {
+        ExprData::Cast { ty, expr, .. } => {
             let target = resolve_type_ref(cx.db, cx.scope, cx.resolver, &ty.ty);
             if !is_primitive_or_string(&target, cx.db) {
                 return ConstKind::NotConstant { ty: Some(target) };
@@ -366,6 +366,20 @@ fn expr_kind(
         ExprData::New { ty, .. } | ExprData::NewArray { ty, .. } => ConstKind::NotConstant {
             ty: Some(resolve_type_ref(cx.db, cx.scope, cx.resolver, &ty.ty)),
         },
+        // A Kotlin-only expression form is unreachable from a Java body: a
+        // Java body never lowers a Kotlin form, so no verdict can be given.
+        ExprData::Block(..)
+        | ExprData::When { .. }
+        | ExprData::Try { .. }
+        | ExprData::Elvis { .. }
+        | ExprData::SafeAccess { .. }
+        | ExprData::NullAssert { .. }
+        | ExprData::Range { .. }
+        | ExprData::InfixCall { .. }
+        | ExprData::ObjectLiteral { .. }
+        | ExprData::CallableReference { .. }
+        | ExprData::Spread { .. }
+        | ExprData::Jump { .. } => ConstKind::Unknown,
         // Everything else — an assignment ([§15.26]), an array access
         // ([§15.13]), an array initializer ([§10.6]), `instanceof` ([§15.20]),
         // a lambda ([§15.27]), a method reference ([§15.13]), an explicit
@@ -796,7 +810,7 @@ fn string_constant(
         ExprData::Paren(inner) => string_constant(cx, inner, visited),
         // §15.29: "casts to primitive types and casts to `String`" are among
         // the forms a constant expression is composed of.
-        ExprData::Cast { ty, expr } => {
+        ExprData::Cast { ty, expr, .. } => {
             let target = resolve_type_ref(cx.db, cx.scope, cx.resolver, &ty.ty);
             is_string(&target, cx.db).then(|| string_constant(cx, expr, visited))?
         }

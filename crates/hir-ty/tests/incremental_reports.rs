@@ -222,3 +222,77 @@ class A extends B {
         "a body-only edit of a local class must not re-execute file_symbols"
     );
 }
+
+/// The Kotlin item tree backdates across a body-only edit exactly as the Java
+/// one does: the Kotlin arm of `AstIdMap` prunes body content, so an edit
+/// *inside* a function body — even one that declares a new typed local —
+/// leaves the declaration skeleton, and every `FileAstId` it holds, alone.
+#[test]
+fn kotlin_body_only_edit_backdates_the_item_tree() {
+    let source = "\
+package com.a
+
+class A {
+    fun m(): Int {
+        val local = 1
+        return local
+    }
+}
+";
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(&mut db, &fixture, &[("/src/com/a/A.kt", source)]);
+    let a = FileId::from_raw(1);
+
+    let tree = hir::file_item_tree(&db, a);
+    let symbols = hir::file_symbols(&db, a);
+
+    // Control: a declaration-skeleton edit — renaming the function — changes
+    // the tree (and re-executes the symbols).
+    let rename = source.replace("fun m(", "fun m2(");
+    edit_file(&mut db, a, &rename);
+    assert_ne!(
+        *hir::file_item_tree(&db, a),
+        *tree,
+        "renaming a Kotlin function must change the item tree"
+    );
+    assert!(
+        !Arc::ptr_eq(&symbols, &hir::file_symbols(&db, a)),
+        "renaming a Kotlin function must re-execute file_symbols"
+    );
+
+    // A *structural* body edit (a new typed local) has new CST nodes, all of
+    // them under the pruned block: the tree is equal, so salsa backdates it
+    // and `file_symbols` stays a memo hit.
+    let body_edit = rename.replace(
+        "val local = 1",
+        "val local = 1\n        val extra: String = \"x\"",
+    );
+    let tree_after_rename = hir::file_item_tree(&db, a);
+    let symbols_after_rename = hir::file_symbols(&db, a);
+    edit_file(&mut db, a, &body_edit);
+    assert_eq!(
+        *hir::file_item_tree(&db, a),
+        *tree_after_rename,
+        "a Kotlin body-only edit must leave the item tree equal"
+    );
+    assert!(
+        Arc::ptr_eq(&symbols_after_rename, &hir::file_symbols(&db, a)),
+        "a Kotlin body-only edit must not re-execute file_symbols"
+    );
+
+    // Control: a *local* declaration in the body is declaration skeleton
+    // ([KLS `declarations.html#local-class-declaration`]), so it changes the
+    // tree.
+    let local_class = body_edit.replace(
+        "val extra: String = \"x\"",
+        "val extra: String = \"x\"\n        class Local {\n            fun n(): Int = 1\n        }",
+    );
+    let tree_before_local = hir::file_item_tree(&db, a);
+    edit_file(&mut db, a, &local_class);
+    assert_ne!(
+        *hir::file_item_tree(&db, a),
+        *tree_before_local,
+        "declaring a Kotlin local class must change the item tree"
+    );
+}

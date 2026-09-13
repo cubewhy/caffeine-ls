@@ -1,0 +1,41 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun greet(name: String): String {
+    val prefix = "hello "
+    if (name.isEmpty()) {
+        return prefix
+    }
+    return prefix + name
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun greet(name: String): String @1..141
+
+BODIES:
+fun greet body b0:
+  param l0: name: String
+  s0: decl l1 = e0
+  s3: expr e8
+  s4: expr e12
+  local l0: name: String
+  local l1: prefix
+  expr e0: literal Str("hello ") 
+  expr e1: var name 
+  expr e2: field isEmpty [e1]
+  expr e3: call isEmpty [e1]
+  expr e4: var prefix 
+  expr e5: jump Return [e4]
+  expr e6: block [s2]
+  expr e7: <missing> 
+  expr e8: if [e3, e6, e7]
+  expr e9: var prefix 
+  expr e10: var name 
+  expr e11: binary Add [e9, e10]
+  expr e12: jump Return [e11]

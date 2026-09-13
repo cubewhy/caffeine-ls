@@ -1,0 +1,31 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun sum(pair: Pair<Int, Int>): Int {
+    val (first, second) = pair
+    return first + second
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun sum(pair: Pair<Int, Int>): Int @1..96
+
+BODIES:
+fun sum body b0:
+  param l0: pair: Pair<Int, Int>
+  s0: destructure p0 = e0
+  s1: expr e4
+  local l0: pair: Pair<Int, Int>
+  local l1: first
+  local l2: second
+  expr e0: var pair 
+  expr e1: var first 
+  expr e2: var second 
+  expr e3: binary Add [e1, e2]
+  expr e4: jump Return [e3]
+  pattern p0: Destructuring { parts: [LocalId(ArenaId(1)), LocalId(ArenaId(2))] }

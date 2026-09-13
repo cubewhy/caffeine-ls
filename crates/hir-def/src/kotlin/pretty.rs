@@ -11,7 +11,11 @@ use rowan::TextRange;
 use syntax::SourceFile;
 use syntax::stub::{TypeBound, TypeRef};
 
-use hir_expand::{ast_id_map::AstIdMap, name::Name};
+use hir_expand::{
+    ast_id_map::AstIdMap,
+    body::{BodyTree, ExprData, LocalId, StmtData, StmtId, WhenCondition},
+    name::Name,
+};
 
 use super::item_tree::{
     ConstructorData, ItemAnnotationArg, ItemAnnotationRef, ItemAnnotationValue, ItemId,
@@ -557,4 +561,273 @@ fn render_mods(modifiers: &KotlinModifiers) -> String {
         .names()
         .map(|modifier| format!(" {modifier}"))
         .collect()
+}
+
+/// The stable, human-readable rendering of a lowered file's bodies: every
+/// declaration that owns a body, in item order, with its statements and — in
+/// arena order — every expression, local and pattern the body tree holds.
+///
+/// The rendering is deliberately flat: a statement names the expression ids it
+/// uses, and each expression is rendered once, with its child ids (and its
+/// operator/name), so a snapshot pins what the walker produced without
+/// duplicating sub-trees.
+pub fn pretty_body(tree: &KotlinItemTree, bodies: &BodyTree) -> String {
+    let mut out = String::new();
+    for (_, item) in tree.items.iter() {
+        let Some(body) = item.body_id() else {
+            continue;
+        };
+        out.push_str(&format!(
+            "{} {} body {body}:\n",
+            item.label(),
+            item.name().map(|name| name.to_string()).unwrap_or_default(),
+        ));
+        for &param in &bodies.body(body).params {
+            out.push_str(&format!(
+                "  param {param}: {}\n",
+                render_local(bodies, param)
+            ));
+        }
+        for &stmt in &bodies.body(body).stmts {
+            render_stmt(bodies, stmt, 1, &mut out);
+        }
+    }
+    for (index, body) in bodies.bodies.iter() {
+        if body.owner.is_none() {
+            out.push_str(&format!("body b{} (anonymous):\n", index.0));
+            for &stmt in &body.stmts {
+                render_stmt(bodies, stmt, 1, &mut out);
+            }
+        }
+    }
+    for (id, local) in bodies.locals.iter() {
+        let _ = local;
+        out.push_str(&format!(
+            "  local l{}: {}\n",
+            id.0,
+            render_local(bodies, LocalId(id))
+        ));
+    }
+    for (id, expr) in bodies.exprs.iter() {
+        out.push_str(&format!(
+            "  expr e{}: {} {}\n",
+            id.0,
+            expr_label(expr),
+            expr_children(expr),
+        ));
+    }
+    for (id, pattern) in bodies.patterns.iter() {
+        out.push_str(&format!("  pattern p{}: {pattern:?}\n", id.0));
+    }
+    out
+}
+
+fn render_local(bodies: &BodyTree, local: LocalId) -> String {
+    let local = bodies.local(local);
+    match &local.ty {
+        Some(ty) => format!("{}: {}", local.name, render_type(&ty.ty)),
+        None => local.name.to_string(),
+    }
+}
+
+/// The label of an expression: its form and its immediate data.
+fn expr_label(expr: &ExprData) -> String {
+    match expr {
+        ExprData::Literal(literal) => format!("literal {literal:?}"),
+        ExprData::Null => "null".to_owned(),
+        ExprData::Var(name) | ExprData::NamePath(name) => format!("var {name}"),
+        ExprData::This { .. } => "this".to_owned(),
+        ExprData::Super { .. } => "super".to_owned(),
+        ExprData::FieldAccess { name, .. } => format!("field {name}"),
+        ExprData::MethodCall { name, .. } => format!("call {name}"),
+        ExprData::InfixCall { name, .. } => format!("infix {name}"),
+        ExprData::New { ty, .. } => format!("new {}", render_type(&ty.ty)),
+        ExprData::CtorCall { .. } => "ctor-call".to_owned(),
+        ExprData::ArrayAccess { .. } => "index".to_owned(),
+        ExprData::ArrayInit(_) => "array-init".to_owned(),
+        ExprData::Unary { op, .. } => format!("unary {op:?}"),
+        ExprData::Postfix { op, .. } => format!("postfix {op:?}"),
+        ExprData::Binary { op, .. } => format!("binary {op:?}"),
+        ExprData::Assign { op, .. } => format!("assign {op:?}"),
+        ExprData::Cast { ty, safe, .. } => format!(
+            "cast{}{}",
+            if *safe { "?" } else { "" },
+            render_type(&ty.ty)
+        ),
+        ExprData::InstanceOf { .. } => "is".to_owned(),
+        ExprData::Conditional { .. } => "if".to_owned(),
+        ExprData::When { arms, .. } => format!("when ({} arms)", arms.len()),
+        ExprData::Try { catches, .. } => format!("try ({} catches)", catches.len()),
+        ExprData::Elvis { .. } => "elvis".to_owned(),
+        ExprData::SafeAccess { .. } => "safe-access".to_owned(),
+        ExprData::NullAssert { .. } => "not-null".to_owned(),
+        ExprData::Range { inclusive, .. } => {
+            if *inclusive {
+                "range".to_owned()
+            } else {
+                "range-until".to_owned()
+            }
+        }
+        ExprData::ObjectLiteral { item } => format!("object-literal item{}", item.0.0),
+        ExprData::CallableReference { name, .. } => format!("callable-ref {name}"),
+        ExprData::Spread { .. } => "spread".to_owned(),
+        ExprData::Jump { kind, .. } => format!("jump {kind:?}"),
+        ExprData::Block(_) => "block".to_owned(),
+        ExprData::Lambda { params, .. } => format!("lambda ({} params)", params.len()),
+        ExprData::MethodRef { name, .. } => format!("method-ref {name}"),
+        ExprData::Template { args } => format!("template ({} parts)", args.len()),
+        ExprData::ClassLit(ty) => format!("class-literal {}", render_type(&ty.ty)),
+        ExprData::Paren(_) => "paren".to_owned(),
+        ExprData::Switch { arms, .. } => format!("switch ({} arms)", arms.len()),
+        ExprData::NewArray { .. } => "new-array".to_owned(),
+        ExprData::Missing => "<missing>".to_owned(),
+    }
+}
+
+/// The child ids of an expression, in the order the lowering recorded them.
+fn expr_children(expr: &ExprData) -> String {
+    let ids: Vec<String> = match expr {
+        ExprData::FieldAccess { target, .. } => target.iter().map(|e| e.to_string()).collect(),
+        ExprData::MethodCall { receiver, args, .. } => receiver
+            .iter()
+            .map(|e| e.to_string())
+            .chain(args.iter().map(|e| e.to_string()))
+            .collect(),
+        ExprData::InfixCall { receiver, arg, .. } => vec![receiver.to_string(), arg.to_string()],
+        ExprData::New { args, .. } => args.iter().map(|e| e.to_string()).collect(),
+        ExprData::CtorCall { args, .. } => args.iter().map(|e| e.to_string()).collect(),
+        ExprData::ArrayAccess { array, index } => vec![array.to_string(), index.to_string()],
+        ExprData::ArrayInit(items) => items.iter().map(|e| e.to_string()).collect(),
+        ExprData::Unary { expr, .. }
+        | ExprData::Postfix { expr, .. }
+        | ExprData::NullAssert { expr }
+        | ExprData::Spread { expr }
+        | ExprData::Paren(expr) => vec![expr.to_string()],
+        ExprData::Binary { lhs, rhs, .. } | ExprData::Assign { lhs, rhs, .. } => {
+            vec![lhs.to_string(), rhs.to_string()]
+        }
+        ExprData::Cast { expr, .. } => vec![expr.to_string()],
+        ExprData::InstanceOf { expr, .. } => vec![expr.to_string()],
+        ExprData::Conditional { cond, then, els } => {
+            vec![cond.to_string(), then.to_string(), els.to_string()]
+        }
+        ExprData::When { subject, arms } => subject
+            .iter()
+            .map(|e| e.to_string())
+            .chain(arms.iter().flat_map(|arm| {
+                arm.conditions
+                    .iter()
+                    .map(|condition| match condition {
+                        WhenCondition::Value(value) => value.to_string(),
+                        WhenCondition::TypeTest { expr, .. } => expr.to_string(),
+                        WhenCondition::Containment { element, .. } => element.to_string(),
+                    })
+                    .chain(std::iter::once(arm.body.to_string()))
+            }))
+            .collect(),
+        ExprData::Try {
+            body,
+            catches,
+            finally,
+        } => vec![body.to_string()]
+            .into_iter()
+            .chain(catches.iter().map(|catch| catch.body.to_string()))
+            .chain(finally.iter().map(|stmt| stmt.to_string()))
+            .collect(),
+        ExprData::Elvis { lhs, rhs } => vec![lhs.to_string(), rhs.to_string()],
+        ExprData::SafeAccess { receiver, member } => {
+            vec![receiver.to_string(), member.to_string()]
+        }
+        ExprData::Range { lhs, rhs, .. } => vec![lhs.to_string(), rhs.to_string()],
+        ExprData::CallableReference { receiver, .. } => {
+            receiver.iter().map(|e| e.to_string()).collect()
+        }
+        ExprData::Jump { value, .. } => value.iter().map(|e| e.to_string()).collect(),
+        ExprData::Block(stmt) => vec![stmt.to_string()],
+        ExprData::Lambda { body, .. } => match body {
+            hir_expand::body::LambdaBody::Expr(expr) => vec![expr.to_string()],
+            hir_expand::body::LambdaBody::Block(stmt) => vec![stmt.to_string()],
+        },
+        ExprData::MethodRef { qualifier, .. } => qualifier.iter().map(|e| e.to_string()).collect(),
+        ExprData::Template { args } => args.iter().map(|e| e.to_string()).collect(),
+        ExprData::Switch { scrutinee, arms } => vec![scrutinee.to_string()]
+            .into_iter()
+            .chain(
+                arms.iter()
+                    .flat_map(|arm| arm.body.iter().map(|stmt| stmt.to_string())),
+            )
+            .collect(),
+        ExprData::NewArray { dims, .. } => dims.iter().map(|e| e.to_string()).collect(),
+        _ => Vec::new(),
+    };
+    if ids.is_empty() {
+        String::new()
+    } else {
+        format!("[{}]", ids.join(", "))
+    }
+}
+
+fn render_stmt(bodies: &BodyTree, id: StmtId, depth: usize, out: &mut String) {
+    let indent = "  ".repeat(depth);
+    match bodies.stmt(id) {
+        StmtData::Block(stmts) => {
+            out.push_str(&format!("{indent}{id}: block\n"));
+            for &stmt in stmts {
+                render_stmt(bodies, stmt, depth + 1, out);
+            }
+        }
+        StmtData::Decl { local, initializer } => out.push_str(&format!(
+            "{indent}{id}: decl {local} = {}\n",
+            initializer
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "none".to_owned())
+        )),
+        StmtData::Destructuring {
+            pattern,
+            initializer,
+        } => out.push_str(&format!(
+            "{indent}{id}: destructure {pattern} = {initializer}\n"
+        )),
+        StmtData::Expr(expr) => out.push_str(&format!("{indent}{id}: expr {expr}\n")),
+        StmtData::Return(value) => out.push_str(&format!(
+            "{indent}{id}: return {}\n",
+            value
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "none".to_owned())
+        )),
+        StmtData::Throw(expr) => out.push_str(&format!("{indent}{id}: throw {expr}\n")),
+        StmtData::Break(label) => out.push_str(&format!("{indent}{id}: break {label:?}\n")),
+        StmtData::Continue(label) => {
+            out.push_str(&format!("{indent}{id}: continue {label:?}\n"));
+        }
+        StmtData::While { cond, body } => {
+            out.push_str(&format!("{indent}{id}: while {cond}\n"));
+            render_stmt(bodies, *body, depth + 1, out);
+        }
+        StmtData::DoWhile { body, cond } => {
+            out.push_str(&format!("{indent}{id}: do-while {cond}\n"));
+            render_stmt(bodies, *body, depth + 1, out);
+        }
+        StmtData::ForEach {
+            var,
+            iterable,
+            body,
+        } => {
+            out.push_str(&format!("{indent}{id}: for {var} in {iterable}\n"));
+            render_stmt(bodies, *body, depth + 1, out);
+        }
+        StmtData::Labeled { label, stmt } => {
+            out.push_str(&format!("{indent}{id}: label {label}\n"));
+            render_stmt(bodies, *stmt, depth + 1, out);
+        }
+        // A local declaration: the item the statement declares.
+        StmtData::LocalClass { item } => {
+            out.push_str(&format!("{indent}{id}: local class item{}\n", item.0.0));
+        }
+        StmtData::LocalFunction { item } => {
+            out.push_str(&format!("{indent}{id}: local fun item{}\n", item.0.0));
+        }
+        StmtData::Missing => out.push_str(&format!("{indent}{id}: <missing>\n")),
+        other => out.push_str(&format!("{indent}{id}: {other:?}\n")),
+    }
 }

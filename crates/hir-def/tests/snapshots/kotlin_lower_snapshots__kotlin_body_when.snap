@@ -1,0 +1,55 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun classify(value: Any): String {
+    when (value) {
+        1 -> return "one"
+        in 2..9 -> return "small"
+        is String -> return value
+        else -> return "other"
+    }
+}
+
+fun exhaustive(value: Int): String = when (value) {
+    0 -> "zero"
+    else -> "many"
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun classify(value: Any): String @1..187
+fun exhaustive(value: Int): String @189..277
+
+BODIES:
+fun classify body b0:
+  param l0: value: Any
+  s0: expr e13
+fun exhaustive body b1:
+  param l1: value: Int
+  s1: expr e18
+  local l0: value: Any
+  local l1: value: Int
+  expr e0: var value 
+  expr e1: literal Int(1) 
+  expr e2: literal Str("one") 
+  expr e3: jump Return [e2]
+  expr e4: literal Int(2) 
+  expr e5: literal Int(9) 
+  expr e6: range [e4, e5]
+  expr e7: literal Str("small") 
+  expr e8: jump Return [e7]
+  expr e9: var value 
+  expr e10: jump Return [e9]
+  expr e11: literal Str("other") 
+  expr e12: jump Return [e11]
+  expr e13: when (4 arms) [e0, e1, e3, e0, e8, e0, e10, e12]
+  expr e14: var value 
+  expr e15: literal Int(0) 
+  expr e16: literal Str("zero") 
+  expr e17: literal Str("many") 
+  expr e18: when (2 arms) [e14, e15, e16, e17]

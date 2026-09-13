@@ -1,0 +1,53 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun apply(items: List<Int>): List<String> {
+    val mapped = items.map { it.toString() }
+    val filtered = items.filter { value -> value > 0 }
+    val reference = ::apply
+    val member = items::size
+    return mapped + filtered
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun apply(items: List<Int>): List<String> @1..232
+
+BODIES:
+fun apply body b0:
+  param l0: items: List<Int>
+  s2: decl l1 = e6
+  s5: decl l2 = e13
+  s6: decl l3 = e14
+  s7: decl l4 = e15
+  s8: expr e19
+  local l0: items: List<Int>
+  local l1: mapped
+  local l2: filtered
+  local l3: reference
+  local l4: member
+  expr e0: var items 
+  expr e1: field map [e0]
+  expr e2: var it 
+  expr e3: field toString [e2]
+  expr e4: call toString [e2]
+  expr e5: lambda (0 params) [s1]
+  expr e6: call map [e0, e5]
+  expr e7: var items 
+  expr e8: field filter [e7]
+  expr e9: var value 
+  expr e10: literal Int(0) 
+  expr e11: binary Gt [e9, e10]
+  expr e12: lambda (1 params) [s4]
+  expr e13: call filter [e7, e12]
+  expr e14: callable-ref apply 
+  expr e15: callable-ref size 
+  expr e16: var mapped 
+  expr e17: var filtered 
+  expr e18: binary Add [e16, e17]
+  expr e19: jump Return [e18]

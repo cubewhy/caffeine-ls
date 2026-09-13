@@ -1005,6 +1005,8 @@ fn record_pattern(
             }
         }
         hir_expand::body::PatternData::MatchAll => {}
+        // A Kotlin destructuring pattern — unreachable from a Java body.
+        hir_expand::body::PatternData::Destructuring { .. } => {}
     }
 }
 
@@ -1127,6 +1129,8 @@ fn walk_stmt(
                 walk_expr(bodies, *msg, scope, f);
             }
         }
+        // A Kotlin local function — unreachable from a Java body.
+        LocalFunction { .. } | Destructuring { .. } => {}
     }
 }
 
@@ -1200,7 +1204,7 @@ fn walk_expr(
                 }
             }
         }
-        Cast { ty, expr } => {
+        Cast { ty, expr, .. } => {
             f(DiagLocation::Expr(id), ty.clone(), scope);
             walk_expr(bodies, *expr, scope, f);
         }
@@ -1308,5 +1312,18 @@ fn walk_expr(
             }
         }
         Literal(_) | Null | Var(_) | NamePath(_) | Missing => {}
+        // Kotlin-only expressions — unreachable from a Java body.
+        Block(..)
+        | When { .. }
+        | Try { .. }
+        | Elvis { .. }
+        | SafeAccess { .. }
+        | NullAssert { .. }
+        | Range { .. }
+        | InfixCall { .. }
+        | ObjectLiteral { .. }
+        | CallableReference { .. }
+        | Spread { .. }
+        | Jump { .. } => {}
     }
 }

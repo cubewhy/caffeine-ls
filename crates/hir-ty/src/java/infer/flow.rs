@@ -200,6 +200,8 @@ pub(super) fn effective_final_scan(
                 // [JLS §14.3]: a local class declaration declares a type, not a
                 // value; its members' bodies are bodies of their own.
                 StmtData::LocalClass { .. } => {}
+                // A Kotlin local function — unreachable from a Java body.
+                StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
             }
         }
         fn walk_expr(&mut self, expr: ExprId) {
@@ -375,6 +377,19 @@ pub(super) fn effective_final_scan(
                     }
                 }
                 ExprData::Paren(inner) => self.walk_expr(inner),
+                // Kotlin-only expressions — unreachable from a Java body.
+                ExprData::Block(..)
+                | ExprData::When { .. }
+                | ExprData::Try { .. }
+                | ExprData::Elvis { .. }
+                | ExprData::SafeAccess { .. }
+                | ExprData::NullAssert { .. }
+                | ExprData::Range { .. }
+                | ExprData::InfixCall { .. }
+                | ExprData::ObjectLiteral { .. }
+                | ExprData::CallableReference { .. }
+                | ExprData::Spread { .. }
+                | ExprData::Jump { .. } => {}
             }
         }
         fn resolve_local(&self, name: &Name) -> Option<LocalId> {

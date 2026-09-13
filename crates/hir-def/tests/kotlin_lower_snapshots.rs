@@ -327,3 +327,172 @@ class C {
 }
 "#,
 }
+
+// -- bodies -----------------------------------------------------------------
+
+body_snapshot_lang! {
+    kotlin_body_block,
+    LanguageKind::Kotlin,
+    r#"
+fun greet(name: String): String {
+    val prefix = "hello "
+    if (name.isEmpty()) {
+        return prefix
+    }
+    return prefix + name
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_expression,
+    LanguageKind::Kotlin,
+    r#"
+class Point(val x: Int, val y: Int) {
+    fun length(): Double = x * x + y * y
+}
+
+val doubled: Int = 2 * 3
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_when,
+    LanguageKind::Kotlin,
+    r#"
+fun classify(value: Any): String {
+    when (value) {
+        1 -> return "one"
+        in 2..9 -> return "small"
+        is String -> return value
+        else -> return "other"
+    }
+}
+
+fun exhaustive(value: Int): String = when (value) {
+    0 -> "zero"
+    else -> "many"
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_nullability_and_calls,
+    LanguageKind::Kotlin,
+    r#"
+fun render(item: Item?): String {
+    val name = item?.name ?: "unknown"
+    val length = item!!.length
+    val cast = item as? String
+    val forced = item as String
+    val text = "item $name is ${length} long"
+    return text
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_lambdas_and_references,
+    LanguageKind::Kotlin,
+    r#"
+fun apply(items: List<Int>): List<String> {
+    val mapped = items.map { it.toString() }
+    val filtered = items.filter { value -> value > 0 }
+    val reference = ::apply
+    val member = items::size
+    return mapped + filtered
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_loops_and_try,
+    LanguageKind::Kotlin,
+    r#"
+fun scan(items: List<Int>): Int {
+    var total = 0
+    for (item in items) {
+        total += item
+    }
+    while (total > 100) {
+        total -= 1
+    }
+    do {
+        total += 1
+    } while (total < 0)
+    try {
+        total = risky(total)
+    } catch (e: IllegalStateException) {
+        total = 0
+    } finally {
+        println(total)
+    }
+    return total
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_destructuring,
+    LanguageKind::Kotlin,
+    r#"
+fun sum(pair: Pair<Int, Int>): Int {
+    val (first, second) = pair
+    return first + second
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_locals_and_object_literals,
+    LanguageKind::Kotlin,
+    r#"
+fun local(): Int {
+    class Counter(val start: Int) {
+        fun next(): Int = start + 1
+    }
+
+    fun twice(value: Int): Int = value * 2
+
+    val anonymous = object : Runnable {
+        override fun run() {}
+    }
+
+    return twice(Counter(1).next())
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_accessors_and_initializers,
+    LanguageKind::Kotlin,
+    r#"
+class Holder {
+    val computed: Int
+        get() = 1 + 2
+
+    var stored: Int = 0
+        set(value) {
+            println(value)
+        }
+
+    val delegated: String by lazy { "x" }
+
+    init {
+        println(computed)
+    }
+
+    constructor(seed: Int) : this() {
+        println(seed)
+    }
+}
+
+enum class Level {
+    LOW {
+        override fun label(): String = "low"
+    };
+
+    open fun label(): String = "level"
+}
+"#,
+}

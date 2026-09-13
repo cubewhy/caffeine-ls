@@ -29,4 +29,4 @@ class Counter @1..211
     get() @88..105
   var custom: Int @111..210
     get() @139..152
-    set(value: Int) @161..209
+    set(value: <error>) @161..209

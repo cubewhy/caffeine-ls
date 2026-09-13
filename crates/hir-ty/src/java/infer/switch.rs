@@ -274,6 +274,8 @@ impl InferCtx<'_> {
             PatternData::Type(tp) => Some(tp.ty),
             PatternData::Record(rp) => Some(rp.ty),
             PatternData::MatchAll => None,
+            // A Kotlin destructuring pattern — unreachable from a Java body.
+            PatternData::Destructuring { .. } => None,
         }
     }
 
