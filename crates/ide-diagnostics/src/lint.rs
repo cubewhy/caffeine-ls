@@ -205,6 +205,18 @@ fn suppress_keys(
             // anyway ([§9.6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4)).
             continue;
         };
+        // §9.7.1 makes an element value an *expression*, so a key may be the
+        // value of a constant variable rather than a literal
+        // (`static final String K = "unchecked"; @SuppressWarnings(K)`), which
+        // javac honours. The type layer evaluates the argument list; only when
+        // it cannot read every element value does the lexical scan below stand
+        // in.
+        if let Some(values) =
+            hir_ty::java::annotation_value::suppress_warnings_values(db, file_id, &annotation)
+        {
+            out.extend(values.iter().filter_map(|value| LintKey::from_str(value)));
+            continue;
+        }
         // The element is an array of `String` ([§9.6.4.5]), so the keys are
         // the string literals of the argument list — either a lone literal
         // (`@SuppressWarnings("unchecked")`, §9.7.1's single-element form) or

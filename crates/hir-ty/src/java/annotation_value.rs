@@ -23,15 +23,19 @@
 use hir_def::java::item_tree::{ItemAnnotationValue, ItemData, ItemId};
 use hir_expand::body::{BinaryOp, BodyTree, ExprData, ExprId, Literal, UnaryOp};
 use hir_expand::name::Name;
+use rowan::SyntaxNode;
 use rustc_hash::FxHashSet;
+use syntax::java::{Lang, SyntaxKind as J, translate_unicode_escapes};
 use syntax::stub::{AnnotationValue as ClassfileValue, PrimitiveType, PrimitiveValue};
 use vfs::FileId;
 
 use crate::java::const_eval::{ArithOp, shift_mask, wrap_arith, wrap_divrem, wrap_ushr};
 use crate::java::db::TyDatabase;
-
 use crate::java::method::{FieldData, access_context, pick_field};
-use crate::java::resolve::{Resolver, candidate_fqns, resolve_type_ref, scope_for_file};
+use crate::java::range_ctx::range_ctx;
+use crate::java::resolve::{
+    Resolver, candidate_fqns, innermost_item, resolve_type_ref, scope_for_file,
+};
 use crate::java::ty::{Ty, TyKind};
 
 /// The deepest chain of field definitions a [§4.12.4] verdict follows before
@@ -614,8 +618,8 @@ fn field_kind(
     match field_constant(cx, field, visited) {
         // The field's initializer *is* a constant expression, so the field is
         // a constant variable ([§4.12.4]) of its own declared type.
-        FieldValue::Constant(value) => ConstKind::Constant {
-            int: value.and_then(|value| narrowing_value(&field.ty, db, value)),
+        FieldValue::Constant { int, .. } => ConstKind::Constant {
+            int: int.and_then(|value| narrowing_value(&field.ty, db, value)),
             ty: Some(field.ty),
         },
         FieldValue::Unreadable => not_constant,
@@ -627,10 +631,15 @@ fn field_kind(
 ///
 /// [§4.12.4]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4
 enum FieldValue {
-    /// The field's initializer *is* a constant expression, with its value when
-    /// the constant is integral — a `String`, `float`, `double` or `boolean`
-    /// constant carries none.
-    Constant(Option<i64>),
+    /// The field's initializer *is* a constant expression, with the values
+    /// this layer records for it: the integral one, when the constant is of a
+    /// primitive type §5.2's narrowing conversion accepts — a `float`,
+    /// `double` or `boolean` constant carries none — and the `String` one,
+    /// when it is a `String` constant.
+    Constant {
+        int: Option<i64>,
+        string: Option<String>,
+    },
     /// The constant value cannot be read: a blank final, a classfile without a
     /// `ConstantValue` attribute, a field-initializer cycle.
     Unreadable,
@@ -680,7 +689,10 @@ fn field_constant(
         let Some(value) = stub.constant_value.as_ref() else {
             return FieldValue::Unreadable;
         };
-        return FieldValue::Constant(library_int(value));
+        return FieldValue::Constant {
+            int: library_int(value),
+            string: library_string(db, value),
+        };
     };
     // The recursion guard is a *path*, not a set of everything seen: a field
     // whose initializer this evaluation is already inside is the cycle, while
@@ -708,7 +720,10 @@ fn field_constant(
         bodies: &bodies,
     };
     let value = match expr_kind(&nested, initializer, visited) {
-        ConstKind::Constant { int, .. } => FieldValue::Constant(int),
+        ConstKind::Constant { int, .. } => FieldValue::Constant {
+            int,
+            string: string_constant(&nested, initializer, visited),
+        },
         _ => FieldValue::Unreadable,
     };
     visited.remove(&(file, item));
@@ -735,6 +750,286 @@ fn library_int(value: &ClassfileValue<hir::Symbol>) -> Option<i64> {
         | PrimitiveValue::Boolean(_)
         | PrimitiveValue::Void => None,
     }
+}
+
+/// The `String` value of a classfile constant ([JVMS §4.4]) — the
+/// `ConstantValue` a `String` constant variable ([§4.12.4]) was compiled
+/// with.
+///
+/// [JVMS §4.4]: https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.4
+fn library_string(db: &dyn TyDatabase, value: &ClassfileValue<hir::Symbol>) -> Option<String> {
+    let ClassfileValue::String(symbol) = value else {
+        return None;
+    };
+    Some(db.hir_state().interner.resolve(symbol).to_owned())
+}
+
+// --- `String` constant variables ([§4.12.4], [§15.29]) -----------------------
+
+/// The `String` value of a constant expression ([§15.29]) this layer can read
+/// — the value half of [`field_kind`]'s [§4.12.4] verdict, for the constants
+/// whose value is a string rather than an integer.
+///
+/// Every form §15.29 composes a `String` constant of is followed: a string
+/// literal ([§3.10.5]) or text block ([§3.10.6]), parentheses ([§15.8.5]), a
+/// cast to `String`, a concatenation ([§15.18.1]) of readable constants, a
+/// conditional ([§15.25]) whose condition is a `boolean` constant, and a name
+/// denoting a constant variable of type `String` ([§6.5.6.1], [§6.5.6.2],
+/// [§7.5.4]).
+///
+/// `None` for an expression that is not a `String` constant or whose value
+/// this layer cannot recover — possibly constant, never asserted.
+///
+/// [§6.5.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.6
+/// [§4.12.4]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4
+/// [§15.29]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.29
+fn string_constant(
+    cx: &ValueCtx<'_>,
+    expr: ExprId,
+    visited: &mut FxHashSet<(FileId, ItemId)>,
+) -> Option<String> {
+    match cx.bodies.expr(expr).clone() {
+        // §3.10.5/§3.10.6: a string literal's value is its text with the
+        // escapes interpreted, which the lowering already performed.
+        ExprData::Literal(literal) => match literal {
+            Literal::Str(value) => Some(value),
+            _ => None,
+        },
+        // §15.8.5: parentheses do not change what the expression is.
+        ExprData::Paren(inner) => string_constant(cx, inner, visited),
+        // §15.29: "casts to primitive types and casts to `String`" are among
+        // the forms a constant expression is composed of.
+        ExprData::Cast { ty, expr } => {
+            let target = resolve_type_ref(cx.db, cx.scope, cx.resolver, &ty.ty);
+            is_string(&target, cx.db).then(|| string_constant(cx, expr, visited))?
+        }
+        // §15.18.1: `+` with a `String` operand is string concatenation, and
+        // §15.29 admits it — so the concatenation of two readable constants is
+        // itself a readable constant.
+        ExprData::Binary {
+            op: BinaryOp::Add,
+            lhs,
+            rhs,
+        } => {
+            let left = string_constant(cx, lhs, visited)?;
+            let right = string_constant(cx, rhs, visited)?;
+            Some(left + &right)
+        }
+        // §15.25/§15.29: the conditional operator's value is the *taken*
+        // branch's, and the condition is a `boolean` constant whose value this
+        // layer records as `0`/`1` ([`conditional_kind`]).
+        ExprData::Conditional { cond, then, els } => {
+            let taken =
+                match expr_kind(cx, cond, visited) {
+                    ConstKind::Constant { int, ty }
+                        if ty.as_ref().is_some_and(|ty| is_boolean(ty, cx.db)) =>
+                    {
+                        if int == Some(0) { els } else { then }
+                    }
+                    _ => return None,
+                };
+            string_constant(cx, taken, visited)
+        }
+        // §6.5.6.1/§6.5.6.2: a name denoting a constant variable of type
+        // `String` ([§4.12.4]).
+        ExprData::Var(name) => name_string_constant(cx, None, &name, visited),
+        ExprData::NamePath(name) => match qualified_parts(&name) {
+            Some((qualifier, member)) => {
+                name_string_constant(cx, Some(&qualifier), &member, visited)
+            }
+            None => name_string_constant(cx, None, &name, visited),
+        },
+        ExprData::FieldAccess { target, name } => {
+            let qualifier = target.and_then(|target| qualifier_type_name(cx, target))?;
+            name_string_constant(cx, Some(&qualifier), &name, visited)
+        }
+        // Every other form — an arithmetic, relational or logical operator, an
+        // invocation, a creation, an array — is not a `String` constant.
+        _ => None,
+    }
+}
+
+/// The `String` value of a name denoting a [§4.12.4] constant variable of
+/// type `String` ([§6.5.6.1], [§6.5.6.2], [§7.5.4]).
+///
+/// [§6.5.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.6
+/// [§7.5.4]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5.4
+fn name_string_constant(
+    cx: &ValueCtx<'_>,
+    qualifier: Option<&Name>,
+    member: &Name,
+    visited: &mut FxHashSet<(FileId, ItemId)>,
+) -> Option<String> {
+    let NameTarget::Field(field) = name_target(cx, qualifier, member) else {
+        return None;
+    };
+    // §6.5.6.2: a *type name* qualifies a `static` member only — a type
+    // denotes no instance to read one from.
+    if qualifier.is_some() && !field.is_static {
+        return None;
+    }
+    if !field.is_final || !is_string(&field.ty, cx.db) {
+        return None;
+    }
+    match field_constant(cx, &field, visited) {
+        FieldValue::Constant { string, .. } => string,
+        FieldValue::Unreadable => None,
+    }
+}
+
+// --- `@SuppressWarnings` element values ([§9.6.4.5]) ------------------------
+
+/// The `String` values the annotation at `node` writes as its element values
+/// ([JLS §9.7.1]) — in source order, the single-element form
+/// (`@SuppressWarnings("a")`), the explicit `value = ...` form and the array
+/// form (`@SuppressWarnings({"a", "b"})`) alike.
+///
+/// A value counts when it is a `String` constant expression ([§15.29]) this
+/// layer can read: a string literal, a parenthesized, cast, concatenated or
+/// conditional form of readable ones, or a [§4.12.4] constant variable of type
+/// `String` — a source field's initializer or a library field's classfile
+/// `ConstantValue` ([JVMS §4.7.2]) — named bare, through a static import
+/// ([§7.5.4]) or through a type qualifier ([§6.5.6.2]).
+///
+/// This is what gives `@SuppressWarnings(K)` its keys when `K` is a constant:
+/// §9.7.1 makes the element value an expression, so the key is the *value* of
+/// `K`, not the name. `None` when the annotation carries no argument list, no
+/// enclosing declaration, or any element value that is not such a constant, so
+/// a caller may fall back to reading the source lexically.
+///
+/// `None` is always a *miss*, never a claim that the annotation names nothing.
+///
+/// [§9.6.4.5]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5
+/// [§15.29]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.29
+/// [JVMS §4.7.2]: https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.2
+pub fn suppress_warnings_values(
+    db: &dyn TyDatabase,
+    file: FileId,
+    node: &SyntaxNode<Lang>,
+) -> Option<Vec<String>> {
+    let tree = hir::file_item_tree(db, file);
+    let (map, source) = range_ctx(db, file, tree.language)?;
+    // The resolution context is the innermost declaration the annotation is
+    // written in — the same context a written *name* at that position has
+    // ([`Resolver::for_item`], [`resolve_written_name`]).
+    let target = node
+        .parent()
+        .map_or_else(|| node.text_range(), |parent| parent.text_range());
+    let item = innermost_item(&map, &source, &tree, target)?;
+    let scope = scope_for_file(db, file);
+    let resolver = Resolver::for_item(db, file, &tree, item);
+    let bodies = hir::file_body_tree(db, file);
+    let cx = ValueCtx {
+        db,
+        file,
+        item,
+        scope: &scope,
+        resolver: &resolver,
+        bodies: &bodies,
+    };
+    let list = node
+        .children()
+        .find(|child| child.kind() == J::ANNOTATION_ARGUMENT_LIST)?;
+    let mut out = Vec::new();
+    let mut visited = FxHashSet::default();
+    for arg in list.children() {
+        let value = match arg.kind() {
+            // `name = v` ([§9.7.1]).
+            J::ELEMENT_VALUE_PAIR => arg.children().next()?,
+            // The implicit single-element form `(v)`.
+            _ => arg,
+        };
+        element_string(&cx, &value, &mut visited, &mut out)?;
+    }
+    Some(out)
+}
+
+/// Appends the `String` constant the element value `node` denotes, in place
+/// ([JLS §9.7.1]) — a string literal ([§3.10.5]), a bare name or a
+/// `Type.NAME` qualifying one ([§6.5.6.1], [§6.5.6.2]) — or an array
+/// initializer's elements ([§10.6]), one per element. `None` for any element
+/// value that is not such a constant.
+///
+/// [§6.5.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.6
+fn element_string(
+    cx: &ValueCtx<'_>,
+    node: &SyntaxNode<Lang>,
+    visited: &mut FxHashSet<(FileId, ItemId)>,
+    out: &mut Vec<String>,
+) -> Option<()> {
+    match node.kind() {
+        // §10.6: an array initializer values each of its elements.
+        J::ARRAY_INITIALIZER => {
+            for child in node.children() {
+                element_string(cx, &child, visited, out)?;
+            }
+            Some(())
+        }
+        // §3.10.5: a string literal. A bare identifier is a *name* — §9.7.1's
+        // enum-constant form, which is how the lowering reads one.
+        J::LITERAL => {
+            let token = node
+                .children_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| !token.kind().is_trivia())?;
+            let value = match token.kind() {
+                J::STRING_LITERAL => string_literal_value(token.text())?,
+                J::IDENTIFIER => {
+                    let name = Name::new(&translate_unicode_escapes(token.text()));
+                    name_string_constant(cx, None, &name, visited)?
+                }
+                _ => return None,
+            };
+            out.push(value);
+            Some(())
+        }
+        // §6.5.6.2: `Type.NAME` — the member is the access's own identifier,
+        // the qualifier the receiver's text.
+        J::FIELD_ACCESS => {
+            let member = node
+                .children_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| token.kind() == J::IDENTIFIER)?;
+            let member = Name::new(&translate_unicode_escapes(member.text()));
+            let qualifier = receiver_name(node)?;
+            out.push(name_string_constant(
+                cx,
+                Some(&qualifier),
+                &member,
+                visited,
+            )?);
+            Some(())
+        }
+        // Every other form — a class literal, a nested annotation, a
+        // parenthesized or arithmetic expression — is not a string constant.
+        _ => None,
+    }
+}
+
+/// The qualifier of a `FIELD_ACCESS` ([§15.11]): the receiver's source text,
+/// when the receiver is itself a name (an identifier node or a nested field
+/// access). Any other receiver — an invocation, a creation, an array access,
+/// `this`/`super` — denotes no type, and the access it qualifies is then not
+/// the qualified name of [§6.5.6.2] the lookup expects.
+///
+/// [§15.11]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11
+/// [§6.5.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.6
+fn receiver_name(node: &SyntaxNode<Lang>) -> Option<Name> {
+    let receiver = node
+        .children()
+        .find(|child| matches!(child.kind(), J::LITERAL | J::FIELD_ACCESS))?;
+    let text = receiver.text().to_string();
+    (!text.is_empty()).then(|| Name::new(&translate_unicode_escapes(&text)))
+}
+
+/// The value of a `STRING_LITERAL` token ([§3.10.5]): its text with the
+/// unicode escapes translated ([§3.3]) and the delimiting quotes removed.
+///
+/// [§3.3]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.3
+/// [§3.10.5]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.10.5
+fn string_literal_value(text: &str) -> Option<String> {
+    let text = translate_unicode_escapes(text);
+    text.strip_prefix('"')?.strip_suffix('"').map(str::to_owned)
 }
 
 // --- types ------------------------------------------------------------------

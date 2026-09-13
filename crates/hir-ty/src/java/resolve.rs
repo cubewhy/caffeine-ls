@@ -1408,8 +1408,10 @@ fn resolver_at(
     Resolver::for_item(db, file, tree, item)
 }
 
-/// The innermost item whose declaration range contains `target`.
-fn innermost_item(
+/// The innermost item whose declaration range contains `target` — the
+/// declaration an annotation or element value written at `target` belongs to
+/// ([`crate::java::annotation_value::suppress_warnings_values`]).
+pub(crate) fn innermost_item(
     map: &AstIdMap,
     source: &SourceFile,
     tree: &ItemTree,

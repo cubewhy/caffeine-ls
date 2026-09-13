@@ -240,3 +240,41 @@ class Body {
 ",
     )])
 );
+
+// JLS §9.7.1/§15.29/§9.6.4.5: an element value is a *conditional expression*,
+// so a key may be written as a constant variable rather than as a literal —
+// `@SuppressWarnings(K)` names what `K` *denotes*, exactly as
+// `@SuppressWarnings("rawtypes")` does. javac reports only the control:
+// ```text
+// Body.java:16: warning: [rawtypes] found raw type: List
+//     void control(List xs) {
+//                  ^
+//   missing type arguments for generic class List<E>
+// 1 warning
+// ```
+snapshot!(
+    rawtypes_key_from_constant,
+    check_class_diagnostics(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Body {
+    static final String K = \"rawtypes\";
+
+    @SuppressWarnings(K)
+    void m(List xs) {
+    }
+
+    @SuppressWarnings(Body.K)
+    void qualified(List xs) {
+    }
+
+    void control(List xs) {
+    }
+}
+",
+    )])
+);
