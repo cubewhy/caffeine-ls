@@ -1,0 +1,32 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_references_many(&fixture, cases)"
+---
+--- refs @"run()"#0 include=true ---
+run @87..90
+run @236..239
+--- refs @"count;"#0 include=true ---
+count @70..75
+count @115..120
+count @130..135
+count @253..258
+--- refs @"local"#0 include=true ---
+local @107..112
+local @138..143
+--- refs @"STATIC"#0 include=true ---
+STATIC @50..56
+STATIC @266..272
+--- refs @"Base {"#0 include=true ---
+Base @28..32
+Base @172..176
+Base @183..187
+Base @205..209
+Base @218..222
+Base @261..265
+--- refs @"Use extends"#0 include=true ---
+Use @160..163
+--- refs @"run()"#0 include=false ---
+run @236..239
+--- refs @"local"#0 include=false ---
+local @138..143
+--- refs @"Use extends"#0 include=false ---

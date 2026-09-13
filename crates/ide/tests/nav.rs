@@ -1217,18 +1217,50 @@ fn declared_name_range(fixture: &Fixture, declaration: &str, name: &str) -> Text
     )
 }
 
-fn test_file(text: &str) -> Fixture {
-    let mut host = AnalysisHost::new();
-    let file = FileId::from_raw(1);
-    let path = "/src/main/java/com/example/Nav.java";
+/// A fixture over several files, each with its own id and text, all in the main
+/// source set of one project: the shape a cross-file property needs, which a
+/// single-file [`Fixture`] cannot express.
+struct FilesFixture {
+    host: AnalysisHost,
+    files: Vec<(FileId, String)>,
+}
 
+impl FilesFixture {
+    fn analysis(&self) -> Analysis {
+        self.host.snapshot()
+    }
+
+    fn file(&self, index: usize) -> FileId {
+        self.files[index].0
+    }
+
+    /// The offset of `needle`'s first character in the `index`-th file.
+    fn offset_start(&self, index: usize, needle: &str) -> TextSize {
+        let text = &self.files[index].1;
+        TextSize::new(
+            text.find(needle)
+                .unwrap_or_else(|| panic!("needle {needle:?} not found in:\n{text}"))
+                as u32,
+        )
+    }
+}
+
+/// A host over `files`, each a `(path, text)` pair; the file ids are `1..` in
+/// argument order.
+fn test_files(files: &[(&str, &str)]) -> FilesFixture {
+    let mut host = AnalysisHost::new();
     let mut change = Change::default();
     let mut file_set = FileSet::default();
-    file_set.insert(
-        file,
-        VfsPath::from(AbsPathBuf::assert_utf8(path.to_owned().into())),
-    );
-    change.change_file(file, Some(text.to_string()));
+    let mut sources = Vec::with_capacity(files.len());
+    for (index, &(path, text)) in files.iter().enumerate() {
+        let file = FileId::from_raw(index as u32 + 1);
+        file_set.insert(
+            file,
+            VfsPath::from(AbsPathBuf::assert_utf8(path.to_owned().into())),
+        );
+        change.change_file(file, Some(text.to_string()));
+        sources.push((file, text.to_owned()));
+    }
     change.set_roots(vec![SourceRoot::new(file_set)]);
 
     let mut data = ProjectGraphData::default();
@@ -1243,9 +1275,210 @@ fn test_file(text: &str) -> Fixture {
     change.set_project_graph(data);
     host.apply_change(change);
 
-    Fixture {
+    FilesFixture {
         host,
+        files: sources,
+    }
+}
+
+fn test_file(text: &str) -> Fixture {
+    let fixture = test_files(&[("/src/main/java/com/example/Nav.java", text)]);
+    let file = fixture.file(0);
+    Fixture {
+        host: fixture.host,
         file,
         text: text.to_owned(),
     }
+}
+
+// -- find-all-references ------------------------------------------------------------
+// The reverse of goto-definition: a query on a declaration reports every site
+// whose forward resolution is that same declaration — including a name written
+// through a Unicode escape, and excluding a same-named declaration elsewhere.
+
+/// The source text of every reported reference, in (file, range) order — the
+/// reported tokens themselves, so a missing or extra site reads as one line.
+fn reference_texts(
+    fixture: &Fixture,
+    needle: &str,
+    occurrence: usize,
+    include_declaration: bool,
+) -> Vec<String> {
+    let offset = fixture.offset_start(needle, occurrence);
+    fixture
+        .analysis()
+        .references(fixture.file, offset, include_declaration)
+        .unwrap()
+        .iter()
+        .map(|reference| {
+            fixture.text[reference.range.start().into()..reference.range.end().into()].to_owned()
+        })
+        .collect()
+}
+
+/// Renders the reference sites at one query as `text @range` lines under a
+/// header naming the query — [`render_nav`]'s shape for the reverse direction.
+fn render_references(
+    fixture: &Fixture,
+    needle: &str,
+    occurrence: usize,
+    include_declaration: bool,
+) -> String {
+    let offset = fixture.offset_start(needle, occurrence);
+    let sites = fixture
+        .analysis()
+        .references(fixture.file, offset, include_declaration)
+        .unwrap()
+        .iter()
+        .map(|reference| {
+            format!(
+                "{} @{:?}",
+                &fixture.text[reference.range.start().into()..reference.range.end().into()],
+                reference.range
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("--- refs @{needle:?}#{occurrence} include={include_declaration} ---\n{sites}")
+}
+
+fn render_references_many(fixture: &Fixture, cases: &[(&str, usize, bool)]) -> String {
+    cases
+        .iter()
+        .map(|&(needle, occurrence, include_declaration)| {
+            render_references(fixture, needle, occurrence, include_declaration)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The workspace of [`test_references_matrix`]: a base class with a static
+/// field, a field and a method that reads and writes it, and a subclass that
+/// names all of them plus the class in every declaration-side and body type
+/// position.
+const REFS_SRC: &str = r#"package com.example;
+
+class Base {
+    static int STATIC = 1;
+    int count;
+
+    void run() {
+        int local = count;
+        count = local;
+    }
+}
+
+class Use extends Base {
+    Base make() {
+        Base b = new Base();
+        b.run();
+        b.count = Base.STATIC;
+        return b;
+    }
+}
+"#;
+
+/// One query per kind of declaration — method, field, local, static field, a
+/// class with references, a class without — each with and without the
+/// declaration itself: the site count must be exactly the sites written.
+#[test]
+fn test_references_matrix() {
+    let fixture = test_file(REFS_SRC);
+    let cases: &[(&str, usize, &[&str], &[&str])] = &[
+        ("run()", 0, &["run", "run"], &["run"]),
+        (
+            "count;",
+            0,
+            &["count", "count", "count", "count"],
+            &["count", "count", "count"],
+        ),
+        ("local", 0, &["local", "local"], &["local"]),
+        ("STATIC", 0, &["STATIC", "STATIC"], &["STATIC"]),
+        ("Base {", 0, &["Base"; 6], &["Base"; 5]),
+        ("Use extends", 0, &["Use"], &[]),
+    ];
+    for &(needle, occurrence, with_declaration, without_declaration) in cases {
+        assert_eq!(
+            reference_texts(&fixture, needle, occurrence, true),
+            with_declaration,
+            "include_declaration = true for {needle:?}#{occurrence}"
+        );
+        assert_eq!(
+            reference_texts(&fixture, needle, occurrence, false),
+            without_declaration,
+            "include_declaration = false for {needle:?}#{occurrence}"
+        );
+    }
+}
+
+/// The same matrix, site by site, as one snapshot.
+#[test]
+fn test_references_snapshot() {
+    let fixture = test_file(REFS_SRC);
+    let cases: &[(&str, usize, bool)] = &[
+        ("run()", 0, true),
+        ("count;", 0, true),
+        ("local", 0, true),
+        ("STATIC", 0, true),
+        ("Base {", 0, true),
+        ("Use extends", 0, true),
+        ("run()", 0, false),
+        ("local", 0, false),
+        ("Use extends", 0, false),
+    ];
+    assert_snapshot!("references_matrix", render_references_many(&fixture, cases));
+}
+
+/// A query on a local reports only the declaring file's sites: a field of the
+/// same name in another file names a different declaration, so neither its
+/// declaration nor its uses are reference sites of the local.
+#[test]
+fn test_references_local_stays_in_its_file() {
+    let fixture = test_files(&[
+        (
+            "/src/main/java/com/example/Locals.java",
+            r#"package com.example;
+
+class Locals {
+    void run() {
+        int v = 0;
+        int w = v;
+    }
+}
+"#,
+        ),
+        (
+            "/src/main/java/com/example/Fields.java",
+            r#"package com.example;
+
+class Fields {
+    int v;
+
+    void use() {
+        v = 2;
+    }
+}
+"#,
+        ),
+    ]);
+    let offset = fixture.offset_start(0, "v = 0;");
+    let references = fixture
+        .analysis()
+        .references(fixture.file(0), offset, true)
+        .unwrap();
+    let observed: Vec<(FileId, &str)> = references
+        .iter()
+        .map(|reference| {
+            (
+                reference.file,
+                &fixture.files[reference.file.index() as usize - 1].1
+                    [reference.range.start().into()..reference.range.end().into()],
+            )
+        })
+        .collect();
+    assert_eq!(
+        observed,
+        vec![(fixture.file(0), "v"), (fixture.file(0), "v")],
+        "the local's own declaration and its one use, both in Locals.java"
+    );
 }

@@ -4,7 +4,8 @@
 //! so `hir-def` lowers a Kotlin CST to an empty item tree and body tree
 //! (`crates/hir-def/src/java/lower.rs`, `lower_source`'s Kotlin arm) and there
 //! is nothing to resolve. A request in a Kotlin file therefore answers nothing
-//! rather than walking an empty tree through the Java path.
+//! rather than walking an empty tree through the Java path — `definition`,
+//! `references` and `pending_library_files` all answer an empty result.
 //!
 //! When the Kotlin lowering lands, this module mirrors
 //! [`super::java_definition`]: the lowering dispatch is `lower_source`'s Kotlin
@@ -17,7 +18,7 @@
 use rowan::TextSize;
 use vfs::FileId;
 
-use super::{LibraryFileRef, NavigationTarget, RootDatabase};
+use super::{LibraryFileRef, NavigationTarget, ReferenceTarget, RootDatabase};
 
 /// The declarations the reference at `offset` resolves to in a Kotlin file.
 /// Nothing does: see the module documentation.
@@ -26,6 +27,16 @@ pub(super) fn definition(
     _file: FileId,
     _offset: TextSize,
 ) -> Vec<NavigationTarget> {
+    Vec::new()
+}
+
+/// The reference sites of the declaration the offset names in a Kotlin file.
+/// Nothing does: see the module documentation.
+pub(super) fn references(
+    _db: &RootDatabase,
+    _file: FileId,
+    _offset: TextSize,
+) -> Vec<ReferenceTarget> {
     Vec::new()
 }
 

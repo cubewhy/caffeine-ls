@@ -28,7 +28,7 @@ pub mod workspace;
 
 pub use change::Change;
 pub use highlight::{Highlight, HlMods, HlTag};
-pub use nav::{HoverInfo, LibraryFileRef, NavigationTarget};
+pub use nav::{HoverInfo, LibraryFileRef, NavigationTarget, ReferenceTarget};
 pub use symbols::{DocumentSymbol, WorkspaceSymbolSummary};
 pub use workspace::WorkspaceReport;
 
@@ -285,6 +285,18 @@ impl Analysis {
         offset: rowan::TextSize,
     ) -> Cancellable<Vec<NavigationTarget>> {
         self.with_db(|db| nav::definition(db, file_id, offset))
+    }
+
+    /// The reference sites of the declaration(s) the reference at `offset`
+    /// names — the LSP `textDocument/references` result. `include_declaration`
+    /// adds each declaration's own name token.
+    pub fn references(
+        &self,
+        file_id: FileId,
+        offset: rowan::TextSize,
+        include_declaration: bool,
+    ) -> Cancellable<Vec<ReferenceTarget>> {
+        self.with_db(|db| nav::references(db, file_id, offset, include_declaration))
     }
 
     /// The library files the reference at `offset` resolves into but which are

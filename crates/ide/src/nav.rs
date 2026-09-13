@@ -72,6 +72,7 @@
 
 use std::collections::VecDeque;
 
+use rayon::prelude::*;
 use rowan::{TextRange, TextSize};
 use rustc_hash::FxHashSet;
 use smol_str::SmolStr;
@@ -89,6 +90,7 @@ use hir_ty::Ty;
 
 use crate::RootDatabase;
 use ide_db::base_db::{self, LanguageKind};
+use syntax::java::{SyntaxKind as J, translate_unicode_escapes};
 
 mod kotlin;
 
@@ -156,21 +158,49 @@ pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Navi
     }
 }
 
-/// The Java declarations the reference at `offset` resolves to ([JLS §6.5]).
-fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
+/// One reference site: a file and the range of the *name token* at the site —
+/// the identifier a client highlights, not the expression containing it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceTarget {
+    pub file: FileId,
+    pub range: TextRange,
+}
+
+/// The reference sites of the declaration(s) the reference at `offset` names —
+/// the LSP `textDocument/references` result. `include_declaration` adds each
+/// declaration's own name token.
+pub fn references(
+    db: &RootDatabase,
+    file: FileId,
+    offset: TextSize,
+    include_declaration: bool,
+) -> Vec<ReferenceTarget> {
+    match hir::file_item_tree(db, file).language {
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::references(db, file, offset),
+        _ => java_references(db, file, offset, include_declaration),
+    }
+}
+
+/// The resolutions of the reference at `offset`: the recorded inference
+/// resolution, then the lambda-parameter / local / `case`-label fallbacks, the
+/// declaration-side references (type refs, imports) and the annotation
+/// element-value pairs, then the classpath walk ([`resolve_at`]). Empty when
+/// nothing resolves — a declaration's own name is not a reference ([JLS §6.3]),
+/// so `self_target` is not consulted here.
+fn java_resolutions(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
     // §15.8.3/§15.8.4: a `this`/`super` keyword names a type, not a member —
     // and it is written *inside* the receiver of the enclosing `this.f` or
     // `super.m()` when it is not a receiver of its own, so the recorded
     // resolution of that member access is not its answer.
     if let Some(keyword) = keyword_target(db, file, offset) {
-        return targets(db, keyword);
+        return keyword;
     }
 
     // §15.12: the type layer resolved this reference exactly — a local, a
     // field, an overload-selected method or constructor, a method reference.
     let recorded = recorded_reference(db, file, offset);
     if !recorded.is_empty() {
-        return targets(db, recorded);
+        return recorded;
     }
 
     let bodies = hir::file_body_tree(db, file);
@@ -185,21 +215,18 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
         // §6.4/[§15.27.2]: a lambda parameter shadows every enclosing local of
         // the same name throughout its body, so it is looked up first.
         if let Some(resolution) = lambda_param_resolution(file, &bodies, offset, &name) {
-            return targets(db, vec![resolution]);
+            return vec![resolution];
         }
         if let Some(local) = resolve_local(&bodies, name.as_str(), offset) {
-            return targets(
-                db,
-                vec![Resolution::Variable {
-                    file,
-                    range: bodies.local_name_range(local).unwrap_or_default(),
-                    name: name.as_str().to_owned(),
-                }],
-            );
+            return vec![Resolution::Variable {
+                file,
+                range: bodies.local_name_range(local).unwrap_or_default(),
+                name: name.as_str().to_owned(),
+            }];
         }
         let resolution = switch_label_resolution(db, file, offset, &name, expr);
         if !resolution.is_empty() {
-            return targets(db, resolution);
+            return resolution;
         }
     }
 
@@ -212,7 +239,7 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
     // [`pending_library_files`]).
     let declaration = declaration_reference(db, file, offset);
     if !declaration.is_empty() {
-        return targets(db, declaration);
+        return declaration;
     }
     // §9.7.1: an annotation's element-value pairs — the pair's name (the
     // annotation interface's element) and the names inside its value — are
@@ -220,16 +247,168 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
     // literal forms are lowered into the expression arena.
     let annotation = annotation_reference(db, file, offset);
     if !annotation.is_empty() {
-        return targets(db, annotation);
+        return annotation;
     }
     let resolved = resolve_at(db, file, offset);
     if !resolved.is_empty() {
-        return targets(db, resolved);
+        return resolved;
     }
-    // Nothing above resolved: the offset is on a declaration's own name, which
-    // is not a reference to itself (§6.3) but still has a definition — the
-    // declaration it names. Self-navigation answers it.
-    self_target(db, file, offset).into_iter().collect()
+    Vec::new()
+}
+
+/// The Java declarations the reference at `offset` resolves to ([JLS §6.5]).
+fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
+    let resolutions = java_resolutions(db, file, offset);
+    if resolutions.is_empty() {
+        // Nothing resolved: the offset is on a declaration's own name, which is
+        // not a reference to itself (§6.3) but still has a definition — the
+        // declaration it names. Self-navigation answers it.
+        return self_target(db, file, offset).into_iter().collect();
+    }
+    targets(db, resolutions)
+}
+
+/// The reference sites of the declaration(s) the reference at `offset` names:
+/// every identifier token in the swept files that resolves — through the same
+/// forward pipeline `definition` uses — to one of those declarations.
+///
+/// The query's own answer is the invariant of the whole feature: a site counts
+/// when the declarations `java_resolutions` produces for it map to a
+/// `(FileId, TextRange)` pair that is one of the query's. There is no second
+/// resolution path, so `references` can never disagree with `definition`.
+fn java_references(
+    db: &RootDatabase,
+    file: FileId,
+    offset: TextSize,
+    include_declaration: bool,
+) -> Vec<ReferenceTarget> {
+    let found = java_definition(db, file, offset);
+    if found.is_empty() {
+        return Vec::new();
+    }
+    let names: FxHashSet<String> = found.iter().map(|t| t.name.clone()).collect();
+    let decls: FxHashSet<(FileId, TextRange)> = found.iter().map(|t| (t.file, t.range)).collect();
+
+    let mut files = db.source_files();
+    files.push(file);
+    if found.iter().all(|t| !is_item_name(db, t)) {
+        // A local, a parameter, a pattern binding or a type parameter: only the
+        // file declaring it can name it, so a workspace sweep would resolve
+        // every other file for nothing.
+        files = found.iter().map(|t| t.file).collect();
+        files.push(file);
+    }
+    files.sort_unstable();
+    files.dedup();
+
+    let mut hits = sweep(db, &files, &names, &decls);
+    if include_declaration {
+        hits.extend(found.iter().map(|t| ReferenceTarget {
+            file: t.file,
+            range: t.range,
+        }));
+    }
+    hits.sort_by_key(|hit| (hit.file, hit.range.start()));
+    hits.dedup();
+    hits
+}
+
+/// Whether `target` is a declaration that has an item of its own: an item of
+/// `target.file` whose name token is `target.range`. `false` for a name carried
+/// without an item — a local, a parameter, a pattern binding, a type parameter.
+///
+/// Only the file that declares such a name can name it, which is what makes the
+/// narrowing in [`java_references`] sound. A *library* member that is loaded
+/// produces a `(library_file, name_range)` target and is an item name of that
+/// library file — still correct, since the library source is in the database.
+fn is_item_name(db: &RootDatabase, target: &NavigationTarget) -> bool {
+    let tree = hir::file_item_tree(db, target.file);
+    all_items(db, target.file, &tree)
+        .into_iter()
+        .any(|(_, item)| item_name_range(db, target.file, &tree, item) == Some(target.range))
+}
+
+/// Every reference site of `names` in `files`, one worker per chunk of files.
+///
+/// A `RootDatabase` is `Send` but not `Sync`, so each rayon worker runs on its
+/// own clone (the shape [`crate::workspace::workspace_reports`] uses); the
+/// clones share salsa's memo tables, so the parses and lowerings the sweep
+/// resolves against are computed once.
+fn sweep(
+    db: &RootDatabase,
+    files: &[FileId],
+    names: &FxHashSet<String>,
+    decls: &FxHashSet<(FileId, TextRange)>,
+) -> Vec<ReferenceTarget> {
+    let num_workers = rayon::current_num_threads().max(1);
+    let chunk_size = files.len().div_ceil(num_workers);
+    let chunks: Vec<&[FileId]> = files.chunks(chunk_size.max(1)).collect();
+    let databases: Vec<RootDatabase> = (0..chunks.len()).map(|_| db.clone()).collect();
+    chunks
+        .into_par_iter()
+        .zip(databases.into_par_iter())
+        .flat_map_iter(|(chunk, db)| {
+            chunk
+                .iter()
+                .flat_map(move |&file| file_references(&db, file, names, decls))
+        })
+        .collect()
+}
+
+/// The reference sites of `names` inside one file: every `IDENTIFIER` token
+/// whose decoded text names one of the query's declarations and whose
+/// resolution is one of them.
+///
+/// The token walk is the candidate source because the alternative —
+/// enumerating sites from type references, the resolved-body table, imports and
+/// annotation pairs — duplicates each step of the forward pipeline and drifts
+/// from it. A reference can only be written as an identifier token of the
+/// declaration's name (constants, imports, qualifiers and supertype clauses
+/// included), so the filter is sound, and it bounds the number of
+/// `java_resolutions` calls to the tokens that could possibly answer.
+///
+/// A javadoc `{@link ...}` sits inside one `JAVADOC` token, so it is no
+/// candidate site; `definition` answers nothing at such an offset either, so
+/// the two requests stay consistent.
+fn file_references(
+    db: &RootDatabase,
+    file: FileId,
+    names: &FxHashSet<String>,
+    decls: &FxHashSet<(FileId, TextRange)>,
+) -> Vec<ReferenceTarget> {
+    let tree = hir::file_item_tree(db, file);
+    if tree.language == LanguageKind::Unknown {
+        return Vec::new();
+    }
+    let parse = base_db::parse(db, file, tree.language);
+    // A Kotlin file has no HIR to resolve through: nothing is a reference there
+    // (`kotlin::references`).
+    let syntax::SourceFile::Java(source) = &parse.syntax_node(tree.language) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for element in source.syntax_node.descendants_with_tokens() {
+        let Some(token) = element.as_token() else {
+            continue;
+        };
+        if token.kind() != J::IDENTIFIER {
+            continue;
+        }
+        // [JLS §3.3]: an identifier written through a Unicode escape names what
+        // the escape spells, so the candidate filter decodes the token text the
+        // way the lexer does before comparing it with the declaration's name.
+        if !names.contains(translate_unicode_escapes(token.text()).as_ref()) {
+            continue;
+        }
+        let range = token.text_range();
+        if targets(db, java_resolutions(db, file, range.start()))
+            .iter()
+            .any(|target| decls.contains(&(target.file, target.range)))
+        {
+            out.push(ReferenceTarget { file, range });
+        }
+    }
+    out
 }
 
 /// Goto-definition on a declaration's own name answers with the declaration
