@@ -5096,3 +5096,50 @@ fn test_record_component_semantic_tokens() {
 
     insta::assert_json_snapshot!("record_component_semantic_tokens", rows);
 }
+
+/// A *local* record ([JLS §14.3]) — one declared in a method body — is not an
+/// item the HIR lowers, so its component list is classified from the syntax
+/// tree alone. A component is still the declaration of the record's field
+/// ([§8.10.1]), never a parameter: the list it is written in is a record's.
+const LOCAL_RECORD_COMPONENT_TOKENS: &str = r#"package com.example;
+
+class Outer {
+    void run() {
+        record Local(int n) {
+            int read() {
+                return n;
+            }
+        }
+        int value = new Local(1).n();
+    }
+}
+"#;
+
+#[test]
+fn test_local_record_component_semantic_tokens() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Outer.java";
+    lsp.write_file(path, LOCAL_RECORD_COMPONENT_TOKENS);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let legend = legend_of(&lsp);
+    let response = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": lsp.uri(path) } }),
+    );
+    let tokens = decode_tokens(&response, &legend);
+    let rows = render_tokens(&tokens, LOCAL_RECORD_COMPONENT_TOKENS);
+
+    assert_kinds(
+        &tokens,
+        LOCAL_RECORD_COMPONENT_TOKENS,
+        &[
+            // The local record and its component declaration.
+            "struct+declaration Local",
+            "property+declaration n",
+        ],
+    );
+
+    insta::assert_json_snapshot!("local_record_component_semantic_tokens", rows);
+}

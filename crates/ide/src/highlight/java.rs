@@ -799,10 +799,26 @@ fn declaration_tag(node: &SyntaxNode<Lang>) -> Option<HlTag> {
         | J::COMPACT_CONSTRUCTOR_DECL
         | J::ANNOTATION_TYPE_ELEMENT_DECL => HlTag::Method,
         J::ENUM_CONSTANT => HlTag::EnumMember,
-        J::FORMAL_PARAMETER
-        | J::SPREAD_PARAMETER
-        | J::CATCH_FORMAL_PARAMETER
-        | J::INFERRED_PARAMETERS => HlTag::Parameter,
+        // §8.10.1: a record's component list is parsed as a formal parameter
+        // list, so a component of a record the HIR does not lower — a *local*
+        // record, whose declaration is a statement — reaches here as a formal
+        // parameter. It declares a field of the record ([§8.10.1]), not a
+        // parameter; a real formal parameter is one of a method, a constructor
+        // or a lambda.
+        J::FORMAL_PARAMETER | J::SPREAD_PARAMETER => {
+            let record_component = node.parent().is_some_and(|parameters| {
+                parameters.kind() == J::FORMAL_PARAMETERS
+                    && parameters
+                        .parent()
+                        .is_some_and(|declaration| declaration.kind() == J::RECORD_DECL)
+            });
+            if record_component {
+                HlTag::Property
+            } else {
+                HlTag::Parameter
+            }
+        }
+        J::CATCH_FORMAL_PARAMETER | J::INFERRED_PARAMETERS => HlTag::Parameter,
         J::TYPE_PARAMETER => HlTag::TypeParameter,
         // A declarator is a field's, an enum constant's or a local's: only the
         // first is a property ([JLS §8.3]); the rest are locals.

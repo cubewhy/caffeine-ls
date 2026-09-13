@@ -1,0 +1,25 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: rows
+---
+[
+  "0:0:7 keyword package",
+  "0:8:11 namespace com.example",
+  "2:0:5 keyword class",
+  "2:6:5 class+declaration Outer",
+  "3:4:4 keyword void",
+  "3:9:3 method+declaration run",
+  "4:15:5 struct+declaration Local",
+  "4:21:3 keyword int",
+  "4:25:1 property+declaration n",
+  "5:12:3 keyword int",
+  "5:16:4 method+declaration read",
+  "6:16:6 keyword return",
+  "9:8:3 keyword int",
+  "9:12:5 variable+declaration value",
+  "9:18:1 operator =",
+  "9:20:3 keyword new",
+  "9:24:5 type Local",
+  "9:30:1 number 1",
+  "9:33:1 method n"
+]
