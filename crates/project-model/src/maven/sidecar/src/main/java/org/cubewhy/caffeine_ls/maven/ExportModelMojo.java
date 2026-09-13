@@ -99,6 +99,15 @@ public class ExportModelMojo extends AbstractMojo {
                 }
             }
 
+            // The Kotlin Maven plugin registers `src/main/kotlin` and
+            // `src/test/kotlin` as compile source roots *while its goal runs*,
+            // so an export taken before that goal — or by a build that runs
+            // the exporter first — sees neither. Add the conventional
+            // directories when they exist and the plugin has not already
+            // registered them.
+            addConventionalRoot(proj, sourceRoots, "src/main/kotlin");
+            addConventionalRoot(proj, testRoots, "src/test/kotlin");
+
             for (String src : safeStrings(proj.getTestCompileSourceRoots())) {
                 String normalized = normalizePath(src);
                 if (normalized == null) {
@@ -314,6 +323,27 @@ public class ExportModelMojo extends AbstractMojo {
         } catch (Exception ignored) {
             return new ArrayList<>();
         }
+    }
+
+    /**
+     * Adds the project-relative directory {@code relative} to {@code roots}
+     * when it exists on disk and no root equal to it is registered yet.
+     *
+     * Both the registered root and the directory are compared in normalized
+     * form, so a build that already registered the directory — the Kotlin
+     * plugin's own goal, or an explicit {@code <sourceDirectory>} — is left
+     * untouched.
+     */
+    private void addConventionalRoot(MavenProject proj, List<String> roots, String relative) {
+        File directory = new File(proj.getBasedir(), relative);
+        if (!directory.isDirectory()) {
+            return;
+        }
+        String normalized = normalizePath(directory);
+        if (normalized == null || roots.contains(normalized)) {
+            return;
+        }
+        roots.add(normalized);
     }
 
     private static List<String> safeStrings(List<String> values) {

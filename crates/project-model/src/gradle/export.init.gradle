@@ -121,6 +121,41 @@ def getSourceSets(def project) {
     return null
 }
 
+/// The source directories of one source set, in every language it holds.
+///
+/// The Java plugin's `sourceSets.main.java.srcDirs` is the baseline; a source
+/// set the Kotlin Gradle plugin extends exposes the Kotlin directories under
+/// its own extension (`sourceSets.main.kotlin.srcDirs`), and KGP versions whose
+/// per-source-set extension is not reachable put them on the project-level
+/// `kotlin` extension instead. Every probe is guarded, so a project without the
+/// Kotlin plugin — or with a KGP whose internals differ — still exports its
+/// Java directories, and the conventional `src/<set>/kotlin` directory is added
+/// when the probes yield nothing and the directory exists.
+def sourceDirsOf(def sourceSet, def project) {
+    if (sourceSet == null) return []
+    def dirs = []
+    try { dirs += sourceSet.java?.srcDirs?.collect { normalizePath(it) } ?: [] } catch (Throwable ignored) {}
+    def kotlinDirs = []
+    try { kotlinDirs += sourceSet.kotlin?.srcDirs?.collect { normalizePath(it) } ?: [] } catch (Throwable ignored) {}
+    try {
+        def kotlin = project.extensions.findByName('kotlin')
+        def kotlinSet = kotlin?.sourceSets?.findByName(sourceSet.name)
+        kotlinDirs += kotlinSet?.kotlin?.srcDirs?.collect { normalizePath(it) } ?: []
+    } catch (Throwable ignored) {}
+    kotlinDirs = kotlinDirs.findAll { it }
+    if (kotlinDirs.isEmpty()) {
+        // The standard layout, when the plugin exposes no directory for it.
+        def conventional = new File(project.projectDir, "src/${sourceSet.name}/kotlin")
+        if (conventional.isDirectory()) {
+            kotlinDirs << normalizePath(conventional)
+        }
+    }
+    // Generated roots are reported separately; a source set that lists
+    // `build/generated` under either language must not have it here.
+    dirs += kotlinDirs
+    return dirs.findAll { it }.unique()
+}
+
 gradle.projectsEvaluated {
     // Each project exports its own model from a task registered in that
     // project, so configuration resolution happens at execution time AND in
@@ -143,10 +178,8 @@ gradle.projectsEvaluated {
                     testSet = sourceSets?.findByName('test')
                 } catch (Throwable ignored) {}
 
-                def mainSource = []
-                try { mainSource = mainSet?.java?.srcDirs?.collect { normalizePath(it) } ?: [] } catch (Throwable ignored) {}
-                def testSource = []
-                try { testSource = testSet?.java?.srcDirs?.collect { normalizePath(it) } ?: [] } catch (Throwable ignored) {}
+                def mainSource = sourceDirsOf(mainSet, project)
+                def testSource = sourceDirsOf(testSet, project)
 
                 def resourcesSource = []
                 try {
