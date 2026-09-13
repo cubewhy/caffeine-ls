@@ -329,6 +329,18 @@ impl Analysis {
         self.with_db(|db| nav::hover(db, file_id, offset))
     }
 
+    /// The declaration of the class-like type `fqn` names in `file_id`'s scope
+    /// — what a click on an inlay hint's type label navigates to. `None` when
+    /// the scope resolves the name to no declaration, or only to a library
+    /// class whose source is not loaded.
+    pub fn class_definition(
+        &self,
+        file_id: FileId,
+        fqn: &str,
+    ) -> Cancellable<Option<NavigationTarget>> {
+        self.with_db(|db| nav::class_declaration(db, file_id, fqn))
+    }
+
     /// The semantic highlighting of the file — the model behind the LSP
     /// `textDocument/semanticTokens` requests, sorted by range start.
     pub fn highlight(&self, file_id: FileId) -> Cancellable<Vec<Highlight>> {

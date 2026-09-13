@@ -293,6 +293,34 @@ fn hover_over_class_declaration() {
     assert_snapshot!("hover_class_declaration", render_nav_at(&fixture, "Nav", 0));
 }
 
+#[test]
+fn class_definition_by_fqn() {
+    let fixture = test_file(SRC);
+    let analysis = fixture.analysis();
+
+    // The declaration a click on an inlay hint's type label navigates to: the
+    // target covers the declaration's own *name* token, like every other
+    // navigation answer.
+    let target = analysis
+        .class_definition(fixture.file, "com.example.Nav")
+        .unwrap()
+        .expect("the file declares com.example.Nav");
+    assert_eq!(target.name, "Nav");
+    assert_eq!(
+        &fixture.text[target.range.start().into()..target.range.end().into()],
+        "Nav"
+    );
+
+    // A name the scope declares nothing for answers nothing — navigation is
+    // not a guess.
+    assert_eq!(
+        analysis
+            .class_definition(fixture.file, "com.example.Missing")
+            .unwrap(),
+        None
+    );
+}
+
 // -- anchoring: a resolution belongs to the expression the offset is inside --------
 
 /// The shapes an anchor decides: every reference below is nested inside an

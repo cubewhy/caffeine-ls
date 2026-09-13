@@ -2597,6 +2597,23 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
     render_symbol_decl(db, file, &tree, offset)
 }
 
+/// The declaration of the class-like type `fqn` names in `file`'s scope — the
+/// declaration an inlay hint's type label navigates to.
+///
+/// A library class whose source is not loaded resolves to a *pending*
+/// reference, which has no target: a click on such a label simply does not
+/// navigate, rather than deferring the request to a materialization the hint
+/// path does not drive.
+pub(super) fn class_declaration(
+    db: &RootDatabase,
+    file: FileId,
+    fqn: &str,
+) -> Option<NavigationTarget> {
+    targets(db, class_resolution(db, file, &Name::new(fqn)))
+        .into_iter()
+        .next()
+}
+
 /// Every item whose declaration range contains `offset`, innermost (smallest
 /// range) first: the enclosing class-like declarations, the member that
 /// carries the offset, and the nested declarations it contains.

@@ -147,3 +147,20 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
         _ => java::hover(db, file, offset),
     }
 }
+
+/// The declaration of the class-like type `fqn` names in `file`'s scope — the
+/// declaration a click on an inlay hint's type label navigates to. Nothing for
+/// a Kotlin file (see [`kotlin`]) and for a name the file's scope cannot
+/// resolve to a declaration.
+pub(crate) fn class_declaration(
+    db: &RootDatabase,
+    file: FileId,
+    fqn: &str,
+) -> Option<NavigationTarget> {
+    match hir::file_item_tree(db, file).language {
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => {
+            kotlin::class_declaration(db, file, fqn)
+        }
+        _ => java::class_declaration(db, file, fqn),
+    }
+}

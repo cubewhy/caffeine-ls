@@ -724,3 +724,107 @@ fn method_chain_omitted() {
     // two-call chain keeps only one element once its outermost call is dropped.
     assert_eq!(render_hints(&fixture.hints()), "");
 }
+
+/// The deferred detail of the first hint the file renders.
+fn resolve_hint(fixture: &Fixture, index: usize) -> (InlayHint, ide::InlayHintDetail) {
+    let analysis = fixture.analysis();
+    let whole = TextRange::up_to(TextSize::of(fixture.text.as_str()));
+    let hints = analysis
+        .inlay_hints(fixture.file, whole, &InlayHintsConfig::default())
+        .unwrap();
+    let hint = hints[index].clone();
+    let detail = analysis
+        .inlay_hint_resolve(
+            fixture.file,
+            hint.offset,
+            hint.kind,
+            &InlayHintsConfig::default(),
+        )
+        .unwrap()
+        .expect("the hint resolves");
+    (hint, detail)
+}
+
+#[test]
+fn inlay_hint_resolve_var_type() {
+    let fixture = test_file(VAR_LOCAL);
+    let (hint, detail) = resolve_hint(&fixture, 0);
+
+    // The tooltip and the edit both render the *canonical* name: an accepted
+    // edit inserts a type name that is valid wherever it lands ([JLS §6.5.5]),
+    // where the label renders the simple name a reader expects.
+    assert_eq!(detail.hint, hint);
+    assert_eq!(detail.tooltip, "com.example.Text");
+    assert_eq!(detail.edits.len(), 1);
+    let edit = &detail.edits[0];
+    assert_eq!(
+        &fixture.text[edit.range.start().into()..edit.range.end().into()],
+        "var"
+    );
+    assert_eq!(edit.new_text, "com.example.Text");
+
+    // The part that rendered the class name carries it, so a client knows the
+    // clickable span; the `": "` before it names nothing.
+    assert_eq!(hint.label[0].class, None);
+    assert_eq!(hint.label[1].class.as_deref(), Some("com.example.Text"));
+    assert_eq!(hint.label[1].value, "Text");
+
+    // The class the label named has a declaration the label navigates to.
+    let target = fixture
+        .analysis()
+        .class_definition(fixture.file, "com.example.Text")
+        .unwrap()
+        .expect("the fixture declares com.example.Text");
+    assert_eq!(target.name, "Text");
+}
+
+#[test]
+fn inlay_hint_resolve_lambda_parameter() {
+    let fixture = test_file(LAMBDA_SUPER_WILDCARD);
+    let (hint, detail) = resolve_hint(&fixture, 0);
+
+    // A concise parameter gets the type *inserted* before its name: the empty
+    // range at the parameter's own start, which is what the LSP spec's
+    // insertion edit is.
+    assert_eq!(detail.tooltip, "com.example.Text");
+    assert_eq!(detail.edits.len(), 1);
+    let edit = &detail.edits[0];
+    assert!(edit.range.is_empty());
+    assert_eq!(edit.range.start(), hint.offset);
+    assert_eq!(edit.new_text, "com.example.Text ");
+}
+
+#[test]
+fn inlay_hint_resolve_missing_hint() {
+    let fixture = test_file(VAR_LOCAL);
+
+    // No hint is anchored there any more — the answer is `None`, not a guess.
+    assert_eq!(
+        fixture
+            .analysis()
+            .inlay_hint_resolve(
+                fixture.file,
+                fixture.offset_start("class Sample", 0),
+                InlayHintKind::Type,
+                &InlayHintsConfig::default(),
+            )
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn inlay_hint_resolve_method_parameter_name() {
+    let fixture = test_file(PARAMETER_VARARGS);
+    let (_, detail) = resolve_hint(&fixture, 0);
+
+    // A parameter hint's tooltip is the selected declaration's signature, and
+    // it has nothing to accept — a name is not source.
+    assert_eq!(
+        detail.tooltip,
+        "com.example.Sample.printf(com.example.Text, int[])"
+    );
+    assert!(detail.edits.is_empty());
+    assert_eq!(detail.hint.label[0].value, "...args:");
+    assert_eq!(detail.hint.label[0].class, None);
+}

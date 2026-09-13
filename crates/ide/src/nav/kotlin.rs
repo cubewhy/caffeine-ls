@@ -62,3 +62,13 @@ pub(super) fn pending_library_files(
 pub(super) fn hover(_db: &RootDatabase, _file: FileId, _offset: TextSize) -> Option<HoverInfo> {
     None
 }
+
+/// The declaration of the class-like type `fqn` names in a Kotlin file.
+/// Nothing resolves: see the module documentation.
+pub(super) fn class_declaration(
+    _db: &RootDatabase,
+    _file: FileId,
+    _fqn: &str,
+) -> Option<NavigationTarget> {
+    None
+}
