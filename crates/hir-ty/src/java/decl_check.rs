@@ -3380,6 +3380,9 @@ fn final_field_diagnostics(
                         walk_expr(bodies, *msg, name, found);
                     }
                 }
+                // [JLS §14.3]: a local class's own bodies — its members', its
+                // initializers' — are separate bodies of the file, not part of
+                // this one.
                 StmtData::Empty
                 | StmtData::Break(_)
                 | StmtData::Continue(_)

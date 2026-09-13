@@ -94,8 +94,10 @@ fn unrelated_package_edit_short_circuits_other_inference() {
 /// The item tree stores no source offsets and no body content: its
 /// [`hir_expand::ast_id_map::FileAstId`]s are a function of the declaration
 /// skeleton only (the `AstIdMap` prunes method bodies, declarator
-/// initializers, enum-constant arguments and annotation defaults), so an edit
-/// *inside* a method body changes the `BodyTree` but not the `ItemTree`.
+/// initializers, enum-constant arguments and annotation defaults — but *not*
+/// the local class-like declarations of a block, [JLS §14.3], which are
+/// declarations), so an edit *inside* a method body that declares no local
+/// type changes the `BodyTree` but not the `ItemTree`.
 #[test]
 fn body_only_edit_backdates_file_item_tree_consumers() {
     let source = "\
@@ -178,5 +180,45 @@ class A extends B {
     assert!(
         !Arc::ptr_eq(&sym, &sym_after_field_ty),
         "changing a field's type must re-execute file_symbols"
+    );
+
+    // Control 3: a *local class* declared inside a method body is part of the
+    // declaration skeleton ([JLS §14.3]) — it is an item of the file's item
+    // tree, with its own modifiers, supertypes and members — so declaring one
+    // re-executes `file_symbols` even though a local declaration has no
+    // canonical name ([§6.7]) and is not itself indexed as a symbol.
+    let local_class = "\
+package com.a;
+class B {}
+class A extends B {
+    long f = 1;
+    void m2() {
+        int local = 1;
+        int extra = 7;
+        class Local {
+            int g;
+            void n() {
+                int k = 1;
+            }
+        }
+    }
+}
+";
+    edit_file(&mut db, a, local_class);
+    let sym_after_local_class = hir::file_symbols(&db, a);
+    assert!(
+        !Arc::ptr_eq(&sym, &sym_after_local_class),
+        "declaring a local class must re-execute file_symbols"
+    );
+
+    // A body edit *inside* the local class — its method's body — is body-side
+    // like any other: the skeleton is unchanged, so `file_symbols` is a memo
+    // hit.
+    let local_class_body_edit = local_class.replace("int k = 1;", "int k = 2;");
+    edit_file(&mut db, a, &local_class_body_edit);
+    let sym_after_local_body = hir::file_symbols(&db, a);
+    assert!(
+        Arc::ptr_eq(&sym_after_local_class, &sym_after_local_body),
+        "a body-only edit of a local class must not re-execute file_symbols"
     );
 }

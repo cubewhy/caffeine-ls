@@ -32,8 +32,8 @@ use crate::java::item_tree::ItemId;
 use crate::java::lower::LowerCtx;
 
 use super::walk::{
-    declaration_modifier_lists, modifier_annotations, source_name, token_is, token_text,
-    trimmed_text, type_annotations_after_type, type_from,
+    declaration_modifier_lists, lower_local_type, modifier_annotations, source_name, token_is,
+    token_text, trimmed_text, type_annotations_after_type, type_from,
 };
 
 /// Lowers the `BLOCK` of a method or constructor as a [`Body`], binding the
@@ -247,25 +247,12 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
         LOCAL_VARIABLE_DECLARATION_STMT => local_declaration(ctx, owner, node),
         // A local class, interface, record or enum declaration
         // ([§14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
-        // carried as a named statement so the declaration is not dropped.
-        // A record's contextual `record` keyword is an IDENTIFIER token too —
-        // the declared name follows it.
-        CLASS_DECL | INTERFACE_DECL | RECORD_DECL | ENUM_DECL => {
-            let mut identifiers = node
-                .children_with_tokens()
-                .filter_map(|e| e.as_token().cloned())
-                .filter(|t| token_is(t, J::IDENTIFIER))
-                .map(|t| t.text().to_string());
-            let first = identifiers.next().unwrap_or_default();
-            let name = if node.kind() == RECORD_DECL && first == "record" {
-                identifiers.next().unwrap_or(first)
-            } else {
-                first
-            };
-            StmtData::LocalClass {
-                name: source_name(&name),
-            }
-        }
+        // lowered as a real item of the file's item tree (its simple name is
+        // in scope for the rest of the enclosing block; the declaration has
+        // no canonical name, so the statement carries the item).
+        CLASS_DECL | INTERFACE_DECL | RECORD_DECL | ENUM_DECL => StmtData::LocalClass {
+            item: lower_local_type(ctx, node),
+        },
         EXPRESSION_STMT => StmtData::Expr(first_expr(ctx, owner, node)),
         RETURN_STMT => StmtData::Return(expr_child_opt(ctx, owner, node)),
         THROW_STMT => StmtData::Throw(first_expr(ctx, owner, node)),

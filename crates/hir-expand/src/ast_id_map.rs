@@ -7,7 +7,9 @@
 //! *declaration skeleton* of the file: nodes inside method bodies, field and
 //! enum-constant initializers, anonymous class bodies and annotation-element
 //! defaults are pruned, so a text edit that touches only body content leaves
-//! both the indexed-node sequence and every [`FileAstId`] untouched. Since
+//! both the indexed-node sequence and every [`FileAstId`] untouched — with one
+//! exception, the local class-like declarations of a block ([JLS §14.3]),
+//! which *are* declarations and are indexed with their own skeleton. Since
 //! the item tree must carry no source offsets, that stability is what lets
 //! salsa backdate the signature queries across body-only edits.
 
@@ -135,8 +137,12 @@ impl AstIdMap {
     /// indexable set (below), in DFS pre-order, and pruning the subtrees that
     /// are *body* content:
     ///
-    /// - `BLOCK` — method/constructor/initializer bodies (and anything
-    ///   inside them: statement expressions, local classes, ...);
+    /// - `BLOCK` — method/constructor/initializer bodies. The body itself is
+    ///   pruned, but the local class-like declarations of the block
+    ///   ([§14.3]) are declaration skeleton: each is indexed with its own
+    ///   modifiers, type parameters, supertypes and members, and each of
+    ///   *their* blocks applies this same rule. Everything else in the body
+    ///   (statements, local variables, expressions) stays pruned;
     /// - `CLASS_BODY` not directly under a `CLASS_DECL` — anonymous and
     ///   enum-constant class bodies (the members of a *named* class are
     ///   declaration skeleton and are descended into);
@@ -173,8 +179,19 @@ impl AstIdMap {
                         }
                     };
                     match kind {
-                        // Body content: never descended into.
-                        J::BLOCK => {}
+                        // The class-like declarations of a block are the
+                        // *local* declarations ([JLS §14.3]), and they are
+                        // declaration skeleton: index their outermost ones
+                        // and descend into each via the default arm below. A
+                        // deeper one is already inside the skeleton of an
+                        // outer declaration, and a deeper *block* applies
+                        // this same rule when it is reached. Everything else
+                        // in a body stays pruned.
+                        J::BLOCK => push(
+                            node.children()
+                                .filter(|child| is_class_like_decl(child.kind()))
+                                .collect(),
+                        ),
                         // The members of a named class are declarations; the
                         // class body of an anonymous class or an enum
                         // constant is body content.
@@ -247,6 +264,16 @@ impl AstIdMap {
         debug_assert_eq!(node.text_range(), ptr.range);
         Some(node)
     }
+}
+
+/// A class-like declaration: the four kinds a block may declare
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// and a class body may hold as a member.
+fn is_class_like_decl(kind: J) -> bool {
+    matches!(
+        kind,
+        J::CLASS_DECL | J::INTERFACE_DECL | J::ENUM_DECL | J::RECORD_DECL
+    )
 }
 
 /// The kinds that may be indexed: every declaration node an item or a
@@ -360,5 +387,89 @@ class Foo {
                 .collect()
         }
         assert_eq!(id_sequence(text), id_sequence(unrelated_body));
+    }
+
+    /// A local class declaration ([§14.3]) is declaration skeleton: the
+    /// declaration, its modifiers, name, supertypes, members and *their*
+    /// bodies' local declarations are all anchored.
+    #[test]
+    fn local_declarations_are_indexed() {
+        let text = "\
+class Foo {
+    void m() {
+        int local = 1;
+        class Local extends Base {
+            int f;
+            void n() {
+                interface Nested {}
+            }
+        }
+    }
+}
+";
+        let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
+        let SourceFile::Java(file) = &parse.syntax_node(LanguageKind::Java) else {
+            panic!("expected a Java source file");
+        };
+        let root = &file.syntax_node;
+        let map = AstIdMap::from_source_file(&parse.syntax_node(LanguageKind::Java));
+
+        let indexed: Vec<_> = map
+            .arena
+            .iter()
+            .map(|(_, ptr)| {
+                let node = map.try_to_node(ptr, root).expect("resolvable pointer");
+                (node.kind(), ptr.range)
+            })
+            .collect();
+        let text_of = |range: rowan::TextRange| &text[range.start().into()..range.end().into()];
+
+        // The file's skeleton: the class, its method, the method's local
+        // class with its members, and the local class's own nested local
+        // interface.
+        let kinds: Vec<_> = indexed.iter().map(|(kind, _)| *kind).collect();
+        assert!(kinds.contains(&J::CLASS_DECL), "{kinds:?}");
+        assert_eq!(
+            kinds.iter().filter(|k| **k == J::CLASS_DECL).count(),
+            2,
+            "{kinds:?}"
+        );
+        assert_eq!(
+            kinds.iter().filter(|k| **k == J::INTERFACE_DECL).count(),
+            1,
+            "{kinds:?}"
+        );
+        assert!(kinds.contains(&J::FIELD_DECL), "{kinds:?}");
+
+        // The declarations are anchored at their own ranges, not at the
+        // block's.
+        let declared: Vec<_> = indexed
+            .iter()
+            .filter(|(kind, _)| *kind == J::CLASS_DECL || *kind == J::INTERFACE_DECL)
+            .map(|(_, range)| text_of(*range))
+            .collect();
+        assert_eq!(
+            declared,
+            vec![
+                "class Foo {\n    void m() {\n        int local = 1;\n        class Local extends Base {\n            int f;\n            void n() {\n                interface Nested {}\n            }\n        }\n    }\n}",
+                "class Local extends Base {\n            int f;\n            void n() {\n                interface Nested {}\n            }\n        }",
+                "interface Nested {}",
+            ]
+        );
+
+        // A body edit that leaves the declarations alone leaves the ids
+        // untouched; declaring one more local class is a structural edit.
+        fn id_sequence(text: &str) -> Vec<(u16, u32)> {
+            let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
+            let map = AstIdMap::from_source_file(&parse.syntax_node(LanguageKind::Java));
+            map.arena
+                .iter()
+                .map(|(id, ptr)| (ptr.kind.0, id.0))
+                .collect()
+        }
+        let body_edit = text.replace("int local = 1;", "int local = 2;");
+        assert_eq!(id_sequence(text), id_sequence(&body_edit));
+        let added = text.replace("int local = 1;", "int local = 1;\n        class Other {}");
+        assert_ne!(id_sequence(text), id_sequence(&added));
     }
 }

@@ -979,6 +979,9 @@ fn record_pattern(bodies: &BodyTree, id: PatternId, out: &mut Vec<(DiagLocation,
 fn walk_stmt(bodies: &BodyTree, id: StmtId, out: &mut Vec<(DiagLocation, SpannedTypeRef)>) {
     use StmtData::*;
     match bodies.stmt(id) {
+        // [JLS §14.3]: a local declaration's declaration type references are
+        // checked with its item ([`declaration_type_diagnostics`]), and its
+        // members' bodies are bodies of their own.
         Empty | Missing | LocalClass { .. } => {}
         Block(stmts) => {
             for &stmt in stmts {

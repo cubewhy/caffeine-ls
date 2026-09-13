@@ -197,6 +197,8 @@ pub(super) fn effective_final_scan(
                         self.walk_expr(msg);
                     }
                 }
+                // [JLS §14.3]: a local class declaration declares a type, not a
+                // value; its members' bodies are bodies of their own.
                 StmtData::LocalClass { .. } => {}
             }
         }

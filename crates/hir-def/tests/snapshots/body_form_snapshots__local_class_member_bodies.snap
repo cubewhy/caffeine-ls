@@ -1,0 +1,40 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    void m() {
+        class Local {
+            int f = 1;
+            Local() {
+                f = 2;
+            }
+            void n(int x) {
+                f = x;
+            }
+        }
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..214
+  method m() -> void @17..212
+    class Local @36..206
+      field f: int initializer @69..71 @66..71
+      constructor Local() @85..131
+      method n(int x) -> void @144..196
+
+BODIES:
+body:
+  s0: expr e3: assign = e1 e2
+body:
+  param l0: int x
+  s1: expr e6: assign = e4 e5
+body:
+  s2: local-class Local
+      field f: initializer e0: literal int

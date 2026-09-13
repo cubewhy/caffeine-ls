@@ -257,6 +257,9 @@ fn collect_member_names(bodies: &BodyTree, stmts: &[StmtId], out: &mut FxHashSet
 fn walk_stmt_members(bodies: &BodyTree, id: StmtId, out: &mut FxHashSet<Name>) {
     use StmtData::*;
     match bodies.stmt(id) {
+        // A local declaration's own references and the bodies of its members
+        // are reached through the item tree, not through this body
+        // ([`all_items_data`]); its members' bodies are bodies of their own.
         Empty | Missing | LocalClass { .. } => {}
         Block(stmts) => {
             for &stmt in stmts {
@@ -485,6 +488,12 @@ fn all_items_data(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
         out.push((id, data));
         for &child in data.body() {
             walk(tree, child, out);
+        }
+        // A local class-like declaration ([JLS §14.3]) is not a member of
+        // anything, so it is not in any `body()`: its declaration references
+        // and its members' bodies are reached through the declaring item.
+        for local in tree.local_types_of(id) {
+            walk(tree, local, out);
         }
     }
     let mut out = Vec::new();

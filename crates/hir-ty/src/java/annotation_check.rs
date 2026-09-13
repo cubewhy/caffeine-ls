@@ -986,6 +986,8 @@ impl BodyAnnotations<'_> {
                     self.expr(msg, out);
                 }
             }
+            // [JLS §14.3]: a local declaration's own annotations are checked with
+            // its declaration item, and its members' bodies are bodies of their own.
             S::Empty | S::Break(_) | S::Continue(_) | S::LocalClass { .. } | S::Missing => {}
         }
     }

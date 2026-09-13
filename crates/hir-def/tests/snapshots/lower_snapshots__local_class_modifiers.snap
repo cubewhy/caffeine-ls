@@ -1,0 +1,33 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Outer {
+    void m() {
+        final class A {}
+        abstract class B {}
+        strictfp class C {}
+        @Anno class D {}
+        public class E {}
+        static class F {}
+        sealed class G {}
+        non-sealed class H {}
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Outer @1..251
+  method m() -> void @19..249
+    class A [final] @38..54
+    class B [abstract] @63..82
+    class C [strictfp] @91..110
+    class D @119..135
+    class E [public] @144..161
+    class F [static] @170..187
+    class G [sealed] @196..213
+    class H [non-sealed] @222..243

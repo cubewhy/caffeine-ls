@@ -235,6 +235,14 @@ fn render_item(
             ));
         }
     }
+
+    // The local class-like declarations this item's body declares
+    // ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
+    // they are not members, so they are rendered after the item they are
+    // nested in rather than through `render_children`.
+    for local in tree.local_types_of(id) {
+        render_item(tree, map, source, local, depth + 1, out);
+    }
 }
 
 fn render_children(
@@ -502,7 +510,7 @@ pub fn pretty_body(tree: &ItemTree, bodies: &BodyTree) -> String {
             ));
         }
         for &stmt in &body.stmts {
-            render_stmt(&mut out, bodies, stmt, 1);
+            render_stmt(&mut out, tree, bodies, stmt, 1);
         }
     }
     for (local_id, local) in bodies.locals.iter() {
@@ -580,9 +588,14 @@ fn render_orphan_initializers(
     for &child in tree.data(id).body() {
         render_orphan_initializers(out, tree, bodies, child, depth + 1);
     }
+    // The local class-like declarations of the item's body ([JLS §14.3]) are
+    // not members, so their initializers are reached from here.
+    for local in tree.local_types_of(id) {
+        render_orphan_initializers(out, tree, bodies, local, depth + 1);
+    }
 }
 
-fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
+fn render_stmt(out: &mut String, tree: &ItemTree, bodies: &BodyTree, id: StmtId, depth: usize) {
     let indent = "  ".repeat(depth);
     let data = bodies.stmt(id);
     match data {
@@ -590,7 +603,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
         StmtData::Block(stmts) => {
             out.push_str(&format!("{indent}{id}: block\n"));
             for &s in stmts {
-                render_stmt(out, bodies, s, depth + 1);
+                render_stmt(out, tree, bodies, s, depth + 1);
             }
         }
         StmtData::Decl { local, initializer } => {
@@ -604,7 +617,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
         StmtData::DeclGroup(stmts) => {
             out.push_str(&format!("{indent}{id}: decl-group\n"));
             for &s in stmts {
-                render_stmt(out, bodies, s, depth + 1);
+                render_stmt(out, tree, bodies, s, depth + 1);
             }
         }
         StmtData::Expr(e) => {
@@ -614,23 +627,23 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
         }
         StmtData::Labeled { label, stmt } => {
             out.push_str(&format!("{indent}{id}: label {stmt} @{label}\n"));
-            render_stmt(out, bodies, *stmt, depth + 1);
+            render_stmt(out, tree, bodies, *stmt, depth + 1);
         }
         StmtData::If { cond, then, els } => {
             out.push_str(&format!("{indent}{id}: if {cond}\n"));
-            render_stmt(out, bodies, *then, depth + 1);
+            render_stmt(out, tree, bodies, *then, depth + 1);
             if let Some(els) = els {
                 out.push_str(&format!("{indent}{id}: else\n"));
-                render_stmt(out, bodies, *els, depth + 1);
+                render_stmt(out, tree, bodies, *els, depth + 1);
             }
         }
         StmtData::While { cond, body } => {
             out.push_str(&format!("{indent}{id}: while {cond}\n"));
-            render_stmt(out, bodies, *body, depth + 1);
+            render_stmt(out, tree, bodies, *body, depth + 1);
         }
         StmtData::DoWhile { body, cond } => {
             out.push_str(&format!("{indent}{id}: do-while {cond}\n"));
-            render_stmt(out, bodies, *body, depth + 1);
+            render_stmt(out, tree, bodies, *body, depth + 1);
         }
         StmtData::For {
             init,
@@ -640,7 +653,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
         } => {
             out.push_str(&format!("{indent}{id}: for\n"));
             for &i in init {
-                render_stmt(out, bodies, i, depth + 1);
+                render_stmt(out, tree, bodies, i, depth + 1);
             }
             out.push_str(&format!(
                 "{indent}  cond: {}\n",
@@ -654,7 +667,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
-            render_stmt(out, bodies, *body, depth + 1);
+            render_stmt(out, tree, bodies, *body, depth + 1);
         }
         StmtData::ForEach {
             var,
@@ -662,7 +675,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
             body,
         } => {
             out.push_str(&format!("{indent}{id}: for-each {var} in {iterable}\n"));
-            render_stmt(out, bodies, *body, depth + 1);
+            render_stmt(out, tree, bodies, *body, depth + 1);
         }
         StmtData::Switch { scrutinee, arms } => {
             out.push_str(&format!("{indent}{id}: switch {scrutinee}\n"));
@@ -680,7 +693,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                         .join(", ")
                 ));
                 for &s in &arm.body {
-                    render_stmt(out, bodies, s, depth + 2);
+                    render_stmt(out, tree, bodies, s, depth + 2);
                 }
             }
         }
@@ -705,7 +718,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
         StmtData::Yield(e) => out.push_str(&format!("{indent}{id}: yield {e}\n")),
         StmtData::Synchronized { expr, body } => {
             out.push_str(&format!("{indent}{id}: synchronized {expr}\n"));
-            render_stmt(out, bodies, *body, depth + 1);
+            render_stmt(out, tree, bodies, *body, depth + 1);
         }
         StmtData::Try {
             resources,
@@ -724,14 +737,14 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
-            render_stmt(out, bodies, *body, depth + 1);
+            render_stmt(out, tree, bodies, *body, depth + 1);
             for catch in catches {
                 out.push_str(&format!("{indent}  catch {}\n", catch.param));
-                render_stmt(out, bodies, catch.body, depth + 2);
+                render_stmt(out, tree, bodies, catch.body, depth + 2);
             }
             if let Some(finally) = finally {
                 out.push_str(&format!("{indent}{id}: finally\n"));
-                render_stmt(out, bodies, *finally, depth + 1);
+                render_stmt(out, tree, bodies, *finally, depth + 1);
             }
         }
         StmtData::Assert { cond, msg } => {
@@ -741,7 +754,11 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                     .unwrap_or_else(|| "none".to_owned())
             ));
         }
-        StmtData::LocalClass { name } => {
+        StmtData::LocalClass { item } => {
+            let name = tree
+                .data(*item)
+                .name()
+                .expect("a local declaration names a type");
             out.push_str(&format!("{indent}{id}: local-class {}\n", name.as_str()))
         }
         StmtData::Missing => out.push_str(&format!("{indent}{id}: <missing>\n")),

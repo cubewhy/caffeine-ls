@@ -145,6 +145,27 @@ fn lower_member(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemI
     }
 }
 
+/// Lowers a local class, interface, record or enum declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
+/// the same lowering as a member declaration of that kind, allocated as a
+/// local item of the file (recorded in the tree's `local_types` list by
+/// [`lower_source`](crate::java::lower::lower_source)). Its members,
+/// annotations, type parameters, components and supertypes are lowered
+/// exactly as a member declaration's are; only its *placement* — a statement
+/// of a block, not a member of a class — differs.
+pub(super) fn lower_local_type(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
+    if is(node, J::CLASS_DECL) {
+        lower_class(ctx, node)
+    } else if is(node, J::INTERFACE_DECL) {
+        lower_interface(ctx, node)
+    } else if is(node, J::ENUM_DECL) {
+        lower_enum(ctx, node)
+    } else {
+        debug_assert!(is(node, J::RECORD_DECL), "a local declaration");
+        lower_record(ctx, node)
+    }
+}
+
 fn lower_class(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let name = decl_type_identifier(node);
     let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);

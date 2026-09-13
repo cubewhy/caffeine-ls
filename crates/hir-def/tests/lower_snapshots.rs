@@ -91,6 +91,64 @@ class Outer {
 "#,
 }
 
+// -- local classes ----------------------------------------------------------
+
+// [JLS §14.3]: a class, interface, record or enum declared in a block is a
+// real item of the file's item tree — with its modifiers, type parameters,
+// supertypes, components and members — nested under the declaration whose
+// body declares it rather than being a member of a class. Its members are
+// ordinary items, so a local declaration inside one of their bodies nests the
+// same way.
+lower_snapshot! {
+    local_classes,
+    r#"
+class Outer {
+    void m() {
+        class Local<T> extends Base implements Runnable {
+            @Anno int f;
+            Local() {}
+            void n() {
+                interface Nested {}
+            }
+        }
+        interface LocalIface {
+            int MAX = 1;
+        }
+        record LocalRecord(int x, String... names) {
+            LocalRecord {
+                check(x);
+            }
+        }
+        enum LocalEnum {
+            A, B;
+            int rank;
+        }
+    }
+}
+"#,
+}
+
+// Every `{ClassModifier}` of §14.3's grammar parses on a local declaration;
+// §14.3 makes the access modifiers, `static`, `sealed` and `non-sealed`
+// compile-time errors instead, which the declaration layer reports.
+lower_snapshot! {
+    local_class_modifiers,
+    r#"
+class Outer {
+    void m() {
+        final class A {}
+        abstract class B {}
+        strictfp class C {}
+        @Anno class D {}
+        public class E {}
+        static class F {}
+        sealed class G {}
+        non-sealed class H {}
+    }
+}
+"#,
+}
+
 // -- methods and constructors ----------------------------------------------
 
 lower_snapshot! {

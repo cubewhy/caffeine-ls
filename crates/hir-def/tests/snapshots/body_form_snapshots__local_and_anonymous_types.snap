@@ -20,6 +20,8 @@ ITEM_TREE:
 file (java)
 class Foo @1..164
   method m() -> void @17..162
+    class Local @36..50
+    record Pair(int a, int b) @59..87
 
 BODIES:
 body:

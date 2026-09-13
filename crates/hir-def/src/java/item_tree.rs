@@ -90,6 +90,18 @@ pub struct ItemTree {
     pub package_decls: Vec<FileAstId<PackageDeclNode>>,
     pub imports: Vec<ImportItem>,
     pub top: Vec<ItemId>,
+    /// The local class/interface/enum/record declarations of the file, in
+    /// source order
+    /// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
+    /// they are not members of any class, so they stay out of every `body()`
+    /// and are reachable only through this list and through the body that
+    /// declares them.
+    pub local_types: Vec<ItemId>,
+    /// The declaration each item is nested in: a member's enclosing type-like
+    /// declaration, a local type's body-owning declaration. Indexed by item
+    /// id — grown in lock-step with `items` by [`ItemTree::alloc`] — and
+    /// `None` for a top-level item.
+    pub parent: Vec<Option<ItemId>>,
     pub items: Arena<ItemData>,
 }
 
@@ -101,6 +113,8 @@ impl Default for ItemTree {
             package_decls: Vec::new(),
             imports: Vec::new(),
             top: Vec::new(),
+            local_types: Vec::new(),
+            parent: Vec::new(),
             items: Arena::default(),
         }
     }
@@ -109,6 +123,34 @@ impl Default for ItemTree {
 impl ItemTree {
     pub fn data(&self, id: ItemId) -> &ItemData {
         self.items.get(id.0)
+    }
+
+    /// Allocates an item, keeping [`Self::parent`] aligned with the arena. A
+    /// direct `items.alloc` would desynchronize the two; allocate through
+    /// here.
+    pub fn alloc(&mut self, data: ItemData) -> ItemId {
+        let id = ItemId(self.items.alloc(data));
+        self.parent.push(None);
+        id
+    }
+
+    /// The declaration `item` is nested in; `None` for a top-level item.
+    pub fn parent_of(&self, item: ItemId) -> Option<ItemId> {
+        self.parent.get(item.0.0 as usize).copied().flatten()
+    }
+
+    /// The local type declarations nested in `owner`, in source order.
+    pub fn local_types_of(&self, owner: ItemId) -> impl Iterator<Item = ItemId> + '_ {
+        self.local_types
+            .iter()
+            .copied()
+            .filter(move |item| self.parent_of(*item) == Some(owner))
+    }
+
+    /// Whether `item` is a local type declaration
+    /// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)).
+    pub fn is_local_type(&self, item: ItemId) -> bool {
+        self.local_types.contains(&item)
     }
 
     /// The id viewed as a class-like type id, if the item is a class,
@@ -270,6 +312,22 @@ impl ItemData {
         match self {
             ItemData::Field(data) => Some(data),
             _ => None,
+        }
+    }
+
+    /// The declared name of a declaration item, if it has one (an initializer
+    /// block declares no name).
+    pub fn name(&self) -> Option<&Name> {
+        match self {
+            ItemData::Class(data) | ItemData::Interface(data) => Some(&data.name),
+            ItemData::Enum(data) => Some(&data.name),
+            ItemData::Record(data) => Some(&data.name),
+            ItemData::Annotation(data) => Some(&data.name),
+            ItemData::Module(data) => Some(&data.name),
+            ItemData::Method(data) => Some(&data.name),
+            ItemData::Field(data) => Some(&data.name),
+            ItemData::EnumConstant(data) => Some(&data.name),
+            ItemData::StaticInit(_) | ItemData::InstanceInit(_) => None,
         }
     }
 

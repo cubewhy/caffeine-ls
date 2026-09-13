@@ -343,9 +343,12 @@ pub enum StmtData {
     Assert { cond: ExprId, msg: Option<ExprId> },
     /// A local class, interface, record or enum declaration
     /// ([§14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
-    /// the declaration is scoped to the enclosing block; only its name is
-    /// carried in the body IR.
-    LocalClass { name: Name },
+    /// the declaration is an item of the file's item tree (the tree's
+    /// `local_types` list), and its simple name is in scope for the rest of
+    /// the immediately enclosing block. The item is carried rather than a name
+    /// because §6.7 gives a local class neither a fully qualified nor a
+    /// canonical name: its identity is its declaration.
+    LocalClass { item: ItemId },
     /// An expression or statement that could not be lowered.
     Missing,
 }

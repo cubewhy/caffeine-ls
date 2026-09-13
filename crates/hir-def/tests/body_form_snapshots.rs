@@ -197,7 +197,8 @@ class Foo<T> {
 
 // Local class and record declarations
 // ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
-// are carried as named statements, and the member methods of an anonymous
+// are lowered as items of the file's item tree and carried in the body as the
+// statement that declares them, and the member methods of an anonymous
 // class body ([JLS §15.9.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.5))
 // are carried by name and arity on the `new` expression — neither form is
 // dropped from the lowered body.
@@ -212,6 +213,28 @@ class Foo {
         new Runnable() {
             public void run() {}
         };
+    }
+}
+"#,
+}
+
+// A local declaration's members are ordinary items, so their bodies — a field
+// initializer, a constructor's and a method's — are lowered as bodies of
+// their own, beside the body that declares the local type.
+body_snapshot! {
+    local_class_member_bodies,
+    r#"
+class Foo {
+    void m() {
+        class Local {
+            int f = 1;
+            Local() {
+                f = 2;
+            }
+            void n(int x) {
+                f = x;
+            }
+        }
     }
 }
 "#,

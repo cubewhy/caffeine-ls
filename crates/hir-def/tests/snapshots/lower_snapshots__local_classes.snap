@@ -1,0 +1,49 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Outer {
+    void m() {
+        class Local<T> extends Base implements Runnable {
+            @Anno int f;
+            Local() {}
+            void n() {
+                interface Nested {}
+            }
+        }
+        interface LocalIface {
+            int MAX = 1;
+        }
+        record LocalRecord(int x, String... names) {
+            LocalRecord {
+                check(x);
+            }
+        }
+        enum LocalEnum {
+            A, B;
+            int rank;
+        }
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Outer @1..496
+  method m() -> void @19..494
+    class Local<T> extends Base implements Runnable @38..218
+      field f: int @110..111
+      constructor Local() @125..135
+      method n() -> void @148..208
+        interface Nested @175..194
+    interface LocalIface @227..284
+      field MAX: int initializer @271..273 @266..273
+    record LocalRecord(int x, String... names) @293..413
+      constructor LocalRecord() @350..403
+    enum LocalEnum @422..488
+      constant A @451..452
+      constant B @454..455
+      field rank: int @473..477
