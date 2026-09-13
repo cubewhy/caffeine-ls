@@ -1197,6 +1197,10 @@ impl GlobalState {
 
         self.warmup_libraries(&root);
         self.refresh_diagnostics();
+        // The freshly applied graph can change a file's highlights with no
+        // client-side edit, so a client holding tokens from before the load has
+        // to be told to re-request them.
+        self.refresh_semantic_tokens();
     }
 
     /// Builds the classpath-aware project model from the workspace graph:

@@ -221,4 +221,29 @@ impl GlobalState {
             self.send_request::<DiagnosticRefreshRequest>((), OutgoingRequest::Generic(|_, _| {}));
         }
     }
+
+    /// Asks the client to re-request semantic tokens for its open documents.
+    ///
+    /// Highlights are computed from the whole analysis, so loading a workspace
+    /// changes a file's tokens with no edit from the client — and the client has
+    /// no other way to learn that. Only sent when the client advertised
+    /// `workspace.semanticTokens.refreshSupport`; nothing else observes changes
+    /// without an edit, so a client that cannot refresh simply keeps the tokens
+    /// it already has.
+    pub(crate) fn refresh_semantic_tokens(&mut self) {
+        if self
+            .config
+            .client_capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.semantic_tokens.as_ref())
+            .and_then(|t| t.refresh_support)
+            .unwrap_or(false)
+        {
+            self.send_request::<SemanticTokensRefreshRequest>(
+                (),
+                OutgoingRequest::Generic(|_, _| {}),
+            );
+        }
+    }
 }

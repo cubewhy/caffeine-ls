@@ -19,9 +19,10 @@ use lsp_types::{
     ClientCapabilities, ClientInfo, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentDiagnosticParams,
     DocumentDiagnosticReport, FileChangeType, FileEvent, InitializeParams, PartialResultParams,
-    Position, Range, TextDocumentContentChangePartial, TextDocumentIdentifier, TextDocumentItem,
-    Uri, VersionedTextDocumentIdentifier, WindowClientCapabilities, WorkDoneProgressParams,
-    WorkspaceFolder, WorkspaceFoldersInitializeParams,
+    Position, Range, SemanticTokensWorkspaceClientCapabilities, TextDocumentContentChangePartial,
+    TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
+    WindowClientCapabilities, WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceFolder,
+    WorkspaceFoldersInitializeParams,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -90,11 +91,20 @@ pub struct LspHarness {
 
 /// The capabilities every harness advertises. `workDoneProgress` is required
 /// for `$/progress` notifications, which carry the workspace-load signal;
-/// nothing else is advertised, because nothing else is observed by the tests.
+/// `semanticTokens.refreshSupport` makes the server ask for a token re-request
+/// once a workspace load lands, which is what
+/// `test_workspace_load_refreshes_semantic_tokens` observes. Nothing else is
+/// advertised, because nothing else is observed by the tests.
 fn client_capabilities() -> ClientCapabilities {
     ClientCapabilities {
         window: Some(WindowClientCapabilities {
             work_done_progress: Some(true),
+            ..Default::default()
+        }),
+        workspace: Some(WorkspaceClientCapabilities {
+            semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
             ..Default::default()
         }),
         ..Default::default()
@@ -226,7 +236,9 @@ impl LspHarness {
                     // Answered inline: without the acknowledgement the server
                     // buffers every further `$/progress` event for the token, and
                     // the readiness gate would never see it end.
-                    "window/workDoneProgress/create" | "workspace/diagnosticRefresh" => {
+                    "window/workDoneProgress/create"
+                    | "workspace/diagnosticRefresh"
+                    | "workspace/semanticTokens/refresh" => {
                         let response = Response::new_ok(req.id.clone(), serde_json::Value::Null);
                         let _ = self.client.sender.send(Message::Response(response));
                     }
@@ -353,6 +365,45 @@ impl LspHarness {
                 Ok(None) => panic!("server closed the connection while waiting for `{method}`"),
                 Err(Timeout) => {
                     panic!("timed out waiting for `{method}` notifications: {collected:#?}")
+                }
+            }
+        }
+    }
+
+    /// All server→client requests of `method` received so far, waiting for more
+    /// until `done` holds or `timeout` elapses (a panic with everything
+    /// collected). Servers only send a request when the matching client
+    /// capability is advertised, so a harness that wants to observe one has to
+    /// advertise it in [`client_capabilities`].
+    pub fn wait_for_requests(
+        &self,
+        method: &str,
+        timeout: Duration,
+        done: impl Fn(&[Request]) -> bool,
+    ) -> Vec<Request> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let collected: Vec<Request> = self
+                .messages
+                .borrow()
+                .iter()
+                .filter_map(|msg| match msg {
+                    Message::Request(req) if req.method == method => Some(req.clone()),
+                    _ => None,
+                })
+                .collect();
+            if done(&collected) {
+                return collected;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                panic!("timed out waiting for `{method}` requests: {collected:#?}");
+            }
+            match self.recv(remaining) {
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("server closed the connection while waiting for `{method}`"),
+                Err(Timeout) => {
+                    panic!("timed out waiting for `{method}` requests: {collected:#?}")
                 }
             }
         }

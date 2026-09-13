@@ -358,6 +358,30 @@ fn test_workspace_load_reports_progress() {
     );
 }
 
+/// Loading a workspace recomputes every file's highlights against a graph the
+/// client never saw, and that happens with no client-side edit — so the client
+/// must be asked to re-request the tokens of its open documents. Exactly one
+/// `workspace/semanticTokens/refresh` per load: the server advertises the
+/// capability in the harness (`semanticTokens.refreshSupport`), and a second
+/// request would make every client recompute its whole editor for nothing.
+#[test]
+fn test_workspace_load_refreshes_semantic_tokens() {
+    let lsp = create_lsp();
+    lsp.wait_until_workspace_is_loaded();
+
+    let requests = lsp.wait_for_requests(
+        "workspace/semanticTokens/refresh",
+        std::time::Duration::from_secs(10),
+        |requests| !requests.is_empty(),
+    );
+
+    assert_eq!(
+        requests.len(),
+        1,
+        "a workspace load must refresh semantic tokens exactly once"
+    );
+}
+
 /// A fake `gradle` executable that replays realistic console output, so the
 /// server's Gradle sync path (and its structured progress reporting) can be
 /// exercised without a real JVM/Gradle install.
