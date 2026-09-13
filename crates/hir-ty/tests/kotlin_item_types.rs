@@ -223,3 +223,95 @@ class Box<T : Any> {
         )
     );
 }
+
+// -- subtyping and member resolution ----------------------------------------
+
+/// The subtyping and overload cases, each confirmed with kotlinc 2.4.20 first.
+///
+/// The oracle is the probe (`val probe: String = <expr>` reports
+/// `initializer type mismatch: expected 'X', actual 'Y'`) and the clean
+/// compile: kotlinc accepts
+/// `class L<out T>(val v: T); val a: L<Number> = L(1); val b: L<Any> = a` and
+/// rejects `val probe: Any = (null as String?)`, which is what these cases
+/// assert through [`hir_ty::kotlin_subtype`].
+mod subtyping {
+    use super::*;
+
+    /// A database plus the `Ty` of a type written in the fixture, for a
+    /// subtyping question.
+    fn ty_of(db: &TestDatabase, file: FileId, name: &str) -> Ty {
+        let tree = hir::file_item_tree(db, file);
+        let tree = tree.as_kotlin().expect("a Kotlin file").clone();
+        for (id, data) in tree.items.iter() {
+            if data.name().map(|n| n.as_str()) == Some(name) {
+                // The declared type, nullability included — the caller strips
+                // it only where the case is about the non-null half.
+                return hir_ty::kotlin_item_ty(db, file, hir_expand::ids::ItemId(id));
+            }
+        }
+        panic!("no item named {name}")
+    }
+
+    fn scope(db: &TestDatabase, file: FileId) -> hir::ResolutionScope {
+        hir::ResolutionScope::SourceSet(
+            hir::source_set_for_file(db, file).expect("a mapped source set"),
+        )
+    }
+
+    #[test]
+    fn nullability_rules_match_the_compiler() {
+        let (db, file) = kotlin_fixture(&[(
+            "/src/main/kotlin/Sample.kt",
+            "val plain: String = \"\"\nval opt: String? = null\nval any: Any? = null\nval anyPlain: Any = 1 as Any\n",
+        )]);
+        let scope = scope(&db, file);
+        let string = ty_of(&db, file, "plain");
+        let optional = ty_of(&db, file, "opt");
+        let any = ty_of(&db, file, "any");
+        let any_plain = ty_of(&db, file, "anyPlain");
+
+        // `String <: String?` — the probe: `val probe: String? = x` compiles.
+        let string_opt = Ty::nullable(&db, string);
+        assert!(hir_ty::kotlin_subtype(&db, &scope, &string, &string_opt));
+        // A nullable value is *not* a non-null one — the probe:
+        // `val probe: String = x` reports `actual 'String?'`.
+        assert!(!hir_ty::kotlin_subtype(&db, &scope, &string_opt, &string));
+        // `String? <: Any?` but not `<: Any` — kotlinc:
+        // `null cannot be a value of a non-null type 'Any'`. `any` is declared
+        // `Any?`, so the first assertion says a nullable type is a subtype of
+        // the nullable root while the second says it is not a subtype of the
+        // non-null one.
+        assert!(any.is_nullable(&db));
+        assert!(hir_ty::kotlin_subtype(&db, &scope, &string_opt, &any));
+        assert!(!hir_ty::kotlin_subtype(
+            &db,
+            &scope,
+            &string_opt,
+            &any_plain
+        ));
+        assert!(hir_ty::kotlin_subtype(&db, &scope, &string, &any));
+        let _ = optional;
+    }
+
+    #[test]
+    fn declaration_site_variance_matches_the_compiler() {
+        let source = "class L<out T>(val v: T)\nclass Inv<T>(val v: T)\nval a: L<Int> = L(1)\nval b: L<Any> = L(1)\nval c: Inv<Int> = Inv(1)\nval d: Inv<Any> = Inv(1)\n";
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let scope = scope(&db, file);
+        let int_l = ty_of(&db, file, "a");
+        let any_l = ty_of(&db, file, "b");
+        let int_inv = ty_of(&db, file, "c");
+        let any_inv = ty_of(&db, file, "d");
+
+        // kotlinc: `val b: L<Any> = a` compiles (covariant parameter), while
+        // `val d: Inv<Any> = c` fails with `initializer type mismatch`.
+        assert!(
+            hir_ty::kotlin_subtype(&db, &scope, &int_l, &any_l),
+            "L<Int> <: L<Any> for an `out T` parameter"
+        );
+        assert!(
+            !hir_ty::kotlin_subtype(&db, &scope, &int_inv, &any_inv),
+            "Inv<Int> !<: Inv<Any> for an invariant parameter"
+        );
+    }
+}

@@ -11,7 +11,7 @@
 //! `crate::java::ty`.
 
 use hir_expand::name::Name;
-use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
+use syntax::stub::{TypeBound, TypeRef};
 
 use rustc_hash::FxHashMap;
 

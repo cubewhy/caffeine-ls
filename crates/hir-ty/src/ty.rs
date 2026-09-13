@@ -32,7 +32,7 @@ use hir_def::java::item_tree::ItemId;
 use hir_expand::name::Name;
 use rustc_hash::FxHashMap;
 use stacksafe::stacksafe;
-use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
+use syntax::stub::PrimitiveType;
 use vfs::FileId;
 
 use crate::java::db::TyDatabase;

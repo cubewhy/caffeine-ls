@@ -348,6 +348,11 @@ pub struct FunctionData {
     /// declaration is an extension.
     pub receiver: Option<ItemTypeRef>,
     pub params: Vec<Param>,
+    /// The number of parameters, counted from the end of [`Self::params`],
+    /// that declare a default value ([KLS
+    /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)):
+    /// a call may omit that many trailing arguments.
+    pub defaults: usize,
     /// The declared return type, if the declaration writes one (`fun f(): Int`
     /// or `fun f() = expr`). A block-bodied function without one returns
     /// `Unit` ([KLS

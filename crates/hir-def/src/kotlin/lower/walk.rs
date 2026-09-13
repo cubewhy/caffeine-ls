@@ -358,6 +358,7 @@ fn lower_function(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         annotations,
         type_params: lower_type_params(ctx, node),
         receiver: receiver_type(ctx, node),
+        defaults: trailing_defaults(node),
         params: lower_params(ctx, node),
         ret: declared_type(ctx, node),
         body: None,
@@ -1182,6 +1183,30 @@ fn modifiers_of(
         }
     }
     (modifiers, annotations)
+}
+
+/// How many trailing parameters of a declaration's parameter list declare a
+/// default value (`fun f(a: Int, b: Int = 0, c: Int = 1)`) — the arity a call
+/// may omit ([KLS
+/// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+fn trailing_defaults(node: &SyntaxNode<Lang>) -> usize {
+    let Some(parameters) = node.children().find(|child| is(child, K::VALUE_PARAMETERS)) else {
+        return 0;
+    };
+    let parameters: Vec<SyntaxNode<Lang>> = parameters
+        .children()
+        .filter(|child| is(child, K::VALUE_PARAMETER))
+        .collect();
+    parameters
+        .iter()
+        .rev()
+        .take_while(|parameter| {
+            parameter
+                .children_with_tokens()
+                .filter_map(NodeOrToken::into_token)
+                .any(|token| is_token(&token, K::EQUAL))
+        })
+        .count()
 }
 
 /// The name of a `functionDeclaration`: the identifier between the optional
