@@ -1232,11 +1232,6 @@ impl InferCtx<'_> {
             _ => false,
         }
     }
-
-    pub(super) fn pick_field_of(&mut self, receiver: Option<Ty>, name: &str) -> Option<FieldData> {
-        let receiver = receiver?;
-        pick_field(self.db, &self.scope, &receiver, name, &self.access)
-    }
 }
 
 /// The source symbol of an assignment operator ([§15.26]), for

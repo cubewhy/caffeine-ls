@@ -85,7 +85,7 @@ impl InferCtx<'_> {
                 invocation: method,
                 deferred,
             } => {
-                self.record_member(expr, ResolvedMember::Method(candidate));
+                self.record_member(expr, ResolvedMember::Method(*candidate));
                 self.check_release_api_method(expr, &method);
                 self.check_deprecated_method(expr, &method);
                 self.reinfer_deferred(&method, &deferred);
@@ -361,7 +361,7 @@ impl InferCtx<'_> {
                 invocation: method,
                 deferred,
             } => {
-                self.record_member(expr, ResolvedMember::Method(candidate));
+                self.record_member(expr, ResolvedMember::Method(*candidate));
                 self.check_release_api_method(expr, &method);
                 self.check_deprecated_method(expr, &method);
                 // §15.12.3/[§15.8.4]: `super.m(...)` invokes the method *as
@@ -373,14 +373,14 @@ impl InferCtx<'_> {
                 // interface-qualified `I.super.m(...)` form ([§15.11.2]) is
                 // the same (it exists to reach an interface *default*; an
                 // abstract interface member has no body to reach).
-                if mode == InvocationMode::Super || mode == InvocationMode::Interface {
-                    if method.abstract_ {
-                        self.report(TypeError::AbstractSuperAccess {
-                            expr,
-                            method: name.clone(),
-                            owner: method.owner.display_name(self.db),
-                        });
-                    }
+                if (mode == InvocationMode::Super || mode == InvocationMode::Interface)
+                    && method.abstract_
+                {
+                    self.report(TypeError::AbstractSuperAccess {
+                        expr,
+                        method: name.clone(),
+                        owner: method.owner.display_name(self.db),
+                    });
                 }
                 // §5.1.9/[§15.12.2.6]: the selected member was reached through
                 // a *raw* receiver ([§4.8]) and its declaration is generic, so

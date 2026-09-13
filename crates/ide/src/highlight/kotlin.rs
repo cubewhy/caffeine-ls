@@ -167,7 +167,7 @@ fn identifiers(root: &SyntaxNode<Lang>, out: &mut Highlights) {
         let Some(parent) = token.parent() else {
             continue;
         };
-        let Some((tag, mods)) = classify(&token, &parent) else {
+        let Some((tag, mods)) = classify(token, &parent) else {
             continue;
         };
         insert(out, token.text_range(), tag, mods);

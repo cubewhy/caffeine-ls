@@ -4155,21 +4155,6 @@ fn merge_exception_type(left: &FrameType, right: &FrameType) -> FrameType {
     }
 }
 
-fn dump_frame_debug(
-    method: &MethodNode,
-    label: &str,
-    iterations: usize,
-    hits: &std::collections::HashMap<u16, u32>,
-) {
-    let mut entries: Vec<(u16, u32)> = hits.iter().map(|(k, v)| (*k, *v)).collect();
-    entries.sort_by_key(|b| std::cmp::Reverse(b.1));
-    let top = entries.into_iter().take(10).collect::<Vec<_>>();
-    eprintln!(
-        "[frame-debug] method={}{} label={} iterations={} top_offsets={:?}",
-        method.name, method.descriptor, label, iterations, top
-    );
-}
-
 #[derive(Debug, Clone)]
 struct ParsedInstruction {
     offset: u16,

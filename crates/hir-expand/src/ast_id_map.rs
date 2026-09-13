@@ -182,7 +182,7 @@ impl AstIdMap {
                     }
                     let mut children: Vec<_> = node.children().collect();
                     children.reverse();
-                    let mut push = |stack: &mut Vec<_>, children: Vec<_>, body: bool| {
+                    let push = |stack: &mut Vec<_>, children: Vec<_>, body: bool| {
                         for child in children {
                             stack.push((child, Some(kind), body));
                         }

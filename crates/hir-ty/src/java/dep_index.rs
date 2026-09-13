@@ -163,6 +163,7 @@ pub(crate) fn file_resolved_deps_impl(db: &dyn TyDatabase, file: FileId) -> FxHa
 /// directly ([`TyKind::Reference::local`]): the declaration is in `file`
 /// itself, so it is never a cross-file dependency and is skipped without a
 /// name lookup — a local type has no canonical name to resolve ([§6.7]).
+#[allow(clippy::too_many_arguments)]
 fn record_source(
     db: &dyn TyDatabase,
     file: FileId,

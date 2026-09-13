@@ -958,7 +958,9 @@ fn decode_tokens(response: &serde_json::Value, legend: &serde_json::Value) -> Ve
     assert_eq!(data.len() % 5, 0, "a token is five integers: {data:?}");
 
     let (mut line, mut col) = (0u32, 0u32);
-    data.chunks_exact(5)
+    data.as_chunks::<5>()
+        .0
+        .iter()
         .map(|token| {
             if token[0] == 0 {
                 col += token[1];
@@ -4778,26 +4780,6 @@ fn assert_definition_name(range: &serde_json::Value, text: &str, declaration: &s
         ),
         (Some(end.0 as u64), Some(end.1 as u64)),
         "the definition must end after {name:?} in {declaration:?}"
-    );
-}
-
-/// Asserts that an LSP range covers `needle` inside `text`.
-fn assert_range_covers(range: serde_json::Value, text: &str, needle: &str) {
-    let (line, character) = position_of(text, needle);
-    let start = &range["start"];
-    let end = &range["end"];
-    let start = (
-        start["line"].as_u64().unwrap(),
-        start["character"].as_u64().unwrap(),
-    );
-    let end = (
-        end["line"].as_u64().unwrap(),
-        end["character"].as_u64().unwrap(),
-    );
-    let needle = (line as u64, character as u64);
-    assert!(
-        start <= needle && needle <= end,
-        "range {start:?}..{end:?} must cover `{needle:?}`"
     );
 }
 

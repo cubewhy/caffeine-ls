@@ -336,9 +336,9 @@ fn type_param_count(data: &ItemData) -> usize {
 /// other, so this is a lexical match on where the name was written rather than a
 /// resolution.
 fn type_refs(db: &RootDatabase, file_id: FileId, tree: &ItemTree, out: &mut Highlights) {
-    let mut in_scope = FxHashSet::default();
+    let in_scope = FxHashSet::default();
     for item in &tree.top {
-        walk_type_refs(db, file_id, tree, *item, &mut in_scope, out);
+        walk_type_refs(db, file_id, tree, *item, &in_scope, out);
     }
 }
 

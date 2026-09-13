@@ -42,8 +42,8 @@ pub(super) enum CallResolution {
     /// the invocation resolved to, its inferred invocation type, and the poly
     /// arguments left for post-resolution re-inference.
     Selected {
-        candidate: MethodData,
-        invocation: MethodData,
+        candidate: Box<MethodData>,
+        invocation: Box<MethodData>,
         deferred: Vec<(ExprId, usize)>,
     },
     /// Several applicable candidates of which none is most specific
@@ -262,8 +262,8 @@ impl InferCtx<'_> {
         };
         let (candidate, invocation, deferred) = applicable.remove(index);
         CallResolution::Selected {
-            candidate,
-            invocation,
+            candidate: Box::new(candidate),
+            invocation: Box::new(invocation),
             deferred,
         }
     }

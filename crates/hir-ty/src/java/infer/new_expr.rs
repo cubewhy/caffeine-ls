@@ -195,7 +195,7 @@ impl InferCtx<'_> {
                 invocation: method,
                 deferred,
             } => {
-                self.record_member(expr, ResolvedMember::Method(candidate));
+                self.record_member(expr, ResolvedMember::Method(*candidate));
                 self.check_release_api_method(expr, &method);
                 self.check_deprecated_method(expr, &method);
                 self.warn_unchecked_invocation(expr, &method);

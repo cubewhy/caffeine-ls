@@ -1919,7 +1919,7 @@ fn check_class(
                 let array = &a.params[a.params.len() - 1];
                 out.push(DeclDiagnostic::CannotDeclareBothVarargsAndArray {
                     method: Name::new(&a.name),
-                    array: array.clone(),
+                    array: *array,
                 });
             } else {
                 out.push(DeclDiagnostic::NameClashSameErasure {
@@ -2462,9 +2462,7 @@ fn first_concrete_descendant_super(
         // An abstract class's own implicit default constructor would invoke
         // its superclass's — walk up, reporting nothing until a concrete
         // descendant is reached ([§8.8.9]).
-        let Some((fqn, _)) = super_ty.as_reference(db) else {
-            return None;
-        };
+        let (fqn, _) = super_ty.as_reference(db)?;
         let resolved = hir::fqn_resolve(db, scope, fqn.as_str())?;
         let hir::Resolved::Source(next) = resolved else {
             return None;
@@ -3043,6 +3041,7 @@ fn sealed_permits(
 /// ([`DeclDiagnostic::CantInheritFromSealed`]), and a permitted direct
 /// subclass that is itself neither `sealed`, `non-sealed` nor `final`
 /// ([`DeclDiagnostic::SealedSealedOrFinalExpected`]).
+#[allow(clippy::too_many_arguments)]
 fn sealed_subclass_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
@@ -3537,9 +3536,7 @@ fn final_field_diagnostics(
                     anonymous: _,
                     ty: _,
                 }
-                | ExprData::CtorCall {
-                    args, target: _, ..
-                } => {
+                | ExprData::CtorCall { args, .. } => {
                     for a in args {
                         walk_expr(bodies, *a, name, found);
                     }
@@ -4176,7 +4173,6 @@ fn enum_ordering_diagnostics(
     tree: &hir_def::java::item_tree::ItemTree,
 ) -> Vec<DeclDiagnostic> {
     use syntax::java::SourceFile as JavaSourceFile;
-    use syntax::java::SyntaxKind as J;
     if tree.language != LanguageKind::Java {
         return Vec::new();
     }

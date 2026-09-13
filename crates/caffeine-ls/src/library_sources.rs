@@ -55,7 +55,7 @@ pub(crate) fn sdk_source_archive(sdk: &SdkData) -> Option<AbsPathBuf> {
         sdk.home_path.join("src.zip"),
     ]
     .into_iter()
-    .find(|path| exists(path))
+    .find(exists)
 }
 
 /// `<dir>/<stem>-sources.jar` beside a classpath jar, when that file exists.

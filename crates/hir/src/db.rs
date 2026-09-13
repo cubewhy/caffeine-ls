@@ -603,10 +603,9 @@ pub fn resolve_in_libraries(
                 });
             }
         }
-        match candidate.rfind('.') {
-            Some(dot) => candidate.replace_range(dot..dot + 1, "$"),
-            None => return None,
-        }
+
+        let dot = candidate.rfind('.')?;
+        candidate.replace_range(dot..dot + 1, "$")
     }
 }
 
@@ -835,7 +834,7 @@ pub fn file_docs(db: &dyn HirDatabase, file_id: FileId) -> Arc<DocIndex> {
 /// The text is sliced out of the file's resident [`FileText`] with the indexed
 /// range — the index stores no second copy of it. Ranges always fall on token
 /// boundaries, so the slice cannot split a character.
-pub fn item_doc<'a>(db: &'a dyn HirDatabase, file_id: FileId, item: ItemId) -> Option<&'a str> {
+pub fn item_doc(db: &dyn HirDatabase, file_id: FileId, item: ItemId) -> Option<&str> {
     let range = file_docs(db, file_id).get(item)?;
     let text: &str = db.file_text(file_id).text(db);
     text.get(u32::from(range.start()) as usize..u32::from(range.end()) as usize)

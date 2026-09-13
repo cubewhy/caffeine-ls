@@ -791,10 +791,7 @@ fn string_constant(
     match cx.bodies.expr(expr).clone() {
         // §3.10.5/§3.10.6: a string literal's value is its text with the
         // escapes interpreted, which the lowering already performed.
-        ExprData::Literal(literal) => match literal {
-            Literal::Str(value) => Some(value),
-            _ => None,
-        },
+        ExprData::Literal(Literal::Str(value)) => Some(value),
         // §15.8.5: parentheses do not change what the expression is.
         ExprData::Paren(inner) => string_constant(cx, inner, visited),
         // §15.29: "casts to primitive types and casts to `String`" are among
@@ -931,7 +928,7 @@ pub fn suppress_warnings_values(
     let target = node
         .parent()
         .map_or_else(|| node.text_range(), |parent| parent.text_range());
-    let context = innermost_item(&map, &source, &tree, target).map(|item| {
+    let context = innermost_item(map, &source, &tree, target).map(|item| {
         let scope = scope_for_file(db, file);
         let resolver = Resolver::for_item(db, file, &tree, item);
         let bodies = hir::file_body_tree(db, file);

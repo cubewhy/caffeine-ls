@@ -1401,7 +1401,7 @@ fn resolver_at(
         .parent()
         .map_or_else(|| node.text_range(), |parent| parent.text_range());
     let Some(item) = range_ctx(db, file, tree.language)
-        .and_then(|(map, source)| innermost_item(&map, &source, tree, target))
+        .and_then(|(map, source)| innermost_item(map, &source, tree, target))
     else {
         return Resolver::for_file(tree);
     };

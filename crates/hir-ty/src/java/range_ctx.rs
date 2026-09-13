@@ -18,11 +18,11 @@ use crate::java::db::TyDatabase;
 
 /// The `(map, source)` pair the range helpers resolve against, when the
 /// file's language is known; `None` for an `Unknown` file (no parse exists).
-pub fn range_ctx<'db>(
-    db: &'db dyn TyDatabase,
+pub fn range_ctx(
+    db: &dyn TyDatabase,
     file: FileId,
     language: LanguageKind,
-) -> Option<(&'db AstIdMap, SourceFile)> {
+) -> Option<(&AstIdMap, SourceFile)> {
     if language == LanguageKind::Unknown {
         return None;
     }

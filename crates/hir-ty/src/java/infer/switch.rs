@@ -469,8 +469,6 @@ impl InferCtx<'_> {
         });
     }
 
-    /// the label's own scope.
-
     pub(super) fn check_case_label(&mut self, label: ExprId, selector: &Ty) {
         if matches!(self.tree.expr(label).clone(), ExprData::Missing)
             || selector.is_error(self.db)

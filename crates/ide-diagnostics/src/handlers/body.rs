@@ -415,12 +415,7 @@ pub fn message(db: &dyn TyDatabase, diag: &TypeError, bodies: &BodyTree) -> Stri
                 )
             }
         }
-        TypeArgumentOutOfBounds {
-            name,
-            arg,
-            bound: _,
-            ..
-        } => format!(
+        TypeArgumentOutOfBounds { name, arg, .. } => format!(
             "Type argument '{}' is not within bounds of type-variable '{}'",
             render_simple(db, *arg),
             name.as_str()

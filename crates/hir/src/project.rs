@@ -530,7 +530,6 @@ mod tests {
         let mut db = TestDatabase::new();
         change.apply(&mut db);
 
-        let tree = file_item_tree(&db, file_id);
         let rendered = pretty(&db, file_id);
         assert!(rendered.contains("class A [public]"), "{rendered}");
         assert!(rendered.contains("field x: int"), "{rendered}");
@@ -544,7 +543,6 @@ mod tests {
         );
         edit.apply(&mut db);
 
-        let tree = file_item_tree(&db, file_id);
         let rendered = pretty(&db, file_id);
         assert!(rendered.contains("class B"), "{rendered}");
         assert!(!rendered.contains("field x: int"), "{rendered}");

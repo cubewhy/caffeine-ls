@@ -192,7 +192,7 @@ impl DeltaCache {
         previous_result_id: &str,
     ) -> Option<&[SemanticToken]> {
         let document = self.documents.get(&file_id)?;
-        (document.result_id == previous_result_id).then(|| document.tokens.as_slice())
+        (document.result_id == previous_result_id).then_some(document.tokens.as_slice())
     }
 
     /// Forgets the document's stream: its client closed it, so the next request
@@ -298,7 +298,7 @@ mod tests {
 
     /// The text a row covers — `(line, character)` and the length are byte
     /// offsets here because the fixtures are ASCII.
-    fn covered<'a>(text: &'a str, row: (u32, u32, u32, u32, u32)) -> &'a str {
+    fn covered(text: &str, row: (u32, u32, u32, u32, u32)) -> &str {
         let mut offset = 0;
         for _ in 0..row.0 {
             offset = text[offset..].find('\n').expect("line") + offset + 1;

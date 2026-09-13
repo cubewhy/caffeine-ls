@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(ct_sym_path(&home.join("lib").join("rt.jar")), Some(lib));
 
         // A JDK 8 install keeps it under `jre/lib/` instead.
-        std::fs::remove_file(&home.join("lib").join("ct.sym")).unwrap();
+        std::fs::remove_file(home.join("lib").join("ct.sym")).unwrap();
         let legacy = home.join("jre").join("lib").join("ct.sym");
         std::fs::write(&legacy, b"").unwrap();
         assert_eq!(

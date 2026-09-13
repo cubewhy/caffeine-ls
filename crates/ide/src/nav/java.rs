@@ -775,7 +775,7 @@ fn import_targets(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Reso
                     file,
                     None,
                     &owner,
-                    &member,
+                    member,
                     use_kind,
                     Params::Unknown,
                 ) {
@@ -2698,9 +2698,9 @@ fn render_symbol_decl(
 ) -> Option<HoverInfo> {
     let symbol = symbols
         .iter()
-        .filter(|s| item_range(db, file, &tree, s.item).is_some_and(|range| range.contains(offset)))
+        .filter(|s| item_range(db, file, tree, s.item).is_some_and(|range| range.contains(offset)))
         .min_by_key(|s| {
-            let range = item_range(db, file, &tree, s.item).unwrap_or_default();
+            let range = item_range(db, file, tree, s.item).unwrap_or_default();
             range.end() - range.start()
         })?;
     Some(HoverInfo {

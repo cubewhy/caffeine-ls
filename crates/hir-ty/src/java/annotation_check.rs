@@ -106,6 +106,7 @@ pub(crate) fn annotation_diagnostics(
     let bodies = hir::file_body_tree(db, file);
     let mut out = Vec::new();
 
+    #[allow(clippy::too_many_arguments)]
     fn walk(
         db: &dyn TyDatabase,
         file: FileId,
@@ -466,6 +467,7 @@ fn check_target(
 /// A `var` declaration ([§14.4], [§15.27.1]) writes no type, so the second
 /// case has no closest type to attach to and is a compile-time error
 /// ([§9.7.4]).
+#[allow(clippy::too_many_arguments)]
 fn check_variable_target(
     db: &dyn TyDatabase,
     resolver: &Resolver,

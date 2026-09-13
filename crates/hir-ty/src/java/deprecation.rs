@@ -403,7 +403,7 @@ fn source_owner(package: Option<&Name>, fqn: &str) -> Name {
         None => fqn,
     };
     match rest.split('.').collect::<Vec<_>>().as_slice() {
-        [.., enclosing, _outermost] if rest.contains('.') => Name::new(*enclosing),
+        [.., enclosing, _outermost] if rest.contains('.') => Name::new(enclosing),
         _ => package.cloned().unwrap_or_else(|| Name::new("")),
     }
 }
