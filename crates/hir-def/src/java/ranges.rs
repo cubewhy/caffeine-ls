@@ -12,7 +12,7 @@
 //! the database-facing wrappers live with the consumers, which fetch the map
 //! and the parse first.
 
-use rowan::{SyntaxNode, TextRange};
+use rowan::{NodeOrToken, SyntaxNode, TextRange};
 use syntax::SourceFile;
 use syntax::java::{Lang, SyntaxKind as J};
 
@@ -119,6 +119,107 @@ pub fn item_name_range(
         _ => identifier_range(&node),
     };
     Some(name_range.unwrap_or_else(|| node.text_range()))
+}
+
+/// The doc comment written immediately before the declaration whose syntax
+/// node is `node`, as the source range of its comment token(s); `None` when
+/// no comment documents it.
+///
+/// A doc comment documents a declaration only when it is placed *immediately
+/// before* it ("the one closest to the beginning of the declaration is used"):
+/// the scan therefore starts at the declaration's previous sibling and stops
+/// at the first non-comment token. Ordinary comments and whitespace are
+/// skipped — they may sit between the doc comment and the declaration —
+/// whereas any other token (a `;`, `,`, `{`, an identifier, a modifier) marks
+/// the end of the preceding declaration and ends the search.
+///
+/// The two forms are the traditional comment and the run of Markdown
+/// comments ([JLS §3.7]): a `/** … */` token is the whole comment, while a
+/// `///` line is one token per line, so a *run* of consecutive `///` tokens
+/// separated by exactly one line break is the comment — a blank line, an
+/// ordinary comment or a neighbouring declaration ends it.
+///
+/// [JLS §3.7]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.7
+fn preceding_doc(node: &SyntaxNode<Lang>) -> Option<TextRange> {
+    let mut prev = node.prev_sibling_or_token();
+    loop {
+        match prev? {
+            // A sibling node is the previous declaration: nothing to scan.
+            NodeOrToken::Node(_) => return None,
+            NodeOrToken::Token(token) => match token.kind() {
+                // Trivia that may separate the comment from the declaration.
+                J::WHITESPACE | J::LINE_COMMENT | J::BLOCK_COMMENT => {
+                    prev = token.prev_sibling_or_token();
+                }
+                // A traditional comment is a single token.
+                J::JAVADOC => return Some(token.text_range()),
+                // One `///` token per line: take the whole preceding run.
+                J::JAVADOC_LINE => {
+                    let end = token.text_range().end();
+                    let mut start = token.text_range().start();
+                    let mut cursor = token.prev_sibling_or_token();
+                    while let Some(NodeOrToken::Token(whitespace)) = cursor {
+                        // The lines of one run are separated by the single
+                        // line break that ends the previous one.
+                        if whitespace.kind() != J::WHITESPACE
+                            || whitespace.text().matches('\n').count() != 1
+                        {
+                            break;
+                        }
+                        let Some(NodeOrToken::Token(line)) = whitespace.prev_sibling_or_token()
+                        else {
+                            break;
+                        };
+                        if line.kind() != J::JAVADOC_LINE {
+                            break;
+                        }
+                        start = line.text_range().start();
+                        cursor = line.prev_sibling_or_token();
+                    }
+                    return Some(TextRange::new(start, end));
+                }
+                // Any other token ends the previous declaration, so no doc
+                // comment documents this one.
+                _ => return None,
+            },
+        }
+    }
+}
+
+/// The source range of the doc comment documenting the declaration item
+/// `id`, if it has one.
+///
+/// Comment forms ([JLS §3.7]) and the declarations a doc comment may be
+/// recognised before are fixed by the JavaDoc specification for the standard
+/// doclet: a module, package, class-like type (class, interface, enum,
+/// record, annotation interface), constructor, method, annotation interface
+/// element, enum constant or field. An initializer block is not in that list
+/// and is never documented. The comment's text is sliced out of the file's
+/// `FileText` by this range — the index stores no copy of it.
+pub fn item_doc_range(
+    map: &AstIdMap,
+    source: &SourceFile,
+    tree: &ItemTree,
+    id: ItemId,
+) -> Option<TextRange> {
+    if matches!(
+        tree.data(id),
+        ItemData::StaticInit(_) | ItemData::InstanceInit(_)
+    ) {
+        return None;
+    }
+    let node = item_node(map, source, tree, id)?;
+    // A field item anchors one `VARIABLE_DECLARATOR` of the declaration
+    // (`int a, b;` is one declaration with two declarators, and the comment is
+    // attached to the declaration), so the scan starts from the whole
+    // `FIELD_DECL`.
+    let anchor = match tree.data(id) {
+        ItemData::Field(_) => node
+            .ancestors()
+            .find(|ancestor| ancestor.kind() == J::FIELD_DECL),
+        _ => None,
+    };
+    preceding_doc(anchor.as_ref().unwrap_or(&node))
 }
 
 /// The source range of the *name* of the `index`-th type parameter the item

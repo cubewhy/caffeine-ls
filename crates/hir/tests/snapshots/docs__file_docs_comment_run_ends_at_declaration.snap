@@ -1,0 +1,7 @@
+---
+source: crates/hir/tests/docs.rs
+expression: "render_docs(&db, file_id())"
+---
+C Class → <none>
+a Field → "/// one\n    /// two"
+b Field → "/// three\n    /// four"

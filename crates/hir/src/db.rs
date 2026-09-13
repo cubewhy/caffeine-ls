@@ -15,16 +15,19 @@ use std::path::Path;
 use triomphe::Arc;
 
 use base_db::{
-    FileText, SourceDatabase, SourceRootId, SourceRootInput,
+    FileText, LanguageKind, SourceDatabase, SourceRootId, SourceRootInput, file_language_kind,
+    parse,
     salsa::{self, Setter as _},
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use dashmap::DashMap;
 use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
-use hir_expand::name::Name;
+use hir_expand::{ast_id_map::AstIdMap, name::Name};
 use lasso::ThreadedRodeo;
 use parking_lot::Mutex;
+use rowan::TextRange;
 use rustc_hash::{FxHashMap, FxHashSet};
+use syntax::SourceFile;
 use vfs::{AbsPath, AbsPathBuf, FileId};
 
 use crate::{
@@ -722,6 +725,120 @@ fn join_name(prefix: &Name, suffix: &str) -> Name {
     text.push('.');
     text.push_str(suffix);
     Name::new(&text)
+}
+
+/// The doc-comment ranges of a file's declarations, keyed by item id and
+/// sorted by it, so a lookup is a binary search.
+///
+/// Only ranges are stored: the comment text is already resident in the file's
+/// [`FileText`], so the index adds ~12 bytes per documented declaration and no
+/// copy of the text. Deliberately separate from the item tree and the symbol
+/// index: a doc-only edit must not invalidate signature consumers or the
+/// symbol index (the item tree is offset-free for the same reason).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocIndex {
+    entries: Box<[(ItemId, TextRange)]>,
+}
+
+impl DocIndex {
+    /// The doc-comment range of `item`, if it is documented.
+    pub fn get(&self, item: ItemId) -> Option<TextRange> {
+        self.entries
+            .binary_search_by_key(&item, |&(id, _)| id)
+            .ok()
+            .map(|index| self.entries[index].1)
+    }
+
+    /// The number of documented declarations.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the file documents no declaration at all.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Every `(item, comment range)` pair, in item-id order.
+    pub fn iter(&self) -> impl Iterator<Item = (ItemId, TextRange)> + '_ {
+        self.entries.iter().copied()
+    }
+}
+
+/// The doc-comment index of the file in `file`: the source range of the doc
+/// comment of every documented declaration, in item-id order.
+///
+/// Keyed like the item tree (on the interned [`FileText`]), and *not* merged
+/// into it: the comment ranges come from the current syntax tree
+/// ([`hir_def::java::ranges::item_doc_range`]) and change on every doc edit,
+/// while the item tree and the symbol index are deliberately stable across
+/// them. The `Unknown` early return mirrors `item_tree_query`: a file with no
+/// language has no parse and no declarations.
+///
+/// SAFETY: the value holds `rowan::TextRange` (a foreign type), so it is not a
+/// `SalsaValue`; it contains no database-lifetime references, so it is safe
+/// for salsa to retain it across revisions.
+#[salsa::tracked(unsafe(non_salsa_values))]
+fn file_docs_query(db: &dyn HirDatabase, file: FileText) -> Arc<DocIndex> {
+    let file_id = *file.file_id(db);
+    let language = file_language_kind(db, file_id).unwrap_or(LanguageKind::Unknown);
+    if language == LanguageKind::Unknown {
+        return Arc::new(DocIndex {
+            entries: Box::new([]),
+        });
+    }
+    let tree = file_item_tree(db, file_id);
+    let map = hir_def::db::ast_id_map(db, file_id, language);
+    let parse = parse(db, file_id, language);
+    let source = parse.syntax_node(language);
+    let mut entries = Vec::new();
+    for &top in &tree.top {
+        collect_file_docs(map, &source, &tree, top, &mut entries);
+    }
+    // The walk is in source order; item ids are not (local type declarations
+    // allocate after the members of their declaring body).
+    entries.sort_unstable_by_key(|&(item, _)| item);
+    Arc::new(DocIndex {
+        entries: entries.into_boxed_slice(),
+    })
+}
+
+/// Collects the doc-comment range of `id` and of every declaration nested in
+/// it (its members and its local class-like declarations), mirroring the item
+/// walk of the IDE's outline (`ide::nav::java::all_items`).
+fn collect_file_docs(
+    map: &AstIdMap,
+    source: &SourceFile,
+    tree: &ItemTree,
+    id: ItemId,
+    out: &mut Vec<(ItemId, TextRange)>,
+) {
+    if let Some(range) = hir_def::java::ranges::item_doc_range(map, source, tree, id) {
+        out.push((id, range));
+    }
+    for &child in tree.data(id).body() {
+        collect_file_docs(map, source, tree, child, out);
+    }
+    for local in tree.local_types_of(id) {
+        collect_file_docs(map, source, tree, local, out);
+    }
+}
+
+/// The doc-comment index of a file (see [`file_docs_query`]).
+pub fn file_docs(db: &dyn HirDatabase, file_id: FileId) -> Arc<DocIndex> {
+    file_docs_query(db, db.file_text(file_id)).clone()
+}
+
+/// The text of declaration `item`'s doc comment in `file`, delimiters
+/// included; `None` when it is not documented.
+///
+/// The text is sliced out of the file's resident [`FileText`] with the indexed
+/// range — the index stores no second copy of it. Ranges always fall on token
+/// boundaries, so the slice cannot split a character.
+pub fn item_doc<'a>(db: &'a dyn HirDatabase, file_id: FileId, item: ItemId) -> Option<&'a str> {
+    let range = file_docs(db, file_id).get(item)?;
+    let text: &str = db.file_text(file_id).text(db);
+    text.get(u32::from(range.start()) as usize..u32::from(range.end()) as usize)
 }
 
 /// The symbols of every file in a source root, tagged with their file. Tracked

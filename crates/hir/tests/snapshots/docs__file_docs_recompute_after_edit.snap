@@ -1,0 +1,36 @@
+---
+source: crates/hir/tests/docs.rs
+expression: "format!(\"before:\\n{before}\\n\\nafter:\\n{after}\")"
+---
+before:
+Doc Class → "/** Canonical class documentation.\n * <p>Second paragraph.\n */"
+count Field → "/** The count. */"
+greet Method → "/**\n     * Greets.\n     *\n     * @param name who\n     * @return the greeting\n     */"
+a Field → "/** Both counters. */"
+b Field → "/** Both counters. */"
+undocumented Method → <none>
+name Field → "/** The name. */"
+markdown Field → "/// Markdown line one\n    /// line two"
+both Field → "/** second */"
+afterStray Field → <none>
+<anonymous> StaticInit → <none>
+Color Enum → <none>
+RED EnumConstant → "/** Red. */"
+GREEN EnumConstant → <none>
+
+after:
+Doc Class → "/** Canonical class documentation.\n * <p>Second paragraph.\n */"
+count Field → "/** The count. */"
+moved Field → "/** Moved to the front. */"
+greet Method → "/**\n     * Greets.\n     *\n     * @param name who\n     * @return the greeting\n     */"
+a Field → "/** Both counters. */"
+b Field → "/** Both counters. */"
+undocumented Method → <none>
+name Field → "/** The name. */"
+markdown Field → "/// Markdown line one\n    /// line two"
+both Field → "/** second */"
+afterStray Field → <none>
+<anonymous> StaticInit → <none>
+Color Enum → <none>
+RED EnumConstant → "/** Red. */"
+GREEN EnumConstant → <none>
