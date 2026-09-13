@@ -1189,6 +1189,12 @@ pub struct TySimpleDisplay<'a> {
 impl fmt::Display for TySimpleDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.ty.kind(self.db) {
+            // A wrapper renders its inner type simply too, so `kotlin.String?`
+            // is `String?` — the simple display is *simple* throughout.
+            TyKind::Nullable(inner) => write!(f, "{}?", inner.display_simple(self.db)),
+            TyKind::DefinitelyNonNull(inner) => {
+                write!(f, "{} & Any", inner.display_simple(self.db))
+            }
             TyKind::Reference { name, args, .. } => {
                 f.write_str(name.simple_name())?;
                 if !args.is_empty() {

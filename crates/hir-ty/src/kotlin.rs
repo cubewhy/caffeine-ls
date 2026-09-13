@@ -1,11 +1,28 @@
-//! The Kotlin type layer.
+//! Kotlin type resolution.
 //!
-//! Scaffold prepared for the Kotlin type system: Kotlin type construction,
-//! resolution and inference will live here, depending only on the JVM
-//! substrate ([`crate::jvm`]) and never on [`crate::java`]. Nothing is
-//! implemented yet.
+//! The Kotlin half of the type layer: how a Kotlin declaration's written types
+//! become [`crate::ty::Ty`] values. It is a separate module from
+//! [`crate::java`] because it resolves Kotlin's scopes and nullability, and it
+//! shares the model, the interner and the classpath lookup
+//! ([`hir::fqn_resolve`]) with it.
+//!
+//! # Reference
+//!
+//! The normative reference is the *Kotlin language specification: Kotlin/Core*,
+//! v1.9-rfc+0.1 (<https://kotlinlang.org/spec/kotlin-spec.html>) — the type
+//! system (`type-system.html`), the declaration rules
+//! (`declarations.html`) and the package/import rules
+//! (`packages-and-imports.html`) — cited per function. The empirical reference
+//! is kotlinc 2.4.20 (JRE 25); where the two disagree the compiler wins and the
+//! deviation is recorded where it is implemented.
+//!
+//! # What is here
+//!
+//! * [`resolve`] — the scopes a written type name is resolved in, including
+//!   the default imports;
+//! * [`ty`] — building a [`crate::ty::Ty`] from an item tree type reference;
+//! * [`db`] — the memoized per-item queries.
 
-/// A placeholder documenting the intended module shape. Removed when the
-/// Kotlin type layer lands.
-#[allow(dead_code)]
-pub const LAYOUT: &str = "kotlin::ty";
+pub mod db;
+pub mod resolve;
+pub mod ty;

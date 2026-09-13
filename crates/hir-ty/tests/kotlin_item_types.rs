@@ -1,0 +1,225 @@
+//! The Kotlin item type layer: what a declaration's written type resolves to.
+//!
+//! The fixture's standard library is hand-encoded ([`kotlin_stdlib_classes`]),
+//! like the JDK fixture, so the suite stays hermetic: `String`, `Int`, `Unit`
+//! and `List` resolve through the *default imports* against a classpath the
+//! test controls, which is exactly the claim these tests make.
+
+use base_db::{FileChange, FileSourceRootInput, SourceDatabase, SourceRoot, SourceRootId};
+use hir::SourceSetId;
+use hir_ty::Ty;
+use tempfile::TempDir;
+use triomphe::Arc;
+use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
+
+mod common;
+use common::{ClassSpec, DeprecationSpec, TestDatabase, build_jar, jdk_fixture};
+
+/// A minimal Kotlin standard library: the classifiers the default imports are
+/// claimed to provide, with the shapes kotlinc compiles them to (`kotlin.Int`
+/// is a class, `kotlin.collections.List` an interface with one type parameter).
+fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
+    let class = |fqn: &'static str,
+                 super_class: Option<&'static str>,
+                 interfaces: &'static [&'static str],
+                 access: u16| ClassSpec {
+        fqn,
+        super_class,
+        interfaces,
+        access,
+        fields: &[],
+        field_access: &[],
+        methods: &[],
+        method_sigs: &[],
+        method_access: &[],
+        sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
+        method_defaults: &[],
+    };
+    vec![
+        class("kotlin/Any", None, &[], 0x0021),
+        class("kotlin/String", Some("kotlin/Any"), &[], 0x0031),
+        class("kotlin/Int", Some("kotlin/Number"), &[], 0x0031),
+        class("kotlin/Number", Some("kotlin/Any"), &[], 0x0421),
+        class("kotlin/Boolean", Some("kotlin/Any"), &[], 0x0031),
+        class("kotlin/Unit", Some("kotlin/Any"), &[], 0x0031),
+        class("kotlin/Nothing", Some("kotlin/Any"), &[], 0x0031),
+        // `interface List<out E>` — an interface, hence `ACC_INTERFACE |
+        // ACC_ABSTRACT`.
+        class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601),
+        // `interface Function1<in P1, out R>`.
+        class("kotlin/Function1", Some("kotlin/Any"), &[], 0x0601),
+        // `interface Iterable<out T>` with `iterator()`.
+        ClassSpec {
+            methods: &[("iterator", "()Ljava/util/Iterator;")],
+            ..class(
+                "kotlin/collections/Iterable",
+                Some("kotlin/Any"),
+                &[],
+                0x0601,
+            )
+        },
+    ]
+}
+
+/// A library holding `specs`, plus its id.
+fn library(
+    dir: &TempDir,
+    name: &str,
+    specs: &[ClassSpec<'static>],
+) -> (hir::LibraryId, AbsPathBuf) {
+    let path = camino::Utf8PathBuf::from_path_buf(dir.path().join(name)).unwrap();
+    build_jar(&path, specs);
+    let abs = AbsPathBuf::assert_utf8(path.as_std_path().to_owned());
+    (
+        hir::LibraryId::from_file_path(path.as_std_path()).unwrap(),
+        abs,
+    )
+}
+
+/// A database with the JDK fixture, a hand-encoded Kotlin stdlib and one
+/// Kotlin source root whose classpath carries both.
+fn kotlin_fixture(files: &[(&str, &str)]) -> (TestDatabase, FileId) {
+    let dir = TempDir::new().unwrap();
+    let jdk = jdk_fixture();
+    let (stdlib_id, stdlib_path) = library(&dir, "kotlin-stdlib.jar", &kotlin_stdlib_classes());
+
+    let mut db = TestDatabase::default();
+    let mut file_set = FileSet::default();
+    for (i, (path, _)) in files.iter().enumerate() {
+        file_set.insert(
+            FileId::from_raw((i + 1) as u32),
+            VfsPath::from(AbsPathBuf::assert_utf8((*path).into())),
+        );
+    }
+    let root = SourceRoot::new(file_set);
+    let mut change = FileChange::default();
+    change.set_roots(vec![root]);
+    for (i, (_, text)) in files.iter().enumerate() {
+        change.change_file(FileId::from_raw((i + 1) as u32), Some((*text).to_owned()));
+    }
+    change.apply(&mut db);
+
+    let source_set = SourceSetId {
+        project: hir::ProjectId(0),
+        kind: hir::SourceSetKind::Main,
+    };
+    let mut data = hir::ProjectGraphData::default();
+    data.libraries.insert(
+        jdk.lib,
+        hir::LibraryInfo::new(
+            hir::LibraryKind::Jar,
+            AbsPathBuf::assert_utf8(jdk.jar.as_std_path().to_owned()),
+        ),
+    );
+    data.libraries.insert(
+        stdlib_id,
+        hir::LibraryInfo::new(hir::LibraryKind::Jar, stdlib_path),
+    );
+    data.jdk_libraries.push(jdk.lib);
+    data.source_sets.insert(
+        source_set.clone(),
+        Arc::new(hir::Classpath {
+            entries: vec![
+                hir::ClasspathEntry::Library(jdk.lib),
+                hir::ClasspathEntry::Library(stdlib_id),
+            ],
+        }),
+    );
+    data.source_root_to_source_set
+        .insert(SourceRootId(0), source_set.clone());
+    data.source_root_dirs.insert(
+        SourceRootId(0),
+        AbsPathBuf::assert_utf8(dir.path().to_string_lossy().to_string().into()),
+    );
+    hir::set_project_graph(&mut db, data);
+    std::mem::forget(dir);
+    (db, FileId::from_raw(1))
+}
+
+/// The rendered names and types of the file's declaration items.
+fn render_types(db: &TestDatabase, file: FileId) -> String {
+    let tree = hir::file_item_tree(db, file);
+    let tree = tree.as_kotlin().expect("a Kotlin file").clone();
+    let mut lines = Vec::new();
+    for (id, data) in tree.items.iter() {
+        if data.name().is_none()
+            && !matches!(
+                data,
+                hir_def::kotlin::item_tree::KotlinItemData::Accessor(_)
+            )
+        {
+            continue;
+        }
+        let ty = hir_ty::kotlin_item_ty(db, file, hir_expand::ids::ItemId(id));
+        lines.push(format!(
+            "{} {}: {}",
+            data.label(),
+            data.name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "_".to_owned()),
+            hir_ty::display_kotlin(db, ty)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn check(src: &str) -> String {
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", src)]);
+    render_types(&db, file)
+}
+
+#[test]
+fn declared_types_resolve_through_the_default_imports() {
+    insta::assert_snapshot!(
+        "kotlin_item_types_declared",
+        check(
+            r#"
+class Sample(val x: String, val y: String?, val z: List<Int>) {
+    fun f(a: Int): String = ""
+
+    var fn: (Int) -> String = { "" }
+
+    val p: List<*> = listOf()
+
+    val o: List<out Number> = listOf()
+
+    val nested: List<List<String>> = listOf()
+}
+"#
+        )
+    );
+}
+
+/// A name that resolves to nothing is the error type — kotlinc reports
+/// `unresolved reference 'Missing'` for the same source — and resolving it must
+/// not panic (the resolution walks the classpath and the file's scopes).
+#[test]
+fn an_unresolved_reference_is_the_error_type() {
+    let rendered = check("val broken: Missing = TODO()\n");
+    assert!(
+        rendered.contains("val broken: <error>"),
+        "an unresolved type renders as the error type: {rendered}"
+    );
+}
+
+/// A type parameter in scope wins over any declaration of the same name, and
+/// `T?` keeps the parameter while adding nullability (KLS
+/// `declarations.html#type-parameters`).
+#[test]
+fn type_parameters_resolve_in_their_own_scope() {
+    insta::assert_snapshot!(
+        "kotlin_item_types_type_parameters",
+        check(
+            r#"
+class Box<T : Any> {
+    val value: T? = null
+
+    fun <R> map(f: (T) -> R): R = TODO()
+}
+"#
+        )
+    );
+}

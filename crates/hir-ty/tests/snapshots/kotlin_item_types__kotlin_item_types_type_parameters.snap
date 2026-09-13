@@ -1,0 +1,7 @@
+---
+source: crates/hir-ty/tests/kotlin_item_types.rs
+expression: "check(r#\"\nclass Box<T : Any> {\n    val value: T? = null\n\n    fun <R> map(f: (T) -> R): R = TODO()\n}\n\"#)"
+---
+class Box: Box
+val value: T?
+fun map: R

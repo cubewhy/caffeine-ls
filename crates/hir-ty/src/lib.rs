@@ -119,4 +119,8 @@ pub use java::resolve::{
 };
 pub use java::subtyping::{is_assignable, is_subtype, supertypes};
 pub use java::ty::{capture_conversion, ty_from_source};
+pub use kotlin::db::type_params as kotlin_type_params;
+pub use kotlin::db::{item_ty as kotlin_item_ty, supertypes as kotlin_supertypes};
+pub use kotlin::resolve::KotlinResolver;
+pub use kotlin::ty::display_kotlin;
 pub use ty::{BoundKind, Ty, TyData, TyDisplay, TyKind, TypeVarScope, WildcardBound};

@@ -1,0 +1,13 @@
+---
+source: crates/hir-ty/tests/kotlin_item_types.rs
+expression: "check(r#\"\nclass Sample(val x: String, val y: String?, val z: List<Int>) {\n    fun f(a: Int): String = \"\"\n\n    var fn: (Int) -> String = { \"\" }\n\n    val p: List<*> = listOf()\n\n    val o: List<out Number> = listOf()\n\n    val nested: List<List<String>> = listOf()\n}\n\"#)"
+---
+class Sample: Sample
+val x: String
+val y: String?
+val z: List<Int>
+fun f: String
+var fn: (Int) -> String
+val p: List<*>
+val o: List<out Number>
+val nested: List<List<String>>
