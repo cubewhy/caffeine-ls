@@ -189,6 +189,8 @@ impl GlobalState {
             .on_async::<DefinitionRequest>(handlers::on_goto_definition)
             .on_async::<ReferencesRequest>(handlers::on_references)
             .on_async::<HoverRequest>(handlers::on_hover)
+            .on_async::<InlayHintRequest>(handlers::on_inlay_hint)
+            .on_async::<InlayHintResolveRequest>(handlers::on_inlay_hint_resolve)
             .on_async::<SemanticTokensRequest>(handlers::on_semantic_tokens)
             .on_async::<SemanticTokensDeltaRequest>(handlers::on_semantic_tokens_delta)
             .on_async::<SemanticTokensRangeRequest>(handlers::on_semantic_tokens_range)
@@ -1202,6 +1204,9 @@ impl GlobalState {
         // client-side edit, so a client holding tokens from before the load has
         // to be told to re-request them.
         self.refresh_semantic_tokens();
+        // The same holds for inlay hints: the types a hint renders resolve
+        // against the graph a client's own request could not see yet.
+        self.refresh_inlay_hints();
     }
 
     /// Builds the classpath-aware project model from the workspace graph:

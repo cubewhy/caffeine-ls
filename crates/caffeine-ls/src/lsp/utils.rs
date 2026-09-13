@@ -246,4 +246,26 @@ impl GlobalState {
             );
         }
     }
+
+    /// Asks the client to re-request inlay hints for its open documents.
+    ///
+    /// Hints are computed against the whole analysis and the session's
+    /// configuration, and both change with no client-side edit: loading a
+    /// workspace resolves the types a hint renders, and a configuration change
+    /// switches categories on and off. Only sent when the client advertised
+    /// `workspace.inlayHint.refreshSupport`; a client that cannot refresh keeps
+    /// the hints it already has.
+    pub(crate) fn refresh_inlay_hints(&mut self) {
+        if self
+            .config
+            .client_capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.inlay_hint.as_ref())
+            .and_then(|h| h.refresh_support)
+            .unwrap_or(false)
+        {
+            self.send_request::<InlayHintRefreshRequest>((), OutgoingRequest::Generic(|_, _| {}));
+        }
+    }
 }

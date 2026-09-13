@@ -1,0 +1,10 @@
+---
+source: crates/ide/tests/inlay_hints.rs
+expression: render_hints(&hints)
+---
+Type @188 : String
+Type @208 : int
+Type @227 : Text
+Type @255 : int[]
+Type @288 : Text
+Type @319 : int

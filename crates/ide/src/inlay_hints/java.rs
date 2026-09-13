@@ -31,7 +31,7 @@
 use hir_expand::body::{BodyTree, ExprData, ExprId, LocalId, StmtData, UnaryOp};
 use hir_ty::{BodyTypes, BoundKind, MethodData, ResolvedMember, Ty, TyDatabase, TyKind};
 use rowan::{SyntaxNode, TextRange, TextSize};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use syntax::SourceFile;
 use syntax::java::Lang;
 use vfs::FileId;
@@ -127,9 +127,9 @@ fn collect(
     };
     let source = &parsed.syntax_node;
     let map = hir::hir_def::db::ast_id_map(db, file, language);
-    // The initializer written for each local the file declares: one pass over
+    // The locals a declaration form writes an initializer for: one pass over
     // the statement arena for the whole request, not one per item.
-    let inits = local_initializers(&bodies);
+    let inits = initialized_locals(&bodies);
     for (_, body) in bodies.bodies.iter() {
         let Some(item) = body.owner else { continue };
         let item_range = hir::hir_def::java::ranges::item_range(map, &source_file, &tree, item);
@@ -148,31 +148,34 @@ fn collect(
 
 // -- inferred `var` types -----------------------------------------------------------
 
-/// The initializer written for each local the file declares, keyed by the
-/// local: the three declaration forms that write one ([JLS §14.4] local
-/// variable declaration, [§14.14.2] enhanced-`for` variable, [§14.20.3]
-/// resource), and every `Decl` of a multi-declarator statement
-/// ([`StmtData::DeclGroup`]'s members are ordinary entries of the same arena).
-/// A local absent from the map has no initializer written for it — a pattern
-/// binding, a parameter, a resource without one — which is also the case where
-/// no hint is emitted.
-fn local_initializers(bodies: &BodyTree) -> FxHashMap<LocalId, ExprId> {
-    let mut out = FxHashMap::default();
+/// The locals a declaration form writes an *initializer* for: a local variable
+/// declaration ([JLS §14.4]), an enhanced-`for` variable ([§14.14.2]) and a
+/// resource ([§14.20.3]). Every declarator of a multi-declarator statement is a
+/// [`StmtData::Decl`] of the same arena ([`StmtData::DeclGroup`]'s members are
+/// ordinary entries), so it is covered too.
+///
+/// This is what tells a `var` declaration from every other [`Local`]: the three
+/// forms are the ones whose type the lowerer may leave absent for the type
+/// layer to infer, while a pattern binding states its type in the pattern
+/// ([§14.30.1]), a parameter states it in the signature and a catch parameter
+/// in the clause.
+fn initialized_locals(bodies: &BodyTree) -> FxHashSet<LocalId> {
+    let mut out = FxHashSet::default();
     for (_, stmt) in bodies.stmts.iter() {
         match stmt {
             StmtData::Decl {
                 local,
-                initializer: Some(initializer),
+                initializer: Some(_),
             } => {
-                out.insert(*local, *initializer);
+                out.insert(*local);
             }
-            StmtData::ForEach { var, iterable, .. } => {
-                out.insert(*var, *iterable);
+            StmtData::ForEach { var, .. } => {
+                out.insert(*var);
             }
             StmtData::Try { resources, .. } => {
                 for resource in resources {
-                    if let Some(initializer) = resource.initializer {
-                        out.insert(resource.local, initializer);
+                    if resource.initializer.is_some() {
+                        out.insert(resource.local);
                     }
                 }
             }
@@ -182,30 +185,20 @@ fn local_initializers(bodies: &BodyTree) -> FxHashMap<LocalId, ExprId> {
     out
 }
 
-/// Whether an initializer describes its own type, so the `var` hint beside it
-/// adds nothing — IntelliJ's set: a literal, `null`, a polyadic expression, a
-/// class instance creation, an array creation and a cast. A parenthesized one
-/// is *not* unwrapped: the expression as written is what is tested.
-fn is_self_describing_initializer(bodies: &BodyTree, initializer: ExprId) -> bool {
-    matches!(
-        bodies.expr(initializer),
-        ExprData::Literal(_)
-            | ExprData::Null
-            | ExprData::Binary { .. }
-            | ExprData::New { .. }
-            | ExprData::NewArray { .. }
-            | ExprData::Cast { .. }
-    )
-}
-
 /// The inferred type of every `var` local of the body, rendered after the
 /// declaration's name (`var x: List<String> = ...`).
+///
+/// Every initializer form is hinted, a *self-describing* one (`var s = "x"`,
+/// `var o = new Foo()`) included: the hint states the type the compiler
+/// inferred, which is what a reader asks it for — a client that finds the
+/// redundant cases noisy turns the category off. (IntelliJ's Java provider
+/// skips those four initializer shapes; this feature deliberately does not.)
 #[allow(clippy::too_many_arguments)]
 fn var_type_hints(
     db: &dyn TyDatabase,
     source: &SyntaxNode<Lang>,
     bodies: &BodyTree,
-    inits: &FxHashMap<LocalId, ExprId>,
+    inits: &FxHashSet<LocalId>,
     types: &BodyTypes,
     search: &Search,
     config: &InlayHintsConfig,
@@ -231,10 +224,9 @@ fn var_type_hints(
         let Some(name_range) = bodies.local_name_range(local_id) else {
             continue;
         };
-        let Some(&initializer) = inits.get(&local_id) else {
-            continue;
-        };
-        if is_self_describing_initializer(bodies, initializer) || !is_renderable(db, ty) {
+        // Only a declaration form that writes an initializer can be a `var`
+        // declaration: the type layer infers its type *from* that initializer.
+        if !inits.contains(&local_id) || !is_renderable(db, ty) {
             continue;
         }
         let offset = name_range.end();
@@ -468,7 +460,6 @@ fn lambda_parameter_hints(
 
 /// A method's parameter names at the arguments it is passed, where the argument
 /// does not already name it (`foo(size: 3)`).
-#[allow(clippy::too_many_arguments)]
 fn parameter_name_hints(
     db: &dyn TyDatabase,
     bodies: &BodyTree,
@@ -664,7 +655,6 @@ fn is_unclear_argument(bodies: &BodyTree, types: &BodyTypes, arg: ExprId) -> boo
 
 /// Records one parameter-name hint at the argument's own start
 /// (`foo(size: 3)`).
-#[allow(clippy::too_many_arguments)]
 fn push_parameter_hint(
     db: &dyn TyDatabase,
     method: &MethodData,
@@ -707,7 +697,6 @@ const MIN_CHAIN_UNIQUE_TYPES: usize = 2;
 /// *outermost* call is never annotated (IntelliJ: "except last to avoid
 /// `builder.build()` which has obvious type"), and a run of calls returning the
 /// same type is annotated once, at its innermost element.
-#[allow(clippy::too_many_arguments)]
 fn method_chain_hints(
     db: &RootDatabase,
     file: FileId,

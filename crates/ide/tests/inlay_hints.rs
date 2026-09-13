@@ -253,22 +253,70 @@ fn var_type_forms() {
     assert_snapshot!("var_type_forms", render_hints(&hints));
 }
 
-const VAR_OMITTED: &str = r#"package com.example;
+const VAR_INITIALIZERS: &str = r#"package com.example;
 
 class Text {
-    static Text text() {
-        return null;
+    int length() {
+        return 0;
     }
 }
 
 class Sample {
-    void omitted() {
+    static Text text() {
+        return null;
+    }
+
+    void initializers() {
+        var e = "";
         var i = 1;
-        var s = "a" + text();
-        var o = new Text();
+        var t = new Text();
         var a = new int[] { 1 };
         var c = (Text) text();
+        var n = 1 + 2;
+    }
+}
+"#;
+
+#[test]
+fn var_type_self_describing_initializers() {
+    let fixture = test_file(VAR_INITIALIZERS);
+    let hints = fixture.hints();
+
+    // The hint renders the type the *compiler* inferred, whatever the
+    // initializer says — `var e = "";` is the case the hint exists for, and
+    // `int`/`Text` beside `1`/`new Text()` confirm the inference just as well.
+    assert_eq!(hints.len(), 6);
+    assert_eq!(hints[0].offset, fixture.offset_end("var e"));
+    assert_eq!(hints[0].kind, InlayHintKind::Type);
+    assert_eq!(hints[1].offset, fixture.offset_end("var i"));
+    assert_eq!(hints[2].offset, fixture.offset_end("var t"));
+    assert_eq!(hints[3].offset, fixture.offset_end("var a"));
+    assert_eq!(hints[4].offset, fixture.offset_end("var c"));
+    assert_eq!(hints[5].offset, fixture.offset_end("var n"));
+
+    assert_snapshot!(
+        "var_type_self_describing_initializers",
+        render_hints(&hints)
+    );
+}
+
+const VAR_OMITTED: &str = r#"package com.example;
+
+class Text {
+    int length() {
+        return 0;
+    }
+
+    static Text text() {
+        return null;
+    }
+
+    void omitted(Text[] items) {
         Text typed = text();
+        var z = null;
+        if (items instanceof Text[] arr) {
+            arr.length();
+        }
     }
 }
 "#;
@@ -277,8 +325,9 @@ class Sample {
 fn var_type_omitted() {
     let fixture = test_file(VAR_OMITTED);
 
-    // Nothing to render: every initializer either describes its own type or is
-    // no `var` declaration at all.
+    // Nothing to render: a written type is no `var` declaration at all, the
+    // null type names no type the source could write ([JLS §4.1]), and a
+    // pattern binding states its type in the pattern itself ([§14.30.1]).
     assert_eq!(render_hints(&fixture.hints()), "");
 }
 

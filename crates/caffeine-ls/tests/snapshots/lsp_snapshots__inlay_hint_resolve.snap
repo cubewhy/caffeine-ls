@@ -1,0 +1,56 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: resolved
+---
+{
+  "position": {
+    "line": 45,
+    "character": 13
+  },
+  "label": [
+    {
+      "value": ": "
+    },
+    {
+      "value": "Text",
+      "tooltip": "com.example.Text",
+      "location": {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Sample.java",
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 6
+          },
+          "end": {
+            "line": 2,
+            "character": 10
+          }
+        }
+      }
+    }
+  ],
+  "kind": 1,
+  "textEdits": [
+    {
+      "range": {
+        "start": {
+          "line": 45,
+          "character": 8
+        },
+        "end": {
+          "line": 45,
+          "character": 11
+        }
+      },
+      "newText": "com.example.Text"
+    }
+  ],
+  "tooltip": "com.example.Text",
+  "paddingLeft": false,
+  "paddingRight": false,
+  "data": {
+    "file_id": 0,
+    "offset": 550,
+    "kind": "type"
+  }
+}

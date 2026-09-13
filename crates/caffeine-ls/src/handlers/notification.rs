@@ -314,12 +314,21 @@ pub fn on_did_change_configuration(
         // Switching backends (or pointing one at another jar) invalidates every
         // decompiled file, so the roots and the classpath have to be rebuilt.
         let decompiler_changed = old_config.decompiler_spec() != new_config.decompiler_spec();
+        // The hint categories the client selected: a client that keeps showing
+        // hints computed under the old settings never sees the change without a
+        // refresh.
+        let inlay_hints_changed = old_config.inlay_hints() != new_config.inlay_hints();
 
         state.config = Arc::new(new_config);
 
         if old_java_home != new_java_home || sources_changed || decompiler_changed {
             tracing::info!("Critical configuration updated. Re-probing project models.");
             state.trigger_workspace_probe();
+        }
+
+        if inlay_hints_changed {
+            tracing::info!("Inlay hint configuration updated. Asking the client to refresh.");
+            state.refresh_inlay_hints();
         }
     }
 

@@ -327,6 +327,73 @@ pub fn on_semantic_tokens(
     }))
 }
 
+/// `textDocument/inlayHint`: the hints the requested range contains — the
+/// inferred types, parameter names and chain types of `ide`'s hint model, in
+/// the client's own `InlayHint` shape. A resolve is asked for separately, so
+/// this answer carries only what a client renders immediately.
+pub fn on_inlay_hint(
+    state: GlobalStateSnapshot,
+    params: InlayHintParams,
+) -> anyhow::Result<Option<Vec<InlayHint>>> {
+    tracing::info!(uri = ?params.text_document.uri, "request inlay hints");
+
+    // A file this server does not know answers nothing rather than failing the
+    // request, like every other document request.
+    let Some(file_id) = state.url_to_file_id(&params.text_document.uri)? else {
+        return Ok(None);
+    };
+    let line_index = state.file_line_index(file_id)?;
+    let range = crate::lsp::from_proto::text_range(&line_index, params.range)?;
+    let config = state.config.inlay_hints();
+    let hints = state.analysis.inlay_hints(file_id, range, &config)?;
+    let hints: Vec<InlayHint> = hints
+        .iter()
+        .map(|hint| crate::lsp::inlay_hints::to_proto(hint, file_id, &line_index))
+        .collect();
+    tracing::debug!(hints = hints.len(), "computed inlay hints");
+    Ok(Some(hints))
+}
+
+/// `inlayHint/resolve`: what the first answer left out — the tooltip, the
+/// declaration behind each label part that rendered a class name, and the edits
+/// accepting the hint applies.
+///
+/// The hint is recomputed from the request's `data` rather than carried along,
+/// so an answer can never describe a hint the document no longer has: when the
+/// hint is gone the request is handed back unchanged.
+pub fn on_inlay_hint_resolve(
+    state: GlobalStateSnapshot,
+    mut params: InlayHint,
+) -> anyhow::Result<InlayHint> {
+    let data: crate::lsp::inlay_hints::InlayHintData = params
+        .data
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("inlay hint resolve missing data"))
+        .and_then(|data| serde_json::from_value(data).map_err(Into::into))?;
+    tracing::info!(?data, "resolve inlay hint");
+
+    let file_id = FileId::from_raw(data.file_id);
+    let config = state.config.inlay_hints();
+    let Some(detail) = state.analysis.inlay_hint_resolve(
+        file_id,
+        rowan::TextSize::from(data.offset),
+        data.kind.into(),
+        &config,
+    )?
+    else {
+        // The document changed under the hint the client holds.
+        return Ok(params);
+    };
+    tracing::debug!(offset = ?detail.hint.offset, kind = ?detail.hint.kind, "resolved inlay hint");
+    let line_index = state.file_line_index(file_id)?;
+    let mut resolved =
+        crate::lsp::inlay_hints::resolve_to_proto(&state, &detail, file_id, &line_index)?;
+    // The handle is preserved: it is what a second resolve would name the hint
+    // by, and the client echoes it back verbatim.
+    resolved.data = params.data.take();
+    Ok(resolved)
+}
+
 /// `textDocument/semanticTokens/full/delta`: the edit that turns the stream the
 /// client holds into the current one, so an edit costs the client one small
 /// token edit instead of a full re-tokenization of the document.

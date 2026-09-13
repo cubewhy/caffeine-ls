@@ -1,0 +1,13 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: render_inlay_hints(&response)
+---
+[
+  "45:13 type : Text",
+  "46:13 type : String",
+  "47:12 parameter size:",
+  "47:15 parameter count:",
+  "48:25 type Text",
+  "49:36 type Stream<Text>",
+  "51:22 type Stream<Count>"
+]

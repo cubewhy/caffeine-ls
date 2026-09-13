@@ -43,6 +43,15 @@ pub fn server_capabilities(_config: &Config) -> ServerCapabilities {
         definition_provider: Some(true.into()),
         references_provider: Some(true.into()),
         hover_provider: Some(true.into()),
+        // The client renders the labels immediately and asks for the tooltips,
+        // label-part locations and text edits per hint, on demand.
+        inlay_hint_provider: Some(
+            InlayHintOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }
+            .into(),
+        ),
         semantic_tokens_provider: Some(
             SemanticTokensOptions {
                 legend: crate::lsp::semantic_tokens::legend(),

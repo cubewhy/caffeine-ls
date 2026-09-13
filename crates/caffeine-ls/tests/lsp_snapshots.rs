@@ -5594,3 +5594,262 @@ fn test_goto_definition_local_declaration() {
 
     insta::assert_json_snapshot!("goto_definition_local_declaration", normalized);
 }
+
+// -- inlay hints ---------------------------------------------------------------------
+
+/// The inlay-hint fixture: one file whose body exercises all four categories —
+/// an inferred `var` local, an inferred lambda parameter, unclear method
+/// arguments and a multi-line method chain.
+const INLAY_HINTS: &str = r#"package com.example;
+
+class Text {
+    int length() {
+        return 0;
+    }
+}
+
+class Count {
+}
+
+class List<T> {
+}
+
+class Stream<T> {
+    Stream<T> filter() {
+        return this;
+    }
+
+    Stream<Count> map() {
+        return null;
+    }
+
+    List<T> collect() {
+        return null;
+    }
+}
+
+interface Mapper<R> {
+    R apply(Text value);
+}
+
+class Sample {
+    static Text text() {
+        return null;
+    }
+
+    Stream<Text> stream() {
+        return null;
+    }
+
+    static void foo(int size, int count) {
+    }
+
+    void run() {
+        var t = text();
+        var s = "";
+        foo(1, 2);
+        Mapper<Text> m = value -> text();
+        List<Text> result = stream()
+                .filter()
+                .map()
+                .collect();
+    }
+}
+"#;
+
+/// `"line:character kind label"` per hint, one row each — the position the
+/// client anchors at, the kind it renders and the label it shows.
+fn render_inlay_hints(response: &serde_json::Value) -> Vec<String> {
+    response
+        .as_array()
+        .unwrap_or_else(|| panic!("the response has no array of hints: {response}"))
+        .iter()
+        .map(|hint| {
+            let label: String = hint["label"]
+                .as_array()
+                .expect("a hint's label is a part list")
+                .iter()
+                .map(|part| part["value"].as_str().expect("a part value"))
+                .collect();
+            format!(
+                "{}:{} {} {}",
+                hint["position"]["line"].as_u64().expect("a line"),
+                hint["position"]["character"].as_u64().expect("a character"),
+                if hint["kind"] == json!(2) {
+                    "parameter"
+                } else {
+                    "type"
+                },
+                label,
+            )
+        })
+        .collect()
+}
+
+/// The whole-file range of `text`, as the request spells a range.
+fn whole_file_range(text: &str) -> serde_json::Value {
+    let (line, character) = position_at(text, text.len());
+    json!({
+        "start": { "line": 0, "character": 0 },
+        "end": { "line": line, "character": character },
+    })
+}
+
+/// Sends `textDocument/inlayHint` over the whole fixture, retrying until the
+/// server answers with hints (a request racing the workspace load is cancelled
+/// and answered empty).
+fn inlay_hints_of(lsp: &LspHarness, path: &str) -> serde_json::Value {
+    request_until(
+        lsp,
+        "textDocument/inlayHint",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "range": whole_file_range(INLAY_HINTS),
+        }),
+        |response| response.as_array().is_some_and(|hints| !hints.is_empty()),
+    )
+}
+
+#[test]
+fn test_inlay_hints() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Sample.java";
+    lsp.write_file(path, INLAY_HINTS);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    // The provider is declared statically, resolve included: a client renders
+    // the labels from this answer and asks for the rest per hint.
+    let provider = lsp.initialize_result()["capabilities"]["inlayHintProvider"].clone();
+    assert_eq!(provider["resolveProvider"], json!(true), "{provider}");
+
+    let response = inlay_hints_of(&lsp, path);
+
+    insta::assert_json_snapshot!("inlay_hints", render_inlay_hints(&response));
+}
+
+#[test]
+fn test_inlay_hint_resolve() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Sample.java";
+    lsp.write_file(path, INLAY_HINTS);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let response = inlay_hints_of(&lsp, path);
+    // The `var t` hint: `: ` followed by the class name it inferred, where the
+    // literal-initialized `var s` beside it renders `: String`.
+    let var_hint = response
+        .as_array()
+        .expect("an array of hints")
+        .iter()
+        .find(|hint| hint["label"][1]["value"] == json!("Text"))
+        .expect("the fixture declares a `var` local of `Text`")
+        .clone();
+    assert!(
+        var_hint["data"].is_object(),
+        "the first answer carries the resolve handle: {var_hint}"
+    );
+
+    let resolved = lsp.request("inlayHint/resolve", var_hint);
+    let resolved = normalize_uris(
+        resolved,
+        lsp.workspace_root
+            .path()
+            .to_str()
+            .expect("a UTF-8 workspace root"),
+    );
+
+    // The tooltip and the accepted edit both render the canonical name.
+    assert_eq!(resolved["tooltip"], json!("com.example.Text"));
+    let edits = resolved["textEdits"]
+        .as_array()
+        .expect("the accepted-hint edits");
+    assert_eq!(edits.len(), 1, "{edits:#?}");
+    // The edit replaces the `var` keyword itself.
+    let (line, character) = position_at(INLAY_HINTS, INLAY_HINTS.find("var t").expect("`var t`"));
+    assert_eq!(
+        edits[0]["range"],
+        json!({
+            "start": { "line": line, "character": character },
+            "end": { "line": line, "character": character + 3 },
+        })
+    );
+    assert_eq!(edits[0]["newText"], json!("com.example.Text"));
+
+    // The part that rendered the class name points at its declaration's own
+    // name token, so the client makes it clickable.
+    let location = &resolved["label"][1]["location"];
+    let (line, character) = position_at(
+        INLAY_HINTS,
+        INLAY_HINTS.find("class Text").expect("`class Text`") + "class ".len(),
+    );
+    assert_eq!(
+        location["range"]["start"],
+        json!({ "line": line, "character": character }),
+        "{location}"
+    );
+    assert!(
+        location["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.contains("Sample.java")),
+        "{location}"
+    );
+
+    insta::assert_json_snapshot!("inlay_hint_resolve", resolved);
+}
+
+#[test]
+fn test_inlay_hints_disabled_by_config() {
+    let mut config = default_client_config();
+    config["inlay_hints"] = json!({ "var_types": false });
+    let lsp = create_lsp_with_config(config, |_| {});
+
+    let path = "/src/com/example/Sample.java";
+    lsp.write_file(path, INLAY_HINTS);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let rows = render_inlay_hints(&inlay_hints_of(&lsp, path));
+
+    // The `var` category is off; every other one renders — the parameter names
+    // at `foo`'s arguments, the lambda parameter's type at `value`, and the
+    // chain's intermediate types.
+    let at = |offset: usize| {
+        let (line, character) = position_at(INLAY_HINTS, offset);
+        format!("{line}:{character}")
+    };
+    let foo_args = INLAY_HINTS.find("foo(1, 2)").expect("`foo(1, 2)`") + "foo(".len();
+    let lambda = INLAY_HINTS.find("value ->").expect("`value ->`");
+    let stream = INLAY_HINTS.find("stream()\n").expect("`stream()`") + "stream()".len();
+    let map = INLAY_HINTS.find(".map()\n").expect("`.map()`") + ".map()".len();
+
+    assert_eq!(
+        rows,
+        vec![
+            format!("{} parameter size:", at(foo_args)),
+            format!("{} parameter count:", at(foo_args + 3)),
+            format!("{} type Text", at(lambda)),
+            format!("{} type Stream<Text>", at(stream)),
+            format!("{} type Stream<Count>", at(map)),
+        ]
+    );
+}
+
+#[test]
+fn test_workspace_load_refreshes_inlay_hints() {
+    let lsp = create_lsp();
+    lsp.wait_until_workspace_is_loaded();
+
+    let requests = lsp.wait_for_requests(
+        "workspace/inlayHint/refresh",
+        std::time::Duration::from_secs(10),
+        |requests| !requests.is_empty(),
+    );
+
+    assert_eq!(
+        requests.len(),
+        1,
+        "a workspace load must refresh inlay hints exactly once"
+    );
+}

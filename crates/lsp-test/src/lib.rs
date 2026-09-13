@@ -18,8 +18,9 @@ use lsp_server::{Connection, Message, Notification, Request, RequestId, Response
 use lsp_types::{
     ClientCapabilities, ClientInfo, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentDiagnosticParams,
-    DocumentDiagnosticReport, FileChangeType, FileEvent, InitializeParams, PartialResultParams,
-    Position, Range, SemanticTokensWorkspaceClientCapabilities, TextDocumentContentChangePartial,
+    DocumentDiagnosticReport, FileChangeType, FileEvent, InitializeParams,
+    InlayHintWorkspaceClientCapabilities, PartialResultParams, Position, Range,
+    SemanticTokensWorkspaceClientCapabilities, TextDocumentContentChangePartial,
     TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
     WindowClientCapabilities, WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceFolder,
     WorkspaceFoldersInitializeParams,
@@ -93,8 +94,9 @@ pub struct LspHarness {
 /// for `$/progress` notifications, which carry the workspace-load signal;
 /// `semanticTokens.refreshSupport` makes the server ask for a token re-request
 /// once a workspace load lands, which is what
-/// `test_workspace_load_refreshes_semantic_tokens` observes. Nothing else is
-/// advertised, because nothing else is observed by the tests.
+/// `test_workspace_load_refreshes_semantic_tokens` observes; the same holds for
+/// `inlayHint.refreshSupport` and `test_workspace_load_refreshes_inlay_hints`.
+/// Nothing else is advertised, because nothing else is observed by the tests.
 fn client_capabilities() -> ClientCapabilities {
     ClientCapabilities {
         window: Some(WindowClientCapabilities {
@@ -103,6 +105,9 @@ fn client_capabilities() -> ClientCapabilities {
         }),
         workspace: Some(WorkspaceClientCapabilities {
             semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
+            inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
                 refresh_support: Some(true),
             }),
             ..Default::default()

@@ -196,6 +196,26 @@ impl Config {
             .then_some(scheme)
     }
 
+    /// The inlay-hint categories the client selected — the `ide` model's
+    /// configuration. A client that configured nothing about hints gets every
+    /// category, as IntelliJ ships them; a delta
+    /// (`{"inlay_hints":{"parameter_names":false}}`) is deep-merged into the
+    /// configuration the client sent before
+    /// ([`Config::apply_change`]), so a field it omits keeps its value.
+    pub fn inlay_hints(&self) -> ide::InlayHintsConfig {
+        let settings = self
+            .client_config
+            .as_ref()
+            .map(|config| config.inlay_hints.clone())
+            .unwrap_or_default();
+        ide::InlayHintsConfig {
+            var_types: settings.var_types,
+            lambda_parameter_types: settings.lambda_parameter_types,
+            parameter_names: settings.parameter_names,
+            method_chains: settings.method_chains,
+        }
+    }
+
     pub fn negotiated_encoding(&self) -> PositionEncoding {
         let supported_encodings = self
             .client_capabilities
@@ -267,6 +287,36 @@ pub struct ClientConfig {
     /// materialized files' own `file://` URIs.
     #[serde(default)]
     pub library_uri_scheme: Option<String>,
+    /// The inlay-hint categories the client wants rendered.
+    #[serde(default)]
+    pub inlay_hints: InlayHintSettings,
+}
+
+/// The inlay-hint categories a client turns on and off. Nested under
+/// `inlay_hints` in the client configuration; every one is on by default, as
+/// IntelliJ ships them.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct InlayHintSettings {
+    /// The inferred type of a `var` local variable.
+    pub var_types: bool,
+    /// The inferred type of a lambda parameter written without one.
+    pub lambda_parameter_types: bool,
+    /// A method's parameter name at the argument it is passed.
+    pub parameter_names: bool,
+    /// The type of each intermediate call of a multi-line method chain.
+    pub method_chains: bool,
+}
+
+impl Default for InlayHintSettings {
+    fn default() -> Self {
+        Self {
+            var_types: true,
+            lambda_parameter_types: true,
+            parameter_names: true,
+            method_chains: true,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -318,6 +368,38 @@ mod tests {
         let path = dir.path().join(name);
         std::fs::write(&path, b"a jar the server only checks for existence").unwrap();
         path
+    }
+
+    /// A configuration delta is deep-merged into what the client sent before:
+    /// naming one hint category flips only it, and every category the delta
+    /// omits — including one an *earlier* delta turned off — keeps its value.
+    #[test]
+    fn an_inlay_hint_configuration_delta_merges() {
+        let config = with_client_config(serde_json::json!({
+            "inlay_hints": { "var_types": false },
+        }));
+
+        let mut change = ConfigChange::default();
+        change.change_client_config(serde_json::json!({
+            "inlay_hints": { "parameter_names": false },
+        }));
+        let config = config.apply_change(change).0;
+
+        let hints = config.inlay_hints();
+        assert!(!hints.var_types, "the earlier delta's category stays off");
+        assert!(!hints.parameter_names);
+        assert!(hints.lambda_parameter_types);
+        assert!(hints.method_chains);
+    }
+
+    /// Nothing configured about hints means every category, as IntelliJ ships
+    /// them.
+    #[test]
+    fn every_inlay_hint_category_is_on_by_default() {
+        assert_eq!(
+            with_client_config(serde_json::json!({})).inlay_hints(),
+            ide::InlayHintsConfig::default()
+        );
     }
 
     #[test]
