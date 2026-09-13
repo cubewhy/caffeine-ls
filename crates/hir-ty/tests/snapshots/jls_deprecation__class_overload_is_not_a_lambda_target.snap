@@ -1,0 +1,13 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/U.java:
+package q;
+
+class U {
+    void m(T t) {
+        t.use(() -> {
+        });
+    }
+}

@@ -7,8 +7,11 @@
 //! value-returning SAM must return on every normal-completing path (`missing
 //! return value`), lambda parameter count must equal the SAM's declared
 //! parameters (a varargs SAM formal is the element array, so a two-parameter
-//! lambda against `String...` is `incompatible parameter types`), and
-//! unreachable statements inside lambda bodies are reported.
+//! lambda against `String...` is `incompatible parameter types`), a class is
+//! never a functional interface ([§9.8] makes one an *interface* with a single
+//! abstract method, so an abstract class — even one implementing a functional
+//! interface — is not a lambda target), and unreachable statements inside
+//! lambda bodies are reported.
 
 #[macro_use]
 mod common;
@@ -181,3 +184,38 @@ class L4 {
 // Red: the `String` expression bodies against `Supplier<Integer>`/`Integer`
 // SAMs, and `L4::wrong` (returns `String`) against `Supplier<Integer>`.
 // Green: the `int`-valued bodies and `L4::right`.
+
+// -- red: a class is not a functional interface ([§9.8]) ----------------------
+
+// §9.8: "A functional interface is an interface that has just one abstract
+// method" — a *class* with one abstract method is not one, however much it
+// looks like it, so a lambda cannot value it ([§15.27.3]). javac:
+// ```text
+// U.java:9: error: incompatible types: Base is not a functional interface
+//         Base b = () -> {
+//                  ^
+// ```
+snapshot!(
+    class_is_not_a_functional_interface,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/U.java",
+        "\
+package com.example;
+
+interface I {
+    void run();
+}
+
+abstract class Base implements I {
+    public abstract void run();
+}
+
+class U {
+    void m() {
+        Base b = () -> {
+        };
+    }
+}
+",
+    )])
+);

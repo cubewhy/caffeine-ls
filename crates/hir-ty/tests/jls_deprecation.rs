@@ -589,3 +589,54 @@ class Cases {
 "
     ))
 );
+
+// JLS §9.6.4.6 with §9.8/[§15.12.2.2]: a deprecation is reported for the
+// overload the invocation *selects*, and a lambda selects the functional
+// interface, never a class — a class with one abstract method is not a
+// functional interface ([§9.8]), so the abstract-class overload is not
+// applicable to `() -> …` at all. javac selects `use(I)` and reports nothing:
+// ```text
+// (no output)
+// ```
+snapshot!(
+    class_overload_is_not_a_lambda_target,
+    check_body_diagnostic_spans_with_libs(
+        &[
+            ClassSpec {
+                fqn: "q/I",
+                super_class: None,
+                access: 0x0601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
+                methods: &[("run", "()V")],
+                method_access: &[0x0401], // ACC_PUBLIC | ACC_ABSTRACT
+                ..class_spec("q/I")
+            },
+            ClassSpec {
+                fqn: "q/Base",
+                interfaces: &["q/I"],
+                access: 0x0421, // ACC_PUBLIC | ACC_SUPER | ACC_ABSTRACT
+                methods: &[("run", "()V")],
+                method_access: &[0x0401],
+                ..class_spec("q/Base")
+            },
+            ClassSpec {
+                fqn: "q/T",
+                methods: &[("use", "(Lq/I;)V"), ("use", "(Lq/Base;)V")],
+                method_deprecations: &[DeprecationSpec::NONE, DeprecationSpec::ATTRIBUTE],
+                ..class_spec("q/T")
+            },
+        ],
+        &[(
+            "/src/q/U.java",
+            "\
+package q;
+
+class U {
+    void m(T t) {
+        t.use(() -> {
+        });
+    }
+}
+"
+        )]
+    )
+);

@@ -1237,11 +1237,27 @@ fn abstract_methods_impl(
 /// the unique abstract method of the interface, disregarding those that
 /// override `Object` members (`equals`, `hashCode`, `toString`). `None` when
 /// `ty` is not a functional interface.
+///
+/// §9.8 makes a functional interface an *interface* with just one abstract
+/// method: a **class** member with one abstract method — an abstract class
+/// implementing `Runnable`, say — is not one, so a lambda or method reference
+/// is not compatible with it ([§15.27.3], [§15.13.2]) and an overload taking
+/// it is not applicable to such an argument. This is what keeps
+/// `runTaskAsynchronously(Plugin, Runnable)` selected over the deprecated
+/// `runTaskAsynchronously(Plugin, BukkitRunnable)` for `() -> …`, as javac has
+/// it.
 pub fn single_abstract_method(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     ty: &Ty,
 ) -> Option<MethodData> {
+    // §9.8: only an interface — or an annotation type, which is one
+    // ([§9.6]) — can be a functional interface. A type this layer cannot
+    // classify is not resolved any further either, so the answer is the same
+    // `None` either way.
+    if crate::java::subtyping::is_interface_type(db, scope, ty) != Some(true) {
+        return None;
+    }
     let mut methods = abstract_methods(db, scope, ty);
     // §9.8/[§9.4.1.2]: the abstract members of a functional interface are
     // those *not* matching a `public` member of `java.lang.Object` — the

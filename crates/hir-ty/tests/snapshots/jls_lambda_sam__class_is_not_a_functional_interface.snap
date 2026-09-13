@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_lambda_sam.rs
+expression: out
+---
+FILE /src/com/example/U.java:
+package com.example;
+
+interface I {
+    void run();
+}
+
+abstract class Base implements I {
+    public abstract void run();
+}
+
+class U {
+    void m() {
+        Base b = () -> {
+        };
+    }
+}
+
+method m(): void
+  @12:17..13:9 '() -> {
+        }': not-a-functional-interface: 'Base' is not a functional interface
