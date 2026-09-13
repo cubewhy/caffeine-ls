@@ -666,3 +666,52 @@ fn pending_source_entry(file: &LibraryFileRef) -> &str {
         }
     }
 }
+
+/// The session warmup — what the workspace-load index stage runs for every
+/// registered library — indexes a library's attached *sources* as well as its
+/// classfiles. The layout is in the cache afterwards, so the first request that
+/// resolves through it reads the cache instead of walking the archive's central
+/// directory (a JDK `src.zip` is ~15k entries).
+#[test]
+fn warmup_indexes_the_library_sources() {
+    use hir::lmdb_store::{CACHE_FORMAT_VERSION, SourcesStamp, StubStore};
+
+    // No library source is materialized: the state of a session that has not
+    // opened a declaring file — the one the layout is indexed for.
+    let fixture = fixture(&[], false);
+    let cache = tempfile::TempDir::new().unwrap();
+    assert!(fixture.host.enable_persistent_stub_cache(cache.path()));
+    let library = LibraryId::from_file_path(&fixture._dir.path().join("lib/deps.jar")).unwrap();
+    // The stamp names the sources the layout answers for, and it is read off
+    // the archive — so it is taken while the workspace still exists.
+    let stamp = SourcesStamp::of(
+        Some(&abs(fixture._dir.path().join("lib/deps-sources.jar"))),
+        false,
+    );
+
+    let warmup = fixture.host.library_warmup();
+    warmup.warm(library);
+    // The cache is one environment per directory, held open by the session that
+    // opened it: reading it back needs both gone.
+    drop(warmup);
+    drop(fixture);
+
+    let store = StubStore::default();
+    store.open_at(
+        cache
+            .path()
+            .join("stubs")
+            .join(format!("v{CACHE_FORMAT_VERSION}")),
+    );
+    assert!(store.is_enabled(), "the next session opens the cache");
+    let blob = store
+        .read_source_index(library, &stamp)
+        .expect("the index stage persisted the library's source layout");
+    assert!(
+        blob.entries
+            .iter()
+            .any(|(name, entry)| name == "com.example.Foo" && entry == "com/example/Foo.java"),
+        "{:?}",
+        blob.entries
+    );
+}

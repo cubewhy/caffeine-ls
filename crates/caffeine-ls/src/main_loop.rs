@@ -1325,14 +1325,21 @@ impl GlobalState {
         data
     }
 
-    /// Warms the stub indexes of every registered library up on a background
-    /// thread so the first type query does not pay the full JDK parse cost.
+    /// Warms every registered library's indexes up on a background thread so
+    /// the first request does not pay them: the classfile stubs (the full JDK
+    /// image parse), and the *source* layout of each library that ships sources
+    /// (a JDK `src.zip` is ~15k central-directory entries) that the
+    /// parameter-name hints read names through.
     ///
     /// The work deliberately runs through [`ide::LibraryWarmup`] instead of a
     /// database snapshot: a snapshot clone held for the length of an archive
     /// parse blocks the main loop's next write — and with it every request —
     /// until the parse finishes, which on a workspace reload means the JDK
     /// image (seconds) and the whole server frozen behind it.
+    ///
+    /// Both are reported under one progress token: a library's index is one
+    /// step of the stage, and splitting the bar in two would make the (cheap)
+    /// source scans wait for every (expensive) stub build.
     fn warmup_libraries(&mut self, root: &AbsPathBuf) {
         let ids: Vec<LibraryId> = self.analysis_host.registered_libraries();
         if ids.is_empty() {
@@ -1343,7 +1350,7 @@ impl GlobalState {
         let total = ids.len();
         self.report_progress(ProgressEvent {
             token: token.clone(),
-            title: "Indexing libraries".to_string(),
+            title: "Indexing libraries and sources".to_string(),
             message: Some(format!("Indexing {total} libraries...")),
             percentage: Some(0),
             state: ProgressState::Begin,

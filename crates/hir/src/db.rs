@@ -106,6 +106,12 @@ pub struct LibraryState {
     kind: LibraryKind,
     archive: Utf8PathBuf,
     index: Mutex<Option<Arc<LibraryIndex>>>,
+    /// The archive of the library's *attached sources*, when the graph gives it
+    /// one: what [`warmup_library`] indexes alongside the classfile stubs.
+    sources: Option<vfs::AbsPathBuf>,
+    /// Whether a decompiler covers the library. Part of the identity its cached
+    /// source layout is keyed on, so the warmup and the lookup agree on it.
+    decompiles: bool,
 }
 
 /// The registration data of a registered library, cloned out of the map so the
@@ -197,11 +203,25 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
     let live: rustc_hash::FxHashSet<LibraryId> = data.libraries.keys().copied().collect();
     state.libraries.retain(|id, _| live.contains(id));
     for (id, info) in &data.libraries {
+        let sources = data
+            .library_sources
+            .get(id)
+            .map(|sources| sources.archive.clone());
+        let decompiles = data.library_decompiled.contains_key(id);
         state.libraries.entry(*id).or_insert_with(|| LibraryState {
             kind: info.kind,
             archive: Utf8PathBuf::from(info.path.as_str()),
             index: Mutex::new(None),
+            sources: None,
+            decompiles: false,
         });
+        // A reload registers a library that is already known under its previous
+        // state, but it *can* gain sources or a decompiler since — the warmup
+        // reads them from here, so they are refreshed while the index is kept.
+        if let Some(mut library) = state.libraries.get_mut(id) {
+            library.sources = sources;
+            library.decompiles = decompiles;
+        }
     }
 
     let ProjectGraphData {
@@ -415,6 +435,23 @@ pub fn warmup_library(state: &HirState, id: LibraryId) {
         return;
     };
     ensure_loaded(id, kind, &archive, state, &|| {});
+    // The library's *sources*, when it ships any: the layout the parameter-name
+    // lookup reads names through, indexed here so that no request pays the
+    // archive scan — a JDK `src.zip` is ~15k entries.
+    let Some((sources, decompiles)) = registered_sources(state, id) else {
+        return;
+    };
+    crate::lib_source::warm_library_sources(state, id, &sources, decompiles);
+}
+
+/// The source archive a registered library was given and whether it is
+/// decompiled, cloned out of the map so the scan runs without a shard guard
+/// (see [`registered_library`]).
+fn registered_sources(state: &HirState, id: LibraryId) -> Option<(vfs::AbsPathBuf, bool)> {
+    let library = state.libraries.get(&id)?;
+    let sources = library.sources.clone()?;
+    let decompiles = library.decompiles;
+    Some((sources, decompiles))
 }
 
 /// Enables the persistent LMDB library cache for this session, pointing it at

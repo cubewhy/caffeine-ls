@@ -5836,6 +5836,50 @@ fn test_inlay_hints_disabled_by_config() {
     );
 }
 
+/// The workspace-load index stage indexes each library's *sources* as well as
+/// its classfiles, and says so: the progress it reports names them, which is
+/// what a client shows a user instead of an unexplained stall.
+///
+/// Needs a JDK that ships its sources — the layout being indexed is its
+/// `src.zip`.
+#[test]
+fn test_workspace_load_indexes_library_sources() {
+    let Some(java_home) = std::env::var("JAVA_HOME")
+        .ok()
+        .filter(|home| std::path::Path::new(home).join("lib/src.zip").is_file())
+    else {
+        eprintln!("skipping: JAVA_HOME is unset or ships no lib/src.zip");
+        return;
+    };
+    let lsp = create_lsp_with_config(json!({ "java_home": java_home }), |_| {});
+
+    // The stage ends once every library — stubs *and* sources — is indexed.
+    let notifications = lsp.wait_for_notifications(
+        "$/progress",
+        std::time::Duration::from_secs(300),
+        |notifications| {
+            notifications
+                .iter()
+                .filter_map(progress_event)
+                .any(|(token, kind)| token.starts_with("index-") && kind == "end")
+        },
+    );
+
+    let names_the_sources = |notification: &lsp_server::Notification| {
+        let token = notification.params["token"].as_str().unwrap_or_default();
+        let value = &notification.params["value"];
+        token.starts_with("index-")
+            && value["kind"] == json!("begin")
+            && value["title"]
+                .as_str()
+                .is_some_and(|title| title.contains("sources"))
+    };
+    assert!(
+        notifications.iter().any(names_the_sources),
+        "the index stage names the library sources it indexes: {notifications:#?}"
+    );
+}
+
 #[test]
 fn test_workspace_load_refreshes_inlay_hints() {
     let lsp = create_lsp();

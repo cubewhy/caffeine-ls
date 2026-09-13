@@ -30,9 +30,9 @@ use camino::Utf8Path;
 
 use crate::{
     HirDatabase,
-    db::{ProjectGraph, file_symbols},
+    db::{HirState, ProjectGraph, file_symbols},
     hir_def::java::item_tree::ItemId,
-    lmdb_store::{self, ParamsBlob, SourceIndexBlob, SourcesStamp},
+    lmdb_store::{self, ParamsBlob, SourceIndexBlob, SourcesStamp, StubStore},
     project::LibrarySources,
     symbol_index::SourceSymbolKind,
 };
@@ -45,6 +45,19 @@ use project_model::LibraryId;
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LibrarySourceIndex {
     entries: FxHashMap<SmolStr, SmolStr>,
+}
+
+impl LibrarySourceIndex {
+    /// The index a persisted layout holds.
+    fn from_blob(blob: SourceIndexBlob) -> Self {
+        Self {
+            entries: blob
+                .entries
+                .into_iter()
+                .map(|(name, entry)| (SmolStr::new(name), SmolStr::new(entry)))
+                .collect(),
+        }
+    }
 }
 
 /// The path of an archive entry below the source root: the module prefix of a
@@ -77,43 +90,74 @@ fn library_source_index_query(
         .clone();
     let stamp = SourcesStamp::of(Some(&archive), library_decompiles(db, library));
     // Indexing a JDK `src.zip` walks ~25k central-directory entries; a session
-    // that already did it hands the layout over instead (see
-    // [`crate::lmdb_store`]).
+    // that already did it — the workspace-load index stage warms it through
+    // [`warm_library_sources`], and a previous session wrote it to the cache —
+    // hands the layout over instead (see [`crate::lmdb_store`]).
     let store = &db.hir_state().stub_store;
     if let Some(blob) = store.read_source_index(library, &stamp) {
         tracing::debug!(library = %library, entries = blob.entries.len(), "library sources indexed from cache");
-        return Some(Arc::new(LibrarySourceIndex {
-            entries: blob
-                .entries
-                .into_iter()
-                .map(|(name, entry)| (SmolStr::new(name), SmolStr::new(entry)))
-                .collect(),
-        }));
+        return Some(Arc::new(LibrarySourceIndex::from_blob(blob)));
     }
-    match build_index(&archive) {
-        Ok(index) => {
-            let mut entries: Vec<(String, String)> = index
-                .entries
-                .iter()
-                .map(|(name, entry)| (name.to_string(), entry.to_string()))
-                .collect();
-            // Sorted, so an unchanged index encodes to unchanged bytes.
-            entries.sort();
-            let blob = SourceIndexBlob {
-                format_version: lmdb_store::CACHE_FORMAT_VERSION,
-                stamp,
-                entries,
-            };
-            if let Err(err) = store.write_source_index(library, &blob) {
-                tracing::debug!(library = %library, "failed to persist library source index: {err:#}");
-            }
-            Some(Arc::new(index))
-        }
+    index_archive(store, library, &stamp, &archive).map(Arc::new)
+}
+
+/// Builds (and persists) the attached-source layout of the library `library`
+/// from `archive`, outside any database snapshot: the scan must not block the
+/// main loop's next write (see [`crate::warmup_library`]).
+///
+/// The workspace-load index stage runs this for every library that ships
+/// sources, so the first request that resolves a member through one reads the
+/// layout out of the cache rather than the archive's central directory.
+pub fn warm_library_sources(
+    state: &HirState,
+    library: LibraryId,
+    archive: &AbsPath,
+    decompiles: bool,
+) {
+    let stamp = SourcesStamp::of(Some(archive), decompiles);
+    let store = &state.stub_store;
+    if store.read_source_index(library, &stamp).is_some() {
+        return;
+    }
+    index_archive(store, library, &stamp, archive);
+}
+
+/// Builds `archive`'s layout and persists it under `stamp`, logging an archive
+/// it cannot read. `None` in that case.
+fn index_archive(
+    store: &StubStore,
+    library: LibraryId,
+    stamp: &SourcesStamp,
+    archive: &AbsPath,
+) -> Option<LibrarySourceIndex> {
+    let index = match build_index(archive) {
+        Ok(index) => index,
         Err(err) => {
             tracing::warn!(library = %library, archive = %archive, "failed to index library sources: {err:#}");
-            None
+            return None;
         }
+    };
+    let mut entries: Vec<(String, String)> = index
+        .entries
+        .iter()
+        .map(|(name, entry)| (name.to_string(), entry.to_string()))
+        .collect();
+    // Sorted, so an unchanged index encodes to unchanged bytes.
+    entries.sort();
+    let blob = SourceIndexBlob {
+        format_version: lmdb_store::CACHE_FORMAT_VERSION,
+        stamp: stamp.clone(),
+        entries,
+    };
+    if let Err(err) = store.write_source_index(library, &blob) {
+        tracing::debug!(library = %library, "failed to persist library source index: {err:#}");
     }
+    tracing::debug!(
+        library = %library,
+        entries = index.entries.len(),
+        "library sources indexed and cached"
+    );
+    Some(index)
 }
 
 /// The parameter names a previous session resolved for the library member
