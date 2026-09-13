@@ -1482,3 +1482,232 @@ class Fields {
         "the local's own declaration and its one use, both in Locals.java"
     );
 }
+
+// -- record components ([JLS §8.10]) ------------------------------------------------
+// A record component is a declaration of its own ([JLS §8.10.1]): it declares
+// the private final field and — unless the body declares it — the public
+// accessor ([§8.10.3]) of the component. The HIR carries it without an item of
+// its own (the record's declaration holds the component list), so a reference
+// to the field or the accessor, and the component's own name, all navigate to
+// the component.
+
+const RECORD_COMPONENT_SRC: &str = r#"package com.example;
+
+record Point(int x, int y) {
+    int sum() {
+        return x + y;
+    }
+
+    int twice() {
+        return x() * 2;
+    }
+
+    int qualified() {
+        return this.x;
+    }
+
+    Point shift(int d) {
+        return new Point(x + d, y);
+    }
+}
+
+record Explicit(int e) {
+    public int e() {
+        return e;
+    }
+}
+
+class Client {
+    int read(Point p) {
+        return p.x() + p.y();
+    }
+
+    int readExplicit(Explicit q) {
+        return q.e();
+    }
+}
+"#;
+
+/// Every reference to a record component — the component's own name, the
+/// implicit field read and the implicit accessor call — names the component.
+/// An accessor the record's body declares *itself* is a method of its own: it
+/// is not the component, even though the body reads the component under the
+/// same name.
+#[test]
+fn goto_record_component() {
+    let fixture = test_file(RECORD_COMPONENT_SRC);
+    let cases: &[(&str, usize, &str, &str)] = &[
+        // The component's own name in the declaration header.
+        ("x, ", 0, "int x,", "x"),
+        // The implicit field: read unqualified, qualified by `this`, and as an
+        // instantiation argument.
+        ("x + y;", 0, "int x,", "x"),
+        ("x;", 0, "int x,", "x"),
+        ("x + d", 0, "int x,", "x"),
+        // The implicit accessor: called on the record itself and on a receiver
+        // of the record type.
+        ("x() * 2", 0, "int x,", "x"),
+        ("x()", 1, "int x,", "x"),
+        // The same, for the second component.
+        ("y)", 0, "int y)", "y"),
+        ("y;", 0, "int y)", "y"),
+        ("y);", 0, "int y)", "y"),
+        ("y()", 0, "int y)", "y"),
+        // An accessor declared by the body is the method, not the component —
+        // but the field of its component still is.
+        ("e()", 1, "public int e()", "e"),
+        ("e()", 2, "public int e()", "e"),
+        ("e;", 1, "int e)", "e"),
+    ];
+    for &(needle, occurrence, declaration, name) in cases {
+        assert_targets_name(&fixture, needle, occurrence, declaration, name);
+    }
+
+    let renders: Vec<(&str, usize)> = cases.iter().map(|&(n, o, ..)| (n, o)).collect();
+    assert_snapshot!("goto_record_component", render_nav_many(&fixture, &renders));
+}
+
+/// The references of a record component are every site that names it: its own
+/// declaration, the implicit field reads (which name the field, §8.10.1) and
+/// the implicit accessor calls (§8.10.3) inside and outside the record. The
+/// component's *name* is not the accessor's: an accessor the record body
+/// declares itself is a separate declaration, and its own references are its
+/// own.
+#[test]
+fn references_record_component() {
+    let fixture = test_file(RECORD_COMPONENT_SRC);
+    let cases: &[(&str, usize, &[&str], &[&str])] = &[
+        // The component `x`: declaration, two field reads (`x + y`, `this.x`),
+        // an implicit accessor call (`x()`), a constructor argument and the
+        // call on a receiver in another class.
+        (
+            "x, ",
+            0,
+            &["x", "x", "x", "x", "x", "x"],
+            &["x", "x", "x", "x", "x"],
+        ),
+        // The same sites, queried from a use and from the accessor call.
+        (
+            "x + y;",
+            0,
+            &["x", "x", "x", "x", "x", "x"],
+            &["x", "x", "x", "x", "x"],
+        ),
+        (
+            "x()",
+            1,
+            &["x", "x", "x", "x", "x", "x"],
+            &["x", "x", "x", "x", "x"],
+        ),
+        // The component `y`: declaration, a field read, a constructor argument
+        // and the accessor call.
+        ("y)", 0, &["y", "y", "y", "y"], &["y", "y", "y"]),
+        // The explicit accessor is its own declaration: the component's
+        // declaration is not one of its sites.
+        ("e()", 1, &["e", "e"], &["e"]),
+        // The component of that record: its declaration and the field read.
+        ("e;", 1, &["e", "e"], &["e"]),
+    ];
+    for &(needle, occurrence, with_declaration, without_declaration) in cases {
+        assert_eq!(
+            reference_texts(&fixture, needle, occurrence, true),
+            with_declaration,
+            "include_declaration = true for {needle:?}#{occurrence}"
+        );
+        assert_eq!(
+            reference_texts(&fixture, needle, occurrence, false),
+            without_declaration,
+            "include_declaration = false for {needle:?}#{occurrence}"
+        );
+    }
+}
+
+/// The same matrix, site by site, as one snapshot — the ranges are as much the
+/// answer as the count, and a component's target must be its name token (not
+/// the record's).
+#[test]
+fn references_record_component_snapshot() {
+    let fixture = test_file(RECORD_COMPONENT_SRC);
+    let cases: &[(&str, usize, bool)] = &[
+        ("x, ", 0, true),
+        ("x, ", 0, false),
+        ("y)", 0, true),
+        ("e()", 1, true),
+        ("e;", 1, true),
+    ];
+    assert_snapshot!(
+        "references_record_component",
+        render_references_many(&fixture, cases)
+    );
+}
+
+/// A record component is reachable from every file: its accessor
+/// ([JLS §8.10.3]) is public, so a query on the component must sweep the whole
+/// workspace, and the accessor call in another file is one of its sites.
+#[test]
+fn references_record_component_cross_file() {
+    let fixture = test_files(&[
+        (
+            "/src/main/java/com/example/Point.java",
+            r#"package com.example;
+
+record Point(int x) {
+    int sum() {
+        return x;
+    }
+}
+"#,
+        ),
+        (
+            "/src/main/java/com/example/Client.java",
+            r#"package com.example;
+
+class Client {
+    int read(Point p) {
+        return p.x();
+    }
+}
+"#,
+        ),
+    ]);
+    // The query is the component's own declaration in `Point.java`.
+    let offset = fixture.offset_start(0, "x)");
+    let sites: Vec<(FileId, String)> = fixture
+        .analysis()
+        .references(fixture.file(0), offset, true)
+        .unwrap()
+        .iter()
+        .map(|reference| {
+            (
+                reference.file,
+                fixture.files[reference.file.index() as usize - 1].1
+                    [reference.range.start().into()..reference.range.end().into()]
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sites,
+        vec![
+            (fixture.file(0), "x".to_owned()),
+            (fixture.file(0), "x".to_owned()),
+            (fixture.file(1), "x".to_owned()),
+        ],
+        "the declaration, the field read and the accessor call"
+    );
+    // And the reverse: the accessor call in `Client.java` answers the
+    // declaration in the other file.
+    let offset = fixture.offset_start(1, "x()");
+    let sites: Vec<FileId> = fixture
+        .analysis()
+        .references(fixture.file(1), offset, true)
+        .unwrap()
+        .iter()
+        .map(|reference| reference.file)
+        .collect();
+    assert_eq!(
+        sites,
+        vec![fixture.file(0), fixture.file(0), fixture.file(1)],
+        "the declaration and the field read are in `Point.java`"
+    );
+}

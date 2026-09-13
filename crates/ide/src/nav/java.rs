@@ -42,6 +42,18 @@
 //! `import` — resolves the written name in the scope of the declaration that
 //! carries it ([§6.5.5.1], [§7.5]).
 //!
+//! A *record component* ([JLS §8.10.1]) is a declaration the HIR carries
+//! without an item of its own: the record's declaration holds the component
+//! list. Its private final field ([§8.10.1]) and its public accessor
+//! ([§8.10.3]) are synthesized members an unqualified read, a `this.x` and a
+//! `p.x()` respectively name, and each of them is declared by the component —
+//! so they all navigate to the component, and the component's own name in the
+//! declaration header is a self-target ([`self_target`]). An accessor the
+//! record's body declares *itself* is a method with an item of its own, and
+//! keeps that declaration ([§8.10.3]). A component is reachable from every
+//! file through its accessor, so [`references`] sweeps the whole workspace for
+//! it ([`is_workspace_visible`]).
+//!
 //! An annotation's *element-value pairs* ([§9.7.1]) are their own kind: a
 //! pair's name denotes the annotation interface's element ([§9.6.1]), and a
 //! name inside its value denotes what the same name denotes in the carrying
@@ -232,11 +244,16 @@ pub(super) fn definition(
 ///   resolves to nothing ([`Resolution::Pending`]) and is therefore not
 ///   reported: the LSP layer defers a request only when the *query* resolves to
 ///   nothing (see [`pending_library_files`]), never to complete a sweep.
-/// * A synthesized member with no item of its own (an implicit record accessor)
-///   is identified by its owner class's item ([`member_or_owner`]), and a
-///   reference to such a member is written under the member's name, not the
-///   class's: a query on the class declaration therefore does not report it,
-///   even though `definition` navigates it to the class.
+/// * A record component is identified by the component itself
+///   ([`component_member`]), not by its record: a reference to the component's
+///   field or accessor is written under the component's name, so the component
+///   declaration and every such reference are sites of one declaration.
+///   A *different* synthesized member with no item of its own — an implicit
+///   constructor, an implicit `equals`/`hashCode`/`toString` — is identified by
+///   its owner class's item ([`member_or_owner`]) instead, and a reference to
+///   it is written under the member's name, not the class's: a query on the
+///   class declaration therefore does not report it, even though `definition`
+///   navigates it to the class.
 /// * Only `IDENTIFIER` tokens are candidates ([`file_references`]), so a javadoc
 ///   `{@link ...}` — one `JAVADOC` token — is not a site; `definition` answers
 ///   nothing at such an offset either, so the two requests stay consistent.
@@ -255,7 +272,7 @@ pub(super) fn references(
 
     let mut files = db.source_files();
     files.push(file);
-    if found.iter().all(|t| !is_item_name(db, t)) {
+    if found.iter().all(|t| !is_workspace_visible(db, t)) {
         // A local, a parameter, a pattern binding or a type parameter: only the
         // file declaring it can name it, so a workspace sweep would resolve
         // every other file for nothing.
@@ -277,19 +294,32 @@ pub(super) fn references(
     hits
 }
 
-/// Whether `target` is a declaration that has an item of its own: an item of
-/// `target.file` whose name token is `target.range`. `false` for a name carried
-/// without an item — a local, a parameter, a pattern binding, a type parameter.
+/// Whether a target of a file can be named from *every* file of the workspace:
+/// a declaration with an item of its own — an item of `target.file` whose name
+/// token is `target.range` — or a record component ([JLS §8.10.1]), whose
+/// accessor ([§8.10.3]) is a public member any file may call.
 ///
-/// Only the file that declares such a name can name it, which is what makes the
-/// narrowing in [`references`] sound. A *library* member that is loaded
-/// produces a `(library_file, name_range)` target and is an item name of that
-/// library file — still correct, since the library source is in the database.
-fn is_item_name(db: &RootDatabase, target: &NavigationTarget) -> bool {
+/// `false` for a name only the file that declares it can write — a local, a
+/// parameter, a pattern binding, a lambda parameter or a type parameter —
+/// which is what makes the narrowing in [`references`] sound. A *library*
+/// member that is loaded produces a `(library_file, name_range)` target and is
+/// an item name of that library file — still correct, since the library source
+/// is in the database.
+fn is_workspace_visible(db: &RootDatabase, target: &NavigationTarget) -> bool {
     let tree = hir::file_item_tree(db, target.file);
-    all_items(db, target.file, &tree)
+    if all_items(db, target.file, &tree)
         .into_iter()
         .any(|(_, item)| item_name_range(db, target.file, &tree, item) == Some(target.range))
+    {
+        return true;
+    }
+    // A record component carries no item of its own, and its own file is not
+    // the only one that can name it: the private field is read from the
+    // record's body, but the accessor is public, so a query on the component
+    // sweeps the workspace exactly as a query on a field does.
+    file_components(db, target.file, &tree)
+        .into_iter()
+        .any(|component| component.range == target.range)
 }
 
 /// Every reference site of `names` in `files`, one worker per chunk of files.
@@ -373,9 +403,10 @@ fn file_references(
 
 /// Goto-definition on a declaration's own name answers with the declaration
 /// itself: `m` in `Main m`, `Main` in `class Main`, `local` in
-/// `int local = 0`. These names are declarations, not references ([JLS §6.3]
-/// scopes a local from its own declarator on; a type's or member's name is
-/// written in its declaration), so no step above resolves them.
+/// `int local = 0`, `x` in `record Point(int x, int y)`. These names are
+/// declarations, not references ([JLS §6.3] scopes a local from its own
+/// declarator on; a type's or member's name is written in its declaration), so
+/// no step above resolves them.
 ///
 /// Only consulted once every *reference* step found nothing, so a name that is
 /// also read as a reference — the `Main` of `Main m` — is still answered by
@@ -402,6 +433,18 @@ fn self_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<Navi
         && let Some(target) = decl_target(db, file, symbol.item, symbol.name.simple_name())
     {
         return Some(target);
+    }
+
+    // A record component the offset is written as ([JLS §8.10.1]): the `x` of
+    // `record Point(int x, int y)`. Its declaration is not an item of its own,
+    // so the symbol walk above — which matches a declaration's own name — never
+    // sees it.
+    if let Some(component) = component_at(db, file, &tree, offset) {
+        return Some(NavigationTarget {
+            file,
+            range: component.range,
+            name: component.name,
+        });
     }
 
     // A type parameter the offset is written as: `T` in `class Box<T>`, the
@@ -475,6 +518,101 @@ fn variable_target(bodies: &BodyTree, file: FileId, offset: TextSize) -> Option<
         }
     }
     best.map(|(range, name)| NavigationTarget { file, range, name })
+}
+
+/// A record component
+/// ([JLS §8.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.1))
+/// declared in a source file: the record that declares it, the component's
+/// position in that record's component list, and the range and text of its own
+/// name.
+///
+/// A component is not an [`ItemId`] — the HIR keeps the component list on the
+/// record's declaration — so neither the arena nor the symbol index addresses
+/// it; the list is the only way to reach one.
+struct ComponentAt {
+    /// The item of the record that declares the component.
+    record: ItemId,
+    /// The component's position in `record`'s component list, in declaration
+    /// order.
+    index: usize,
+    /// The range of the component's own name token — what a navigation target
+    /// selects and a hover describes. Resolved from the file's parse, because
+    /// the HIR's component list carries no offsets.
+    range: TextRange,
+    /// The component's name.
+    name: String,
+}
+
+/// Every record component the file declares, in item and declaration order.
+fn file_components(db: &RootDatabase, file: FileId, tree: &ItemTree) -> Vec<ComponentAt> {
+    if tree.language == LanguageKind::Unknown {
+        return Vec::new();
+    }
+    let source = base_db::parse(db, file, tree.language).syntax_node(tree.language);
+    let map = hir::hir_def::db::ast_id_map(db, file, tree.language);
+    let mut out = Vec::new();
+    for (_, item) in all_items(db, file, tree) {
+        let ItemData::Record(record) = tree.data(item) else {
+            continue;
+        };
+        for (index, component) in record.components.iter().enumerate() {
+            if let Some(range) =
+                hir::hir_def::java::ranges::component_name_range(map, &source, component)
+            {
+                out.push(ComponentAt {
+                    record: item,
+                    index,
+                    range,
+                    name: component.name.as_str().to_owned(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The record component whose own name token contains `offset` — the
+/// declaration a record writes for a component in its declaration header.
+fn component_at(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    offset: TextSize,
+) -> Option<ComponentAt> {
+    file_components(db, file, tree)
+        .into_iter()
+        .find(|component| component.range.contains(offset))
+}
+
+/// The hover of a record component's declaration ([JLS
+/// §8.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.1)):
+/// the type and name of the private final field the component declares,
+/// rendered like a field declaration's. A variable-arity component's field and
+/// accessor carry the array type its element type packs into ([§8.4.1]). A
+/// *use* of a component is answered by the expression's type instead, like a
+/// field's or a local's.
+fn component_hover(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    component: &ComponentAt,
+) -> Option<HoverInfo> {
+    let ItemData::Record(record) = tree.data(component.record) else {
+        return None;
+    };
+    let declared = record.components.get(component.index)?;
+    let element = hir_ty::record_component_types(db, file, component.record)
+        .get(component.index)?
+        .display_simple(db)
+        .to_string();
+    let ty = if declared.varargs {
+        format!("{element}[]")
+    } else {
+        element
+    };
+    Some(HoverInfo {
+        value: format!("{}: {ty}", component.name),
+    })
 }
 
 /// The resolutions of a *declaration-side* reference: the type reference or
@@ -857,19 +995,13 @@ fn declared_resolution(
     // which is the key the classfile index and the source index are looked up
     // by.
     match owner_lookup(db, file, owner) {
-        OwnerLookup::Source(class) => vec![Resolution::Decl {
-            item: member_or_owner(db, class.file, class.item, &name, use_kind, params),
-            file: class.file,
-            name,
-        }],
+        OwnerLookup::Source(class) => vec![member_or_owner(
+            db, class.file, class.item, &name, use_kind, params,
+        )],
         OwnerLookup::Library {
             decl: hir::LibrarySourceDecl::Loaded { file, item },
             ..
-        } => vec![Resolution::Decl {
-            item: member_or_owner(db, file, item, &name, use_kind, params),
-            file,
-            name,
-        }],
+        } => vec![member_or_owner(db, file, item, &name, use_kind, params)],
         OwnerLookup::Library {
             library,
             decl: hir::LibrarySourceDecl::Pending { entry, path },
@@ -896,9 +1028,11 @@ fn declared_resolution(
     }
 }
 
-/// The declared member `name` of the owner class declared in `decl_file`,
-/// falling back to the owner declaration itself when the member has no source
-/// item of its own — an implicit constructor, a record accessor.
+/// The declaration the member `name` of the class declared by `owner_item` in
+/// `decl_file` denotes: the member's own item, the record component that
+/// *implicitly* declares it ([`component_member`]), or the owner declaration
+/// itself when the member has neither — an implicit constructor, an implicit
+/// `equals`/`hashCode`/`toString`.
 fn member_or_owner(
     db: &RootDatabase,
     decl_file: FileId,
@@ -906,9 +1040,83 @@ fn member_or_owner(
     name: &str,
     use_kind: Use,
     params: Params<'_>,
-) -> ItemId {
+) -> Resolution {
+    if let Some(component) = component_member(db, decl_file, owner_item, name, use_kind, params) {
+        return component;
+    }
     let tree = hir::file_item_tree(db, decl_file);
-    member_item(db, decl_file, &tree, name, use_kind, params).unwrap_or(owner_item)
+    Resolution::Decl {
+        file: decl_file,
+        item: member_item(db, decl_file, &tree, name, use_kind, params).unwrap_or(owner_item),
+        name: name.to_owned(),
+    }
+}
+
+/// The record component ([JLS
+/// §8.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.1))
+/// that implicitly declares the member `name` of the class declared by
+/// `owner_item` in `decl_file`: the private final field a component declares
+/// ([§8.10.1]) or its public accessor
+/// ([§8.10.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.3)).
+///
+/// The HIR carries a component without an item of its own — the record's
+/// declaration holds the component list (`RecordData::components`) and nothing
+/// in the arena addresses one — so the field and the accessor the class
+/// synthesizes from a component (`hir_ty`'s `source_class_fields` /
+/// `source_class_methods`) have no declaration to point at. The component *is*
+/// their declaration, exactly: `§8.10.1` gives each component one field of its
+/// own name and `§8.10.3` one accessor of its own name, and two components of
+/// one record may not share a name (`§8.10.1`), so the name identifies the
+/// component. Only the zero-argument method is the accessor; a same-name
+/// method with parameters is the record's own declaration, which has an item
+/// and therefore never reaches this lookup.
+///
+/// `None` when the owner declares no such component — a class that is not a
+/// record, a member the record itself declares, an implicit constructor or an
+/// implicit `equals`/`hashCode`/`toString`.
+fn component_member(
+    db: &RootDatabase,
+    decl_file: FileId,
+    owner_item: ItemId,
+    name: &str,
+    use_kind: Use,
+    params: Params<'_>,
+) -> Option<Resolution> {
+    let tree = hir::file_item_tree(db, decl_file);
+    let ItemData::Record(record) = tree.data(owner_item) else {
+        return None;
+    };
+    match use_kind {
+        // §8.10.1: the component's private final field, whatever its signature.
+        Use::Field => {}
+        // §8.10.3: the component's accessor, which the class declares only when
+        // its body declares no method of the component's own signature — so the
+        // member must take no arguments. `Params::Unknown` (a member lookup
+        // with no recorded invocation) cannot contradict that: the caller
+        // reaches here only after finding no item of the name, and no *declared*
+        // zero-argument method of the name would then be left.
+        Use::Method => match params {
+            Params::Recorded { types, .. } if !types.is_empty() => return None,
+            _ => {}
+        },
+        // §8.10.4: a canonical constructor is declared by the record, and the
+        // component list supplies its parameters — the component declares no
+        // constructor of its own.
+        Use::Constructor => return None,
+    }
+    let index = record
+        .components
+        .iter()
+        .position(|component| component.name.as_str() == name)?;
+    let component = &record.components[index];
+    let map = hir::hir_def::db::ast_id_map(db, decl_file, tree.language);
+    let source = base_db::parse(db, decl_file, tree.language).syntax_node(tree.language);
+    let range = hir::hir_def::java::ranges::component_name_range(map, &source, component)?;
+    Some(Resolution::Variable {
+        file: decl_file,
+        range,
+        name: name.to_owned(),
+    })
 }
 
 /// The lambda parameter the `Var` at `expr` names: the innermost enclosing
@@ -1069,9 +1277,18 @@ enum Resolution {
         name: String,
     },
     /// A declaration carried without an item of its own — a local variable, a
-    /// parameter, a pattern binding, a lambda parameter or a type parameter —
-    /// at the range of its own name, not of the declaration it was written in
-    /// (`Base b` and `int x = 0` target `b` and `x`).
+    /// parameter, a pattern binding, a lambda parameter, a type parameter or a
+    /// record component
+    /// ([JLS §8.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.1))
+    /// — at the range of its own name, not of the declaration it was written
+    /// in (`Base b` and `int x = 0` target `b` and `x`).
+    ///
+    /// A record component is the one such declaration a *different* file can
+    /// name: its private final field is read inside the record, but its
+    /// accessor
+    /// ([§8.10.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.3))
+    /// is public, so `p.x()` in another file names it too
+    /// ([`is_workspace_visible`] tells the two apart).
     Variable {
         file: FileId,
         range: TextRange,
@@ -1414,7 +1631,7 @@ fn member_in_hierarchy(
 enum OwnerLookup {
     /// A workspace source class and its declaration item — the fallback target
     /// of a member the class declares without an item (an implicit
-    /// constructor, a record accessor).
+    /// constructor, a record accessor's component).
     Source(hir::SourceClass),
     /// A library class and the location of its source declaration.
     Library {
@@ -1447,22 +1664,31 @@ fn members_of_owner(
         OwnerLookup::Source(class) => {
             let owner_file = class.file;
             let tree = hir::file_item_tree(db, owner_file);
-            match member_item(db, owner_file, &tree, name, use_kind, params) {
-                Some(item) => MemberLookup::Found(Resolution::Decl {
+            if let Some(item) = member_item(db, owner_file, &tree, name, use_kind, params) {
+                return MemberLookup::Found(Resolution::Decl {
                     file: owner_file,
                     item,
                     name: name.to_owned(),
-                }),
-                // A *loaded* owner's member set is conclusive.
+                });
+            }
+            // A member the class declares without an item of its own: the field
+            // or the accessor a record component declares ([`component_member`]).
+            // Everything else — an implicit constructor, an implicit
+            // `hashCode` — has no declaration to point at, and a *loaded*
+            // owner's member set is conclusive.
+            match component_member(db, owner_file, class.item, name, use_kind, params) {
+                Some(component) => MemberLookup::Found(component),
                 None => MemberLookup::Absent,
             }
         }
         OwnerLookup::Library {
             library,
             fqn,
-            decl: hir::LibrarySourceDecl::Loaded {
-                file: decl_file, ..
-            },
+            decl:
+                hir::LibrarySourceDecl::Loaded {
+                    file: decl_file,
+                    item: owner_item,
+                },
         } => {
             let tree = hir::file_item_tree(db, decl_file);
             match member_item(db, decl_file, &tree, name, use_kind, params) {
@@ -1477,7 +1703,13 @@ fn members_of_owner(
                         item,
                     },
                 }),
-                None => MemberLookup::Absent,
+                // A library record's accessor and field are classfile members
+                // javac emitted from its components; their declaration is the
+                // component the loaded source declares.
+                None => match component_member(db, decl_file, owner_item, name, use_kind, params) {
+                    Some(component) => MemberLookup::Found(component),
+                    None => MemberLookup::Absent,
+                },
             }
         }
         // The owning source is not loaded, so nothing about its members is
@@ -2038,8 +2270,9 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
             );
         }
         // A declaration has no merged signature of its own, and a `Variable`
-        // (a local, a lambda parameter, a type parameter) is not a library
-        // reference: `resolve_at` never produces one.
+        // (a local, a lambda parameter, a type parameter, a record component)
+        // is not a library reference: `resolve_at` never produces one for a
+        // type or a package.
         Some(Resolution::Decl { .. }) | Some(Resolution::Variable { .. }) | None => {}
     }
 
@@ -2073,6 +2306,14 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
                 }
             }
         }
+    }
+
+    // A record component's own name ([JLS §8.10.1]): the declaration of the
+    // private final field and the public accessor ([§8.10.3]) a member use
+    // names — the same declaration `render_symbol_decl` below cannot see,
+    // because the component is not an item.
+    if let Some(component) = component_at(db, file, &tree, offset) {
+        return component_hover(db, file, &tree, &component);
     }
 
     // A declaration's signature.

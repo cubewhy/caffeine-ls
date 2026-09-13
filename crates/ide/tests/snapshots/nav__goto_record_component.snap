@@ -1,0 +1,56 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture, &renders)"
+---
+--- goto @"x, "#0 ---
+x @39..40
+--- hover ---
+x: int
+--- goto @"x + y;"#0 ---
+x @39..40
+--- hover ---
+int
+--- goto @"x;"#0 ---
+x @39..40
+--- hover ---
+int
+--- goto @"x + d"#0 ---
+x @39..40
+--- hover ---
+int
+--- goto @"x() * 2"#0 ---
+x @39..40
+--- hover ---
+int
+--- goto @"x()"#1 ---
+x @39..40
+--- hover ---
+int
+--- goto @"y)"#0 ---
+y @46..47
+--- hover ---
+y: int
+--- goto @"y;"#0 ---
+y @46..47
+--- hover ---
+int
+--- goto @"y);"#0 ---
+y @46..47
+--- hover ---
+int
+--- goto @"y()"#0 ---
+y @46..47
+--- hover ---
+int
+--- goto @"e()"#1 ---
+e @307..308
+--- hover ---
+e(): int
+--- goto @"e()"#2 ---
+e @307..308
+--- hover ---
+int
+--- goto @"e;"#1 ---
+e @287..288
+--- hover ---
+int

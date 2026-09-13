@@ -1,0 +1,28 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_references_many(&fixture, cases)"
+---
+--- refs @"x, "#0 include=true ---
+x @39..40
+x @82..83
+x @129..130
+x @187..188
+x @247..248
+x @396..397
+--- refs @"x, "#0 include=false ---
+x @82..83
+x @129..130
+x @187..188
+x @247..248
+x @396..397
+--- refs @"y)"#0 include=true ---
+y @46..47
+y @86..87
+y @254..255
+y @404..405
+--- refs @"e()"#1 include=true ---
+e @307..308
+e @468..469
+--- refs @"e;"#1 include=true ---
+e @287..288
+e @328..329
