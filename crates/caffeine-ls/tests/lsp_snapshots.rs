@@ -6212,3 +6212,73 @@ fn test_workspace_load_refreshes_inlay_hints() {
         "a workspace load must refresh inlay hints exactly once"
     );
 }
+
+/// Kotlin inlay hints end to end: a `val` that writes no type renders the
+/// inferred one (kotlinc's probe reports `actual 'Int'` for the same
+/// expression), and a local that writes its type gets no hint.
+#[test]
+fn kotlin_inlay_hints() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Hints.kt";
+    let text = r#"package com.example
+
+class Count
+
+fun compute(count: Count) {
+    val inferred = count
+    val written: Count = count
+    var total = count
+}
+"#;
+    lsp.write_file(path, text);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let response = request_until(
+        &lsp,
+        "textDocument/inlayHint",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 9, "character": 0 },
+            },
+        }),
+        |response| response.as_array().is_some_and(|hints| !hints.is_empty()),
+    );
+    let hints: Vec<String> = response
+        .as_array()
+        .expect("hints")
+        .iter()
+        .map(|hint| {
+            // The label is either the plain string or the parts array the
+            // server sends.
+            let label = match &hint["label"] {
+                serde_json::Value::String(value) => value.clone(),
+                parts => parts
+                    .as_array()
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .map(|part| part["value"].as_str().unwrap_or_default())
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default(),
+            };
+            format!("{label} line {}", hint["position"]["line"])
+        })
+        .collect();
+    // Two hints: `inferred` and `total`, both typed from their initializer;
+    // `written` declares its type and gets none.
+    assert_eq!(
+        hints.len(),
+        2,
+        "a hint per untyped local, and none for a typed one: {hints:?}"
+    );
+    for hint in &hints {
+        assert!(
+            hint.starts_with(": Count"),
+            "the inferred type is the Kotlin spelling: {hints:?}"
+        );
+    }
+}
