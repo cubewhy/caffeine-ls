@@ -1,0 +1,6 @@
+---
+source: crates/ide/tests/inlay_hints.rs
+expression: render_hints(&hints)
+---
+Type @377 Stream<Text>
+Type @426 Stream<Count>

@@ -31,7 +31,7 @@
 use hir_expand::body::{BodyTree, ExprData, ExprId, LocalId, StmtData, UnaryOp};
 use hir_ty::{BodyTypes, BoundKind, MethodData, ResolvedMember, Ty, TyDatabase, TyKind};
 use rowan::{SyntaxNode, TextRange, TextSize};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::SourceFile;
 use syntax::java::Lang;
 use vfs::FileId;
@@ -40,7 +40,7 @@ use super::{
     InlayHint, InlayHintDetail, InlayHintEdit, InlayHintKind, InlayHintLabelPart, InlayHintsConfig,
 };
 use crate::RootDatabase;
-use ide_db::base_db::LanguageKind;
+use ide_db::base_db::{LanguageKind, SourceDatabase};
 
 /// The construct a hint is asked about: a request's range, or the one hint a
 /// resolve names.
@@ -696,16 +696,164 @@ fn push_parameter_hint(
 
 // -- method chain types ---------------------------------------------------------------
 
-/// The type of each intermediate call of a multi-line method chain whose type
-/// changes (`list.stream()` \n `.filter(...)` \n `.map(...)`).
+/// The fewest distinct types a chain must produce before any of its calls is
+/// annotated — IntelliJ's Java default.
+const MIN_CHAIN_UNIQUE_TYPES: usize = 2;
+
+/// The type of each call of a multi-line method chain whose type changes
+/// (`list.stream()` \n `.filter(...)` \n `.map(...)`).
+///
+/// The whole chain's own type is what the expression already reads as, so the
+/// *outermost* call is never annotated (IntelliJ: "except last to avoid
+/// `builder.build()` which has obvious type"), and a run of calls returning the
+/// same type is annotated once, at its innermost element.
 #[allow(clippy::too_many_arguments)]
 fn method_chain_hints(
-    _db: &dyn TyDatabase,
-    _file: FileId,
-    _bodies: &BodyTree,
-    _types: &BodyTypes,
-    _search: &Search,
-    _config: &InlayHintsConfig,
-    _out: &mut Vec<InlayHintDetail>,
+    db: &RootDatabase,
+    file: FileId,
+    bodies: &BodyTree,
+    types: &BodyTypes,
+    search: &Search,
+    config: &InlayHintsConfig,
+    out: &mut Vec<InlayHintDetail>,
 ) {
+    if !config.method_chains {
+        return;
+    }
+    // The item's method calls, in lowering order.
+    let calls: Vec<ExprId> = bodies
+        .exprs
+        .iter()
+        .map(|(id, _)| ExprId(id))
+        .filter(|expr| matches!(bodies.expr(*expr), ExprData::MethodCall { .. }))
+        .collect();
+    // The calls that are another call's receiver. A *topmost* call — one no
+    // other call receives — is where a chain is read from, outermost first.
+    let mut receivers: FxHashSet<ExprId> = FxHashSet::default();
+    for &call in &calls {
+        if let ExprData::MethodCall { receiver, .. } = bodies.expr(call)
+            && let Some(inner) = call_receiver(bodies, *receiver)
+        {
+            receivers.insert(inner);
+        }
+    }
+    // The file's text, for the line-break test below: the ranges are the only
+    // syntax↔HIR bridge, so whether a break follows one is read there.
+    let text = db.file_text(file).text(db).to_owned();
+    for &top in &calls {
+        if receivers.contains(&top) {
+            continue;
+        }
+        // A chain never crosses items: every receiver of a call is an
+        // expression of the same body.
+        let mut chain = vec![top];
+        while let ExprData::MethodCall { receiver, .. } =
+            bodies.expr(*chain.last().expect("non-empty"))
+            && let Some(inner) = call_receiver(bodies, *receiver)
+        {
+            chain.push(inner);
+        }
+        chain_hints(db, &text, bodies, types, search, &chain, out);
+    }
+}
+
+/// The call an expression is the receiver of: peels the parentheses and
+/// postfix operators IntelliJ's `skipParenthesesAndPostfixOperatorsDown` does,
+/// and answers the peeled expression when it is a method call.
+fn call_receiver(bodies: &BodyTree, receiver: Option<ExprId>) -> Option<ExprId> {
+    let mut current = receiver?;
+    loop {
+        match bodies.expr(current) {
+            ExprData::Paren(inner) | ExprData::Postfix { expr: inner, .. } => current = *inner,
+            ExprData::MethodCall { .. } => return Some(current),
+            _ => return None,
+        }
+    }
+}
+
+/// Whether a line break directly follows `end` in `text`: the element stands on
+/// a line of its own, which is what makes a call a *link* of a chain to a
+/// reader (IntelliJ's `nextSibling` whitespace test). The run of whitespace is
+/// what is inspected, so the next non-whitespace character never has to be
+/// found.
+fn line_break_after(text: &str, end: TextSize) -> bool {
+    text.get(end.into()..).is_some_and(|rest| {
+        rest.chars()
+            .take_while(|c| c.is_whitespace())
+            .any(|c| c == '\n')
+    })
+}
+
+/// The hints of one chain, which is `[outermost, …, innermost]`.
+fn chain_hints(
+    db: &dyn TyDatabase,
+    text: &str,
+    bodies: &BodyTree,
+    types: &BodyTypes,
+    search: &Search,
+    chain: &[ExprId],
+    out: &mut Vec<InlayHintDetail>,
+) {
+    // The outermost call is dropped: its type is the expression's own.
+    let mut values: Vec<ExprId> = chain[1..]
+        .iter()
+        .copied()
+        .filter(|element| {
+            bodies
+                .expr_range(*element)
+                .is_some_and(|range| line_break_after(text, range.end()))
+        })
+        .collect();
+    // `takeWhile`: a call whose type the layer does not know — or cannot
+    // render — ends the chain, and every call inside it with it.
+    let renderable = values
+        .iter()
+        .take_while(|element| {
+            types
+                .exprs
+                .get(element)
+                .is_some_and(|ty| is_renderable(db, ty))
+        })
+        .count();
+    values.truncate(renderable);
+    let mut distinct: FxHashSet<Ty> = FxHashSet::default();
+    for element in &values {
+        distinct.insert(types.exprs[element]);
+    }
+    // A chain that never changes type has nothing to say.
+    if distinct.len() < MIN_CHAIN_UNIQUE_TYPES {
+        return;
+    }
+    // Sources order: the decided set is read outermost first, so it is walked
+    // backwards.
+    for (index, &element) in values.iter().enumerate().rev() {
+        let ty = types.exprs[&element];
+        // A run of calls returning the same type is annotated once, at its
+        // innermost element.
+        if let Some(next) = values.get(index + 1)
+            && types.exprs[next] == ty
+        {
+            continue;
+        }
+        let Some(range) = bodies.expr_range(element) else {
+            continue;
+        };
+        let offset = range.end();
+        if !search.matches_hint(offset, InlayHintKind::Type) {
+            continue;
+        }
+        let mut label = Vec::new();
+        push_type_label(db, &ty, &mut label);
+        out.push(InlayHintDetail {
+            hint: InlayHint {
+                offset,
+                label,
+                kind: InlayHintKind::Type,
+                padding_left: true,
+                padding_right: false,
+            },
+            tooltip: ty.display(db).to_string(),
+            edits: Vec::new(),
+        });
+    }
 }

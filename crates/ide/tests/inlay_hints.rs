@@ -52,8 +52,13 @@ impl Fixture {
     /// hint is anchored, since the hint renders the inferred type *after* the
     /// declared name.
     fn offset_end(&self, needle: &str) -> TextSize {
-        let start: u32 = self.offset_start(needle, 0).into();
-        TextSize::new(start + needle.len() as u32)
+        self.offset_end_at(needle, 0)
+    }
+
+    /// [`Self::offset_end`] for `needle`'s `occurrence`-th (0-based) one —
+    /// where a hint anchored at the *end* of an expression is anchored.
+    fn offset_end_at(&self, needle: &str, occurrence: usize) -> TextSize {
+        self.offset_start(needle, occurrence) + TextSize::of(needle)
     }
 
     /// The file's hints over its whole text, under the default configuration.
@@ -605,4 +610,117 @@ fn parameter_names_varargs() {
     assert_eq!(hints[0].offset, fixture.offset_start("1, 2);", 0));
     assert_eq!(hints[0].kind, InlayHintKind::Parameter);
     assert_snapshot!("parameter_names_varargs", render_hints(&hints));
+}
+
+const CHAIN_TYPES: &str = r#"package com.example;
+
+class Text {
+}
+
+class Count {
+}
+
+class List<T> {
+}
+
+class Stream<T> {
+    Stream<T> filter() {
+        return this;
+    }
+
+    Stream<Count> map() {
+        return null;
+    }
+
+    List<T> collect() {
+        return null;
+    }
+}
+
+class Sample {
+    Stream<Text> stream() {
+        return null;
+    }
+
+    void run() {
+        List<Text> result = stream()
+                .filter()
+                .map()
+                .collect();
+    }
+}
+"#;
+
+#[test]
+fn method_chain_types() {
+    let fixture = test_file(CHAIN_TYPES);
+    let hints = fixture.hints();
+
+    // The chain's own type — the collected `List<Text>` — is what the
+    // expression already reads as, so the outermost call gets nothing; the
+    // run of `Stream<Text>` calls is annotated once, at its innermost element.
+    assert_eq!(hints.len(), 2);
+    // The second `stream()`: the first is the method declaration.
+    assert_eq!(hints[0].offset, fixture.offset_end_at("stream()", 1));
+    assert_eq!(hints[0].kind, InlayHintKind::Type);
+    assert_eq!(hints[1].offset, fixture.offset_end(".map()"));
+
+    assert_snapshot!("method_chain_types", render_hints(&hints));
+}
+
+const CHAIN_OMITTED: &str = r#"package com.example;
+
+class Text {
+}
+
+class Count {
+}
+
+class List<T> {
+}
+
+class Stream<T> {
+    Stream<T> filter() {
+        return this;
+    }
+
+    Stream<Count> map() {
+        return null;
+    }
+
+    List<T> collect() {
+        return null;
+    }
+}
+
+class Sample {
+    Stream<Text> stream() {
+        return null;
+    }
+
+    void singleLine() {
+        List<Text> result = stream().filter().map().collect();
+    }
+
+    void oneType() {
+        Stream<Text> s = stream()
+                .filter()
+                .filter();
+    }
+
+    void twoCalls() {
+        Stream<Text> s = stream()
+                .filter();
+    }
+}
+"#;
+
+#[test]
+fn method_chain_omitted() {
+    let fixture = test_file(CHAIN_OMITTED);
+
+    // No chain qualifies: a single-line chain breaks no element onto its own
+    // line, a chain whose calls all return one type has nothing to say, and a
+    // two-call chain keeps only one element once its outermost call is dropped.
+    assert_eq!(render_hints(&fixture.hints()), "");
 }
