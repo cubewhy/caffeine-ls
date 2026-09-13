@@ -2449,8 +2449,18 @@ fn type_ref_name(tyref: &syntax::stub::TypeRef<hir_expand::name::Name>) -> Optio
 }
 
 /// The hover at `offset`: the header and documentation of the declaration a
-/// reference names, else the type of the expression or local the offset falls
-/// on, else the signature of the declaration it falls inside.
+/// reference names, else the type of the expression the offset is inside, else
+/// the signature of the declaration whose own *name* the offset is on. An
+/// offset that names nothing — a modifier, a keyword, punctuation, whitespace,
+/// a literal, an argument — answers nothing.
+///
+/// That last step is the one a *declaration* is asked about, and it answers
+/// exactly where goto-definition's [`self_target`] does: on the declaration's
+/// own name ([JLS §6.3] — a declaration's name is not a reference to itself,
+/// and nothing else written in a declaration is a reference to it), so the two
+/// requests agree on which declaration an offset names. A *type parameter* has
+/// no item of its own, so a hover on its declaration or on a reference to it
+/// (both of which a definition answers) renders nothing yet.
 pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     let tree = hir::file_item_tree(db, file);
     let bodies = hir::file_body_tree(db, file);
@@ -2681,9 +2691,13 @@ fn declaration_hover(db: &RootDatabase, file: FileId, item: ItemId) -> Option<Ho
     })
 }
 
-/// The rendered signature of the declaration the offset falls inside: a
-/// method's `name(params): ret`, a field's `name: ty`, a class-like
-/// declaration's `kind name` — and the declaration's documentation.
+/// The rendered signature of the declaration the offset *names*: a method's
+/// `name(params): ret`, a field's `name: ty`, a class-like declaration's
+/// `kind name` — and the declaration's documentation. `None` for an offset
+/// inside a declaration that is not on its name: its modifiers, its keywords,
+/// its punctuation and its body name nothing ([JLS §6.3] — a declaration's name
+/// is not a reference to itself, and nothing else in the declaration is a
+/// reference to it).
 ///
 /// The candidates come from the item tree, innermost first ([`items_at`]), not
 /// from the file's symbol index: a *local* class-like declaration
@@ -2691,22 +2705,23 @@ fn declaration_hover(db: &RootDatabase, file: FileId, item: ItemId) -> Option<Ho
 /// has no canonical name ([§6.7]) and is deliberately absent from that index
 /// (`hir::file_symbols`), yet its own name is exactly what a hover on it asks
 /// about.
+///
+/// The name is the same token [`self_target`] answers a definition with, so the
+/// two requests agree on which declaration an offset names — and both answer
+/// nothing on `private static final String field`.
 fn render_symbol_decl(
     db: &RootDatabase,
     file: FileId,
     tree: &ItemTree,
     offset: TextSize,
 ) -> Option<HoverInfo> {
-    for item in items_at(db, file, tree, offset) {
-        let Some(value) = item_header(db, file, tree, item) else {
-            continue;
-        };
-        return Some(HoverInfo {
-            value,
-            docs: crate::docs::hover_docs(db, file, item),
-        });
-    }
-    None
+    let item = items_at(db, file, tree, offset).into_iter().find(|&item| {
+        item_name_range(db, file, tree, item).is_some_and(|range| range.contains(offset))
+    })?;
+    Some(HoverInfo {
+        value: item_header(db, file, tree, item)?,
+        docs: crate::docs::hover_docs(db, file, item),
+    })
 }
 
 /// The kind of member or type a reference resolves to.

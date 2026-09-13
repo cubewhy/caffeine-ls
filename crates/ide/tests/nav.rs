@@ -287,8 +287,10 @@ fn hover_over_method_declaration() {
 #[test]
 fn hover_over_class_declaration() {
     let fixture = test_file(SRC);
-    // The class declaration's signature.
-    assert_snapshot!("hover_class_declaration", render_nav(&fixture, "class Nav"));
+    // The class declaration's signature — hover on its own name (`class Nav`'s
+    // `Nav`), which is the token the declaration is named by ([JLS §6.3]); the
+    // `class` keyword names nothing.
+    assert_snapshot!("hover_class_declaration", render_nav_at(&fixture, "Nav", 0));
 }
 
 // -- anchoring: a resolution belongs to the expression the offset is inside --------
@@ -363,6 +365,47 @@ fn goto_and_hover_anchor_on_the_innermost_expression() {
     );
 }
 
+// -- a declaration is answered by its own name -------------------------------
+
+/// A declaration is named by its own name token ([JLS §6.3]): a hover on the
+/// modifiers or the keywords of a declaration names nothing and answers
+/// nothing, and so does a definition — the enclosing class is *not* the
+/// declaration an offset on `private static final` names.
+const NAME_ONLY_SRC: &str = r#"package com.example;
+
+class Holder {
+    private static final Holder field = null;
+
+    static void main(String[] args) {}
+}
+"#;
+
+#[test]
+fn hover_and_definition_on_a_declaration_answer_only_its_name() {
+    let fixture = test_file(NAME_ONLY_SRC);
+    assert_snapshot!(
+        "hover_and_definition_on_a_declaration_answer_only_its_name",
+        render_nav_many(
+            &fixture,
+            &[
+                // The modifiers of the field and of the method: no declaration
+                // is written there, and the class that encloses them is not the
+                // declaration the offset names.
+                ("private static final", 0),
+                ("static final", 0),
+                ("final Holder field", 0),
+                ("static void main", 0),
+                // The declared type, for contrast: a reference, answered by the
+                // class it names.
+                ("Holder field", 0),
+                // The declaration's own name, for contrast.
+                ("field =", 0),
+                ("main(String", 0),
+            ],
+        )
+    );
+}
+
 // -- documentation: the hovered declaration's doc comment, rendered ---------------
 
 const DOC_SRC: &str = r#"package com.example;
@@ -400,14 +443,20 @@ class Docs {
 record Pair(int left, int right) {}
 "#;
 
-/// Renders the hover at `needle`: the header the tests above pin, and the
-/// documentation of the declaration behind it — the rendered doc comment, or
-/// `"<none>"` when the declaration has none.
+/// Renders the hover at the middle of `needle` ([`Fixture::offset`]): the
+/// header the tests below pin, and the documentation of the declaration behind
+/// it — the rendered doc comment, or `"<none>"` when the declaration has none.
 fn render_hover_docs(fixture: &Fixture, needle: &str) -> String {
-    match fixture
-        .analysis()
-        .hover(fixture.file, fixture.offset(needle))
-    {
+    render_hover_docs_at(fixture, needle, needle.len() / 2)
+}
+
+/// [`render_hover_docs`] with the offset `inner` bytes into the first `needle`.
+/// A test that hovers a *declaration* points at its own name token — the middle
+/// of `class Docs` is the keyword `class`, which names nothing, and a name is
+/// what a declaration hover asks about.
+fn render_hover_docs_at(fixture: &Fixture, needle: &str, inner: usize) -> String {
+    let offset = fixture.offset_start(needle, 0) + TextSize::new(inner as u32);
+    match fixture.analysis().hover(fixture.file, offset) {
         Ok(Some(hover)) => format!(
             "--- hover @{needle:?} ---\n{}\n--- docs ---\n{}",
             hover.value,
@@ -423,7 +472,7 @@ fn hover_docs_on_a_class_declaration() {
     let fixture = test_file(DOC_SRC);
     assert_snapshot!(
         "hover_docs_on_a_class_declaration",
-        render_hover_docs(&fixture, "class Docs")
+        render_hover_docs_at(&fixture, "class Docs", 6)
     );
 }
 
@@ -432,7 +481,7 @@ fn hover_docs_on_a_method_declaration() {
     let fixture = test_file(DOC_SRC);
     assert_snapshot!(
         "hover_docs_on_a_method_declaration",
-        render_hover_docs(&fixture, "String greet(")
+        render_hover_docs_at(&fixture, "String greet(", 7)
     );
 }
 
@@ -535,9 +584,11 @@ fn goto_dollar_named_method() {
 #[test]
 fn hover_over_dollar_class_declaration() {
     let fixture = test_file(DOLLAR_SRC);
+    // `$` is an ordinary identifier character ([JLS §3.8]), so the name the
+    // hover answers for is the whole `A$B`.
     assert_snapshot!(
         "hover_over_dollar_class_declaration",
-        render_nav(&fixture, "class A$B")
+        render_nav_at(&fixture, "A$B", 0)
     );
 }
 
@@ -958,7 +1009,9 @@ const ANNOTATION_GOTO: &[(&str, usize, &str, &str)] = &[
 ];
 
 /// The references of [`ANNOTATION_SRC`]'s pairs that name no declaration: a
-/// value that is a literal.
+/// value that is a literal. No declaration is written there, so the hover
+/// beside each target is `<none>` — an element value is lowered outside any
+/// body, so even the literal's own type has no owner to be read from yet.
 const ANNOTATION_NONE: &[(&str, usize)] = &[("\"x\"", 0), ("2 * 3", 0)];
 
 /// The pair's name is read through the lexer's Unicode translation ([JLS
@@ -998,7 +1051,9 @@ fn goto_annotation_element_pair_matrix() {
 // -- type parameters ([JLS §4.4]) ---------------------------------------------------
 // A written type variable denotes the *parameter* that declares it — the
 // narrowest declaration of the name ([§6.4.1]), never a class of the same
-// spelling.
+// spelling. A type parameter has no item of its own, so the *hover* rendered
+// beside each target is `<none>`: `ide::nav`'s hover notes that gap, and the
+// definition is what these cases pin.
 
 #[test]
 fn goto_type_parameter_reference() {

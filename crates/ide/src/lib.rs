@@ -313,8 +313,9 @@ impl Analysis {
         self.with_db(|db| nav::pending_library_files(db, file_id, offset))
     }
 
-    /// The hover at `offset` — the type of the expression or the signature of
-    /// the declaration, or `None` when nothing is there. Serves the LSP
+    /// The hover at `offset` — the declaration a reference names, the type of
+    /// the expression the offset is inside, or the declaration whose own name
+    /// the offset is on; `None` when the offset names nothing. Serves the LSP
     /// `textDocument/hover` request.
     pub fn hover(
         &self,

@@ -2481,7 +2481,7 @@ class Nav {
     );
     insta::assert_json_snapshot!("hover_method_declaration", response);
 
-    let (line, character) = position_of(text, "class Nav");
+    let (line, character) = position_inside(text, "class Nav", 6);
     let response = request_until(
         &lsp,
         "textDocument/hover",
@@ -2582,6 +2582,11 @@ fn test_hover_and_definition_anchor() {
     lsp.wait_until_workspace_is_loaded();
 
     let probes: &[(&str, &str, usize)] = &[
+        // §6.3: a declaration is named by its own name token — its modifiers,
+        // its keywords and its punctuation name nothing, and neither hover nor
+        // definition may answer the enclosing declaration for them.
+        ("field-modifiers", "private static final String field", 3),
+        ("class-keyword", "public class Main", 9),
         // §15.11.1: a static field read through the class that declares it, as
         // an argument of a library invocation — the field's declaration, not
         // `println`'s.

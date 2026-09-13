@@ -4,6 +4,16 @@ expression: observed
 ---
 [
   {
+    "at": "field-modifiers",
+    "hover": null,
+    "definition": null
+  },
+  {
+    "at": "class-keyword",
+    "hover": null,
+    "definition": null
+  },
+  {
     "at": "field-read",
     "hover": "field: String",
     "definition": [

@@ -33,7 +33,7 @@ s @152..153
 --- goto @"T> T pick"#0 ---
 T @69..70
 --- hover ---
-pick(T, T): T
+<none>
 --- goto @"Main m"#0 ---
 Main @28..32
 --- hover ---

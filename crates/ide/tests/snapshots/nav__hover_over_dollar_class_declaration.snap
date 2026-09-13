@@ -1,8 +1,8 @@
 ---
 source: crates/ide/tests/nav.rs
-expression: "render_nav(&fixture, \"class A$B\")"
+expression: "render_nav_at(&fixture, \"A$B\", 0)"
 ---
---- goto @"class A$B" ---
-
+--- goto @"A$B"#0 ---
+A$B @28..31
 --- hover ---
 class A$B

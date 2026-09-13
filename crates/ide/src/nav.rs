@@ -137,8 +137,10 @@ pub fn pending_library_files(
     }
 }
 
-/// The hover at `offset`, resolved by the file's language: the type of the
-/// expression or the signature of the declaration the offset falls on.
+/// The hover at `offset`, resolved by the file's language: the declaration a
+/// reference names, the type of the expression the offset is inside, or the
+/// declaration whose own name the offset is on — nothing for an offset that
+/// names nothing.
 pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     match hir::file_item_tree(db, file).language {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::hover(db, file, offset),

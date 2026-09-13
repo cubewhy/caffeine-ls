@@ -1,0 +1,32 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture,\n&[(\"private static final\", 0), (\"static final\", 0), (\"final Holder field\", 0),\n(\"static void main\", 0), (\"Holder field\", 0), (\"field =\", 0),\n(\"main(String\", 0),],)"
+---
+--- goto @"private static final"#0 ---
+
+--- hover ---
+<none>
+--- goto @"static final"#0 ---
+
+--- hover ---
+<none>
+--- goto @"final Holder field"#0 ---
+
+--- hover ---
+<none>
+--- goto @"static void main"#0 ---
+
+--- hover ---
+<none>
+--- goto @"Holder field"#0 ---
+Holder @28..34
+--- hover ---
+class Holder
+--- goto @"field ="#0 ---
+field @69..74
+--- hover ---
+field: Holder
+--- goto @"main(String"#0 ---
+main @100..104
+--- hover ---
+main(String[]): void
