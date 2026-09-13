@@ -5,6 +5,6 @@ expression: response
 {
   "contents": {
     "kind": "markdown",
-    "value": "```java\ncount: int\n```\n\nHow many items."
+    "value": "```java\nclass Nav\n```\n\nA documented class.\n\nSecond paragraph."
   }
 }

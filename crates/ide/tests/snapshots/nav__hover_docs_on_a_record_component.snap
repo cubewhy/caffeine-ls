@@ -1,0 +1,8 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_hover_docs(&fixture, \"int left\")"
+---
+--- hover @"int left" ---
+left: int
+--- docs ---
+the left value

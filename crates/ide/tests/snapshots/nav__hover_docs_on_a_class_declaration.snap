@@ -1,0 +1,10 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_hover_docs(&fixture, \"class Docs\")"
+---
+--- hover @"class Docs" ---
+class Docs
+--- docs ---
+A documented class.
+
+Second paragraph, with a `List<Item>`.

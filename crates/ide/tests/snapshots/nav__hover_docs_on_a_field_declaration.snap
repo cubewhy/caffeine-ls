@@ -1,0 +1,8 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_hover_docs(&fixture, \"count;\")"
+---
+--- hover @"count;" ---
+count: int
+--- docs ---
+How many items.

@@ -1,0 +1,16 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_hover_docs(&fixture, \"= greet(\")"
+---
+--- hover @"= greet(" ---
+greet(String): String
+--- docs ---
+Greets someone.
+
+**Parameters:**
+- `name` — who to greet
+
+**Returns:** the greeting
+
+**Throws:**
+- `IllegalStateException` — if closed

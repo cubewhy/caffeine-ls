@@ -1,11 +1,10 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-assertion_line: 633
 expression: response
 ---
 {
   "contents": {
     "kind": "markdown",
-    "value": "```java\ncompute(): int\n```"
+    "value": "```java\ncompute(): int\n```\n\nComputes the count.\n\n**Returns:** the count"
   }
 }

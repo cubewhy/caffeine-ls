@@ -5,4 +5,4 @@ expression: "render_nav(&fixture, \"m$1();\")"
 --- goto @"m$1();" ---
 m$1 @57..60
 --- hover ---
-void
+m$1(): void

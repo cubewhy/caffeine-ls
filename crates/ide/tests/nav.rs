@@ -289,6 +289,121 @@ fn hover_over_class_declaration() {
     assert_snapshot!("hover_class_declaration", render_nav(&fixture, "class Nav"));
 }
 
+// -- documentation: the hovered declaration's doc comment, rendered ---------------
+
+const DOC_SRC: &str = r#"package com.example;
+
+/**
+ * A documented class.
+ * <p>Second paragraph, with a {@code List<Item>}.
+ */
+class Docs {
+    /** How many items. */
+    int count;
+
+    /**
+     * Greets someone.
+     *
+     * @param name who to greet
+     * @return the greeting
+     * @throws IllegalStateException if closed
+     */
+    String greet(String name) {
+        return name;
+    }
+
+    void call() {
+        String s = greet("world");
+    }
+}
+
+/**
+ * A documented pair.
+ *
+ * @param left the left value
+ * @param right the right value
+ */
+record Pair(int left, int right) {}
+"#;
+
+/// Renders the hover at `needle`: the header the tests above pin, and the
+/// documentation of the declaration behind it — the rendered doc comment, or
+/// `"<none>"` when the declaration has none.
+fn render_hover_docs(fixture: &Fixture, needle: &str) -> String {
+    match fixture
+        .analysis()
+        .hover(fixture.file, fixture.offset(needle))
+    {
+        Ok(Some(hover)) => format!(
+            "--- hover @{needle:?} ---\n{}\n--- docs ---\n{}",
+            hover.value,
+            hover.docs.as_deref().unwrap_or("<none>")
+        ),
+        Ok(None) => format!("--- hover @{needle:?} ---\n<none>"),
+        Err(err) => panic!("hover failed: {err:?}"),
+    }
+}
+
+#[test]
+fn hover_docs_on_a_class_declaration() {
+    let fixture = test_file(DOC_SRC);
+    assert_snapshot!(
+        "hover_docs_on_a_class_declaration",
+        render_hover_docs(&fixture, "class Docs")
+    );
+}
+
+#[test]
+fn hover_docs_on_a_method_declaration() {
+    let fixture = test_file(DOC_SRC);
+    assert_snapshot!(
+        "hover_docs_on_a_method_declaration",
+        render_hover_docs(&fixture, "String greet(")
+    );
+}
+
+#[test]
+fn hover_docs_on_a_field_declaration() {
+    let fixture = test_file(DOC_SRC);
+    assert_snapshot!(
+        "hover_docs_on_a_field_declaration",
+        render_hover_docs(&fixture, "count;")
+    );
+}
+
+/// A hover on a *reference* answers the declaration it names — the header of
+/// the referenced declaration, and its documentation — not the expression's
+/// type.
+#[test]
+fn hover_docs_on_a_reference() {
+    let fixture = test_file(DOC_SRC);
+    assert_snapshot!(
+        "hover_docs_on_a_reference",
+        render_hover_docs(&fixture, "= greet(")
+    );
+}
+
+/// A record component has no doc comment of its own; the record's
+/// `@param <component>` text documents it.
+#[test]
+fn hover_docs_on_a_record_component() {
+    let fixture = test_file(DOC_SRC);
+    assert_snapshot!(
+        "hover_docs_on_a_record_component",
+        render_hover_docs(&fixture, "int left")
+    );
+}
+
+/// A declaration with no doc comment has no documentation to show.
+#[test]
+fn hover_docs_on_an_undocumented_declaration() {
+    let fixture = test_file(DOC_SRC);
+    assert_snapshot!(
+        "hover_docs_on_an_undocumented_declaration",
+        render_hover_docs(&fixture, "void call(")
+    );
+}
+
 // -- shadowing ([JLS §6.3]/[§6.4]): the innermost in-scope declarator wins ---------
 
 const SHADOW_SRC: &str = r#"package com.example;

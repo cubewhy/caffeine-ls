@@ -5,36 +5,36 @@ expression: "render_nav_many(&fixture, &cases)"
 --- goto @"this(0)"#0 ---
 Sub @153..156
 --- hover ---
-void
+Sub(int)
 --- goto @"super(n)"#0 ---
 Base @70..74
 --- hover ---
-void
+Base(int)
 --- goto @"super();"#0 ---
 Empty @588..593
 --- hover ---
-void
+class Empty
 --- goto @"this.count"#0 ---
 Sub @94..97
 --- hover ---
-com.example.Sub
+class Sub
 --- goto @"super.count"#0 ---
 Base @28..32
 --- hover ---
-int
+class Base
 --- goto @"this;"#0 ---
 Sub @94..97
 --- hover ---
-com.example.Sub
+class Sub
 --- goto @"this;"#1 ---
 Outer @304..309
 --- hover ---
-com.example.Outer
+class Outer
 --- goto @"Outer.this"#0 ---
 Outer @304..309
 --- hover ---
-com.example.Outer
+class Outer
 --- goto @"Greeter.super"#0 ---
 Greeter @414..421
 --- hover ---
-com.example.String
+interface Greeter

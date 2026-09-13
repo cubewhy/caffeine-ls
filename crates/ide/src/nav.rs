@@ -43,10 +43,14 @@ pub struct NavigationTarget {
     pub name: String,
 }
 
-/// A hover result: a rendered signature or type.
+/// A hover result: a rendered signature or type, plus the documentation of the
+/// declaration it describes, rendered as Markdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HoverInfo {
     pub value: String,
+    /// The hovered declaration's documentation, rendered as Markdown; `None`
+    /// when the declaration has none, or its language's arm has none.
+    pub docs: Option<String>,
 }
 
 /// One reference site: a file and the range of the *name token* at the site —

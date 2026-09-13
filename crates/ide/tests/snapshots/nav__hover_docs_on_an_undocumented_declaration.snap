@@ -1,0 +1,8 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_hover_docs(&fixture, \"void call(\")"
+---
+--- hover @"void call(" ---
+call(): void
+--- docs ---
+<none>

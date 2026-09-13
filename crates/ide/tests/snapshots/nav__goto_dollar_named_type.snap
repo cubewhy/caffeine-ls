@@ -5,4 +5,4 @@ expression: "render_nav(&fixture, \"new A$B\")"
 --- goto @"new A$B" ---
 A$B @28..31
 --- hover ---
-com.example.A$B
+class A$B

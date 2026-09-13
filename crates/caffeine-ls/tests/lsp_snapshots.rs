@@ -2430,9 +2430,19 @@ fn test_hover() {
     let path = "/src/com/example/Nav.java";
     let text = r#"package com.example;
 
+/**
+ * A documented class.
+ * <p>Second paragraph.
+ */
 class Nav {
+    /** How many items. */
     int count;
 
+    /**
+     * Computes the count.
+     *
+     * @return the count
+     */
     int compute() {
         int local = count;
         return local;
@@ -2442,8 +2452,9 @@ class Nav {
     lsp.write_file(path, text);
     lsp.open_document(path);
 
-    // Hover over the `count` read shows its type `int`; over the method
-    // declaration shows its signature.
+    // Hover over the `count` read answers the *declaration* it names with its
+    // documentation; over the method declaration its signature and
+    // documentation; over the class declaration the class's.
     let (line, character) = position_of(text, "= count;");
     let response = request_until(
         &lsp,
@@ -2467,6 +2478,18 @@ class Nav {
         |response| !response.is_null(),
     );
     insta::assert_json_snapshot!("hover_method_declaration", response);
+
+    let (line, character) = position_of(text, "class Nav");
+    let response = request_until(
+        &lsp,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+        |response| !response.is_null(),
+    );
+    insta::assert_json_snapshot!("hover_class_declaration", response);
 }
 
 /// Re-issues `workspace/diagnostic` until `pred` holds, returning the accepted
@@ -3827,7 +3850,7 @@ class Sample implements Runnable {
 fn library_source_definition_materializes_and_navigates() {
     let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
 
-    let foo_source = "package com.example;\n\npublic class Foo extends Base {\n    public void greet(int count) {}\n}\n";
+    let foo_source = "package com.example;\n\npublic class Foo extends Base {\n    /**\n     * Greets the given count.\n     *\n     * @param count how many\n     */\n    public void greet(int count) {}\n}\n";
     let base_source =
         "package com.example;\n\npublic class Base {\n    public void hello(int n) {}\n}\n";
     let widget_source = "package com.example;\n\npublic class Widget {\n    public int size;\n\n    public Widget(int size) {}\n}\n";
@@ -3897,7 +3920,8 @@ fn library_source_definition_materializes_and_navigates() {
     // round, both files are materialized, and the retried hover renders the
     // signature with the source's parameter name — the hand-built classfile
     // carries no `MethodParameters` attribute, so `count` can only come from
-    // the source.
+    // the source. A classfile carries no documentation either, so the doc
+    // comment behind the signature comes from the same loaded source.
     let (line, character) = position_of(app_source, "f.greet(1)");
     let hover = lsp.request(
         "textDocument/hover",
@@ -3912,6 +3936,11 @@ fn library_source_definition_materializes_and_navigates() {
     assert!(
         hover_value.contains("void greet(int count)"),
         "the merged signature must carry the source parameter name: {hover_value:?}"
+    );
+    assert!(
+        hover_value.contains("Greets the given count.")
+            && hover_value.contains("- `count` — how many"),
+        "the documentation must come from the materialized source: {hover_value:?}"
     );
 
     // -- the member call resolves the same way now that both files are loaded.

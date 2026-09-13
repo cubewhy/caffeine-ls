@@ -5,15 +5,15 @@ expression: "render_nav_many(&fixture, &cases)"
 --- goto @"Base {"#1 ---
 Base @224..228
 --- hover ---
-class Sub
+class Base
 --- goto @"Factory {"#1 ---
 Factory @153..160
 --- hover ---
-class Impl
+interface Factory
 --- goto @"Marker"#1 ---
 Marker @98..104
 --- hover ---
-class Sub
+@interface Marker
 --- goto @"Base self"#0 ---
 Base @224..228
 --- hover ---
@@ -21,52 +21,52 @@ class Base
 --- goto @"Base b"#0 ---
 Base @224..228
 --- hover ---
-size(Base): int
+class Base
 --- goto @"Base b"#2 ---
 Base @224..228
 --- hover ---
-b: com.example.Base
+class Base
 --- goto @"Base make"#0 ---
 Base @224..228
 --- hover ---
-make(): Base
+class Base
 --- goto @"Base cast"#0 ---
 Base @224..228
 --- hover ---
-use(Base, Sub, Box<Base>): void
+class Base
 --- goto @"Base> boxed"#0 ---
 Base @224..228
 --- hover ---
-boxed: com.example.Box<com.example.Base>
+class Base
 --- goto @"Base> {}"#0 ---
 Base @224..228
 --- hover ---
-class Box
+class Base
 --- goto @"Base) other"#0 ---
 Base @224..228
 --- hover ---
-com.example.Base
+class Base
 --- goto @"Base;"#1 ---
 Base @224..228
 --- hover ---
-boolean
+class Base
 --- goto @"Base.class"#0 ---
 Base @224..228
 --- hover ---
-java.lang.Class<com.example.Base>
+class Base
 --- goto @"Base[1]"#0 ---
 Base @224..228
 --- hover ---
-com.example.Base[]
+class Base
 --- goto @"Base;"#0 ---
 Base @224..228
 --- hover ---
-<none>
+class Base
 --- goto @"STATIC;"#0 ---
 STATIC @246..252
 --- hover ---
-<none>
+STATIC: int
 --- goto @"Base.STATIC"#0 ---
 Base @224..228
 --- hover ---
-<none>
+class Base

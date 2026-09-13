@@ -5,47 +5,47 @@ expression: "render_nav_many(&fixture, &cases)"
 --- goto @"count = b"#0 ---
 count @267..272
 --- hover ---
-int
+count: int
 --- goto @"count;"#1 ---
 count @267..272
 --- hover ---
-int
+count: int
 --- goto @"self = b"#0 ---
 self @284..288
 --- hover ---
-com.example.Base
+self: Base
 --- goto @"self;"#1 ---
 self @284..288
 --- hover ---
-com.example.Base
+self: Base
 --- goto @"method(1);"#0 ---
 method @300..306
 --- hover ---
-void
+method(int): void
 --- goto @"method(1)"#1 ---
 method @300..306
 --- hover ---
-void
+method(int): void
 --- goto @"method(1L)"#0 ---
 method @327..333
 --- hover ---
-void
+method(long): void
 --- goto @"pick(1L)"#0 ---
 pick @380..384
 --- hover ---
-void
+pick(long): void
 --- goto @"STATIC;"#1 ---
 STATIC @246..252
 --- hover ---
-int
+STATIC: int
 --- goto @"FIRST;"#0 ---
 FIRST @122..127
 --- hover ---
-com.example.E
+FIRST
 --- goto @"SECOND:"#0 ---
 SECOND @133..139
 --- hover ---
-com.example.E
+SECOND
 --- goto @"q.count"#0 ---
 q @999..1000
 --- hover ---

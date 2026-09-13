@@ -5,16 +5,16 @@ expression: "render_nav_many(&fixture, &cases)"
 --- goto @"new Alt(1)"#0 ---
 Alt @62..65
 --- hover ---
-com.example.Alt
+Alt(long)
 --- goto @"new Two(1L)"#0 ---
 Two @166..169
 --- hover ---
-com.example.Two
+Two(long)
 --- goto @"new Two(1)"#0 ---
 Two @147..150
 --- hover ---
-com.example.Two
+Two(int)
 --- goto @"new Pair(1, 2)"#0 ---
 Pair @411..415
 --- hover ---
-com.example.Pair
+Pair()

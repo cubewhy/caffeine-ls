@@ -15,8 +15,7 @@ use lsp_test::classfile::{
 use rowan::TextSize;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 
-const FOO_SRC: &str =
-    "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
+const FOO_SRC: &str = "package com.example;\n\npublic class Foo {\n    /**\n     * Greets the given count.\n     *\n     * @param count how many\n     */\n    public void greet(int count) {}\n}\n";
 const CHILD_SRC: &str = "package com.example;\n\npublic class Child extends Greeter {\n    public void childOnly() {}\n}\n";
 const GREETER_SRC: &str = "package com.example;\n\npublic class Greeter extends Root {\n    public void hello(int n) {}\n}\n";
 const ROOT_SRC: &str =
@@ -280,6 +279,14 @@ impl Fixture {
             .hover(self.app, self.offset(needle))
             .unwrap()
             .map(|info| info.value)
+    }
+
+    /// The documentation of the hover at `needle`, rendered as Markdown.
+    fn hover_docs(&self, needle: &str) -> Option<String> {
+        self.analysis()
+            .hover(self.app, self.offset(needle))
+            .unwrap()
+            .and_then(|info| info.docs)
     }
 }
 
@@ -578,6 +585,28 @@ fn hover_shows_the_merged_signature() {
     assert_eq!(
         fixture.hover("f.greet(1)").as_deref(),
         Some("void greet(int count)")
+    );
+}
+
+/// A classfile carries no documentation ([JVMS §4.7] has no comment
+/// attribute), so a library hover documents the member from its *source*
+/// declaration — and a library with no sources documents nothing.
+///
+/// [JVMS §4.7]: https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7
+#[test]
+fn hover_shows_the_source_documentation() {
+    let fixture = fixture(&["com/example/Foo.java"], false);
+
+    // The merged signature stays what it was (see
+    // [`hover_shows_the_merged_signature`]); the documentation comes from the
+    // same loaded source the parameter name does.
+    assert_eq!(
+        fixture.hover("f.greet(1)").as_deref(),
+        Some("void greet(int count)")
+    );
+    assert_eq!(
+        fixture.hover_docs("f.greet(1)").as_deref(),
+        Some("Greets the given count.\n\n**Parameters:**\n- `count` — how many")
     );
 }
 

@@ -637,6 +637,10 @@ fn component_hover(
     };
     Some(HoverInfo {
         value: format!("{}: {ty}", component.name),
+        // A record component has no doc comment of its own (the specification
+        // recognises none before it); the record's `@param <component>` text
+        // documents it.
+        docs: crate::docs::doc_param(db, file, component.record, &component.name),
     })
 }
 
@@ -2283,6 +2287,13 @@ fn library_owner_stub(
 /// The member is the one the resolution selected: `descriptor` is the
 /// classfile identity it recorded ([JVMS §4.6]), which names one stub method
 /// where a parameter count would render the first overload of that arity.
+///
+/// A classfile carries no documentation ([JVMS §4.7] has no comment
+/// attribute), so the documentation is whatever the member's *loaded source*
+/// declares — and a sourceless library has none: the signature renders without
+/// it, and nothing starts a JVM for a hover.
+///
+/// [JVMS §4.7]: https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7
 fn library_member_signature(
     db: &RootDatabase,
     library: hir::LibraryId,
@@ -2298,7 +2309,7 @@ fn library_member_signature(
     };
     let interner = &db.hir_state().interner;
 
-    match use_kind {
+    let value = match use_kind {
         Use::Field => {
             let field = stub
                 .fields
@@ -2306,9 +2317,7 @@ fn library_member_signature(
                 .find(|field| interner.resolve(&field.name) == name)?;
             let field_ty = hir_ty::ty_from_library(db, &field.field_type);
             let ty = field_ty.display(db);
-            Some(HoverInfo {
-                value: format!("{ty} {name}"),
-            })
+            format!("{ty} {name}")
         }
         Use::Method | Use::Constructor => {
             // §8.8/[JVMS §4.6]: a constructor's signature carries no return
@@ -2345,11 +2354,40 @@ fn library_member_signature(
                     format!("{ty} {name}")
                 })
                 .collect();
-            Some(HoverInfo {
-                value: format!("{head}{name}({})", params.join(", ")),
-            })
+            format!("{head}{name}({})", params.join(", "))
         }
-    }
+    };
+
+    Some(HoverInfo {
+        value,
+        docs: source.and_then(|(file, item)| crate::docs::hover_docs(db, file, item)),
+    })
+}
+
+/// The hover of a resolved library member.
+///
+/// The declaration is where its source is: a *loaded* source contributes the
+/// parameter *names* the classfile may omit (and its documentation, which no
+/// classfile carries); a *sourceless* owner contributes none — only its
+/// parameter names would come out of the decompiled file, and they are not
+/// worth a JVM start on hover, the classfile stub already rendering the
+/// signature. A *pending* source is materialized and the request re-run
+/// instead, so `None` is the deferral the LSP layer drives.
+fn library_member_hover(
+    db: &RootDatabase,
+    library: hir::LibraryId,
+    owner_fqn: &Name,
+    name: &str,
+    use_kind: Use,
+    descriptor: Option<&str>,
+    decl: &hir::LibrarySourceDecl,
+) -> Option<HoverInfo> {
+    let source = match decl {
+        hir::LibrarySourceDecl::Loaded { file, item } => Some((*file, *item)),
+        hir::LibrarySourceDecl::Decompiled { .. } => None,
+        hir::LibrarySourceDecl::Pending { .. } => return None,
+    };
+    library_member_signature(db, library, owner_fqn, name, use_kind, descriptor, source)
 }
 
 /// The declared name of parameter `index` of the library member the resolution
@@ -2414,24 +2452,60 @@ fn type_ref_name(tyref: &syntax::stub::TypeRef<hir_expand::name::Name>) -> Optio
     }
 }
 
-/// The hover at `offset`: the merged signature of a resolved library member,
-/// the type of the expression or local the offset falls on, or the signature
-/// of the declaration it falls inside.
+/// The hover at `offset`: the header and documentation of the declaration a
+/// reference names, else the type of the expression or local the offset falls
+/// on, else the signature of the declaration it falls inside.
 pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     let tree = hir::file_item_tree(db, file);
     let bodies = hir::file_body_tree(db, file);
     let symbols = hir::file_symbols(db, file);
 
-    // A resolved library reference outranks everything below: its signature is
-    // what the user is asking about. When its declaring source is not loaded
-    // yet, hover answers `None` *without* consulting the fallbacks, so the LSP
-    // layer materializes the file and the retried hover shows the merged
-    // signature — answering the expression's type (or the bytecode-only
-    // rendering) here would hide the merge on the first, and most likely only,
-    // hover. A *sourceless* owner has no source to wait for: the LSP layer
-    // never defers a hover for a decompile, and such a reference is either
-    // rendered from its classfile stub (see below) or answered `None`.
-    match resolve_at(db, file, offset).into_iter().next() {
+    // A resolved reference outranks everything below: what the user is asking
+    // about is the declaration the reference names — its header *and* its
+    // documentation — the way an IDE answers a hover on a use. The resolutions
+    // are the ones goto-definition uses, so the two requests always agree on
+    // what a reference denotes.
+    //
+    // A *library* member is the one exception, and the classpath walk is asked
+    // for it first: the classfile is the authority for what a library declares,
+    // so its stub renders the member — with the parameter names the declaring
+    // source supplies when that source is loaded — where the resolution
+    // recorded from the body names the loaded source declaration itself. A
+    // sourceless library has nothing else to render at all. When the declaring
+    // source is not loaded yet, hover answers `None` *without* consulting the
+    // fallbacks, so the LSP layer materializes the file and the retried hover
+    // shows the merged signature — answering the expression's type (or the
+    // bytecode-only rendering) here would hide the merge on the first, and most
+    // likely only, hover. A *sourceless* owner has no source to wait for: the
+    // LSP layer never defers a hover for a decompile, and such a reference is
+    // either rendered from its classfile stub or answered `None`.
+    if let Some(resolution) = resolve_at(db, file, offset).into_iter().next() {
+        match &resolution {
+            Resolution::Pending(_) => return None,
+            Resolution::LibraryMember {
+                library,
+                owner_fqn,
+                name,
+                use_kind,
+                descriptor,
+                decl,
+            } => {
+                return library_member_hover(
+                    db,
+                    *library,
+                    owner_fqn,
+                    name,
+                    *use_kind,
+                    descriptor.as_deref(),
+                    decl,
+                );
+            }
+            // A declaration or a variable the walk found is answered by the
+            // resolved declaration below, which names the same thing.
+            Resolution::Decl { .. } | Resolution::Variable { .. } => {}
+        }
+    }
+    match resolutions(db, file, offset).into_iter().next() {
         Some(Resolution::Pending(_)) => return None,
         Some(Resolution::LibraryMember {
             library,
@@ -2441,37 +2515,37 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
             descriptor,
             decl,
         }) => {
-            // The declaration the resolution selected: a loaded source
-            // contributes the parameter *names* the classfile may omit; a
-            // sourceless owner contributes none (only its parameter names
-            // would come out of the decompiled file, and they are not worth a
-            // JVM start on hover — the classfile stub already renders the
-            // signature), and a pending one is materialized and the request
-            // re-run instead.
-            let source = match decl {
-                hir::LibrarySourceDecl::Loaded { file, item } => Some((file, item)),
-                hir::LibrarySourceDecl::Decompiled { .. } => None,
-                hir::LibrarySourceDecl::Pending { .. } => return None,
-            };
-            return library_member_signature(
+            return library_member_hover(
                 db,
                 library,
                 &owner_fqn,
                 &name,
                 use_kind,
                 descriptor.as_deref(),
-                source,
+                &decl,
             );
         }
-        // A declaration has no merged signature of its own, and a `Variable`
-        // (a local, a lambda parameter, a type parameter, a record component)
-        // is not a library reference: `resolve_at` never produces one for a
-        // type or a package.
-        Some(Resolution::Decl { .. }) | Some(Resolution::Variable { .. }) | None => {}
+        // A declaration has the header of its own kind, plus its
+        // documentation. A nameless one (an initializer, which no reference
+        // names) falls through like a `Variable`: a local, a lambda parameter,
+        // a type parameter and a record component are declarations without an
+        // item of their own, and the steps below answer them from the
+        // expression or the component list.
+        Some(Resolution::Decl {
+            file: decl_file,
+            item,
+            ..
+        }) => {
+            if let Some(hover) = declaration_hover(db, decl_file, item) {
+                return Some(hover);
+            }
+        }
+        Some(Resolution::Variable { .. }) | None => {}
     }
 
     // An expression's inferred type, from the enclosing body — walk the
-    // innermost enclosing expressions first.
+    // innermost enclosing expressions first. It has no declaration of its own,
+    // so it has no documentation.
     for expr_id in exprs_at(&bodies, offset) {
         for item in body_items_at(db, file, &tree, offset) {
             if let Some(body) = hir_ty::body_types(db, file, item)
@@ -2479,6 +2553,7 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
             {
                 return Some(HoverInfo {
                     value: ty.display(db).to_string(),
+                    docs: None,
                 });
             }
         }
@@ -2496,6 +2571,9 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
                 {
                     return Some(HoverInfo {
                         value: format!("{}: {}", local.name.as_str(), ty.display(db)),
+                        // A local is not a declaration the file's doc-comment
+                        // index carries.
+                        docs: None,
                     });
                 }
             }
@@ -2578,9 +2656,39 @@ fn body_items_at(
         .collect()
 }
 
+/// The declared header of an item: `kind name` for a class-like declaration,
+/// `name(params): ret` for a method, `name: ty` for a field, the bare name for
+/// an enum constant. `None` for a nameless declaration (an initializer).
+fn item_header(db: &RootDatabase, file: FileId, tree: &ItemTree, item: ItemId) -> Option<String> {
+    let data = tree.data(item);
+    let simple = data.name()?.simple_name();
+    Some(match hir::SourceSymbolKind::of(data)? {
+        hir::SourceSymbolKind::Method => {
+            crate::symbols::method_signature(db, file, item, simple, true)
+        }
+        hir::SourceSymbolKind::Field => {
+            format!("{simple}: {}", crate::symbols::item_ty(db, file, item))
+        }
+        hir::SourceSymbolKind::EnumConstant => simple.to_owned(),
+        kind => format!("{} {}", kind.label(), simple),
+    })
+}
+
+/// The hover of a declaration a reference resolved to ([`Resolution::Decl`]):
+/// the header of the declaration's kind, plus its documentation. The
+/// declaration may live in another file — a reference into an already-loaded
+/// library source resolves to an item of that file, not of the one hovered.
+fn declaration_hover(db: &RootDatabase, file: FileId, item: ItemId) -> Option<HoverInfo> {
+    let tree = hir::file_item_tree(db, file);
+    Some(HoverInfo {
+        value: item_header(db, file, &tree, item)?,
+        docs: crate::docs::hover_docs(db, file, item),
+    })
+}
+
 /// The rendered signature of the declaration the offset falls inside: a
 /// method's `name(params): ret`, a field's `name: ty`, a class-like
-/// declaration's `kind name`.
+/// declaration's `kind name` — and the declaration's documentation.
 fn render_symbol_decl(
     db: &RootDatabase,
     file: FileId,
@@ -2595,21 +2703,10 @@ fn render_symbol_decl(
             let range = item_range(db, file, &tree, s.item).unwrap_or_default();
             range.end() - range.start()
         })?;
-    let simple = symbol.name.simple_name();
-    let value = match symbol.kind {
-        hir::SourceSymbolKind::Method => {
-            crate::symbols::method_signature(db, file, symbol.item, simple, true)
-        }
-        hir::SourceSymbolKind::Field => {
-            format!(
-                "{simple}: {}",
-                crate::symbols::item_ty(db, file, symbol.item)
-            )
-        }
-        hir::SourceSymbolKind::EnumConstant => simple.to_string(),
-        kind => format!("{} {}", kind.label(), simple),
-    };
-    Some(HoverInfo { value })
+    Some(HoverInfo {
+        value: item_header(db, file, tree, symbol.item)?,
+        docs: crate::docs::hover_docs(db, file, symbol.item),
+    })
 }
 
 /// The kind of member or type a reference resolves to.

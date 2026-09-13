@@ -288,10 +288,18 @@ pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Resu
         }
         return Ok(None);
     };
+    // The signature in a Java fence, the declaration's documentation behind it
+    // as Markdown. Only Java produces a hover today, and the Kotlin arm
+    // answers `None`, so the fence is unconditional.
+    let mut value = format!("```java\n{}\n```", info.value);
+    if let Some(docs) = info.docs {
+        value.push_str("\n\n");
+        value.push_str(&docs);
+    }
     Ok(Some(Hover {
         contents: Contents::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: format!("```java\n{}\n```", info.value),
+            value,
         }),
         range: None,
     }))
