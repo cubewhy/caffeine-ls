@@ -4863,3 +4863,236 @@ fn jdk_sources_are_materialized_and_navigable() {
         materialized.len()
     );
 }
+
+// -- record components ([JLS §8.10]) ------------------------------------------------
+// A record component is a declaration of its own ([JLS §8.10.1]): the private
+// final field its reads name and the public accessor ([§8.10.3]) its calls
+// name are both declared by the component, in the same file and in every other
+// one. These tests pin the three requests that answer a declaration end to
+// end — goto-definition, references and semantic tokens — plus hover.
+
+/// The workspace of the record-component tests: a record read by its own body
+/// and called from another file.
+const RECORD_COMPONENT_LSP_FILES: &[(&str, &str)] = &[
+    (
+        "/src/com/example/Point.java",
+        r#"package com.example;
+
+record Point(int x, int y) {
+    int sum() {
+        return x + y;
+    }
+
+    int twice() {
+        return x() * 2;
+    }
+}
+"#,
+    ),
+    (
+        "/src/com/example/Client.java",
+        r#"package com.example;
+
+class Client {
+    int read(Point p) {
+        return p.x() + p.y();
+    }
+}
+"#,
+    ),
+];
+
+/// A harness over [`RECORD_COMPONENT_LSP_FILES`], both files open and the
+/// workspace loaded: a cross-file query must see the whole source set.
+fn record_component_lsp() -> LspHarness {
+    let lsp = create_lsp_with_setup(|root| {
+        for (path, text) in RECORD_COMPONENT_LSP_FILES {
+            let path = root.join(path.trim_start_matches('/'));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    });
+    for (path, _) in RECORD_COMPONENT_LSP_FILES {
+        lsp.open_document(path);
+    }
+    lsp.wait_until_workspace_is_loaded();
+    lsp
+}
+
+/// The `textDocument/definition` result at one position, normalized.
+fn definition_at(lsp: &LspHarness, path: &str, position: Position) -> serde_json::Value {
+    let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
+    let response = request_until(
+        lsp,
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": position,
+        }),
+        |response| !response.is_null(),
+    );
+    normalize_uris(response, &workspace_root)
+}
+
+/// `textDocument/definition` on a record component: the component's own name
+/// in the declaration header, the implicit field reads (unqualified and
+/// qualified), and the implicit accessor calls — inside the record and from
+/// another file — all answer the component's name token.
+#[test]
+fn test_goto_definition_record_component() {
+    let lsp = record_component_lsp();
+    let point = RECORD_COMPONENT_LSP_FILES[0].1;
+    let client = RECORD_COMPONENT_LSP_FILES[1].1;
+
+    let cases: &[(&str, &str, Position)] = &[
+        // The component's own name in the declaration header.
+        (
+            "header x",
+            "/src/com/example/Point.java",
+            start_of(point, "x, ", 0),
+        ),
+        (
+            "header y",
+            "/src/com/example/Point.java",
+            start_of(point, "y)", 0),
+        ),
+        // The implicit field, read unqualified.
+        (
+            "field x",
+            "/src/com/example/Point.java",
+            start_of(point, "x + y;", 0),
+        ),
+        // The implicit accessor, called on the record itself.
+        (
+            "accessor x",
+            "/src/com/example/Point.java",
+            start_of(point, "x() * 2", 0),
+        ),
+        // The implicit accessor, called on a receiver in another file.
+        (
+            "accessor x other file",
+            "/src/com/example/Client.java",
+            start_of(client, "x()", 0),
+        ),
+        (
+            "accessor y other file",
+            "/src/com/example/Client.java",
+            start_of(client, "y()", 0),
+        ),
+    ];
+    let rows: Vec<(&str, serde_json::Value)> = cases
+        .iter()
+        .map(|&(label, path, position)| (label, definition_at(&lsp, path, position)))
+        .collect();
+    insta::assert_json_snapshot!("goto_definition_record_component", rows);
+}
+
+/// `textDocument/hover` on a record component: the declaration is described by
+/// the declaration itself (`x: int`), while a *use* of a component is an
+/// expression like any other and answers its type — the same split a field's
+/// hover makes.
+#[test]
+fn test_hover_record_component() {
+    let lsp = record_component_lsp();
+    let point = RECORD_COMPONENT_LSP_FILES[0].1;
+
+    let hover_at = |label: &str, position: Position| {
+        (
+            label.to_owned(),
+            lsp.request(
+                "textDocument/hover",
+                json!({
+                    "textDocument": { "uri": lsp.uri("/src/com/example/Point.java") },
+                    "position": position,
+                }),
+            )["contents"]["value"]
+                .clone(),
+        )
+    };
+    let rows = vec![
+        hover_at("header x", start_of(point, "x, ", 0)),
+        hover_at("field x", start_of(point, "x + y;", 0)),
+        hover_at("accessor x", start_of(point, "x() * 2", 0)),
+    ];
+    insta::assert_json_snapshot!("hover_record_component", rows);
+}
+
+/// `textDocument/references` on a record component: every site that names it —
+/// the declaration, the field reads and the accessor calls, in the record's own
+/// file and in every other one.
+#[test]
+fn test_references_record_component() {
+    let lsp = record_component_lsp();
+    let point = RECORD_COMPONENT_LSP_FILES[0].1;
+    let position = start_of(point, "x, ", 0);
+
+    insta::assert_json_snapshot!(
+        "references_record_component_with_declaration",
+        reference_rows(&lsp, "/src/com/example/Point.java", position, true)
+    );
+    insta::assert_json_snapshot!(
+        "references_record_component_without_declaration",
+        reference_rows(&lsp, "/src/com/example/Point.java", position, false)
+    );
+}
+
+/// The semantic tokens of a record: a component's declaration is a property
+/// ([JLS §8.10.1]), a read of its private final field a `readonly` property,
+/// and a call of its accessor a method ([§8.10.3]) — including a varargs
+/// component, whose field and accessor carry the array type ([§8.4.1]).
+const RECORD_COMPONENT_TOKENS: &str = r#"package com.example;
+
+record Box<T>(T value, String... names) {
+    String first() {
+        return names[0];
+    }
+
+    T unwrap() {
+        return value;
+    }
+}
+
+class Client {
+    String read(Box<Integer> box) {
+        return box.names()[0];
+    }
+}
+"#;
+
+#[test]
+fn test_record_component_semantic_tokens() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Box.java";
+    lsp.write_file(path, RECORD_COMPONENT_TOKENS);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let legend = legend_of(&lsp);
+    let response = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": lsp.uri(path) } }),
+    );
+    let tokens = decode_tokens(&response, &legend);
+    let rows = render_tokens(&tokens, RECORD_COMPONENT_TOKENS);
+
+    assert_kinds(
+        &tokens,
+        RECORD_COMPONENT_TOKENS,
+        &[
+            // The record and its type parameter.
+            "struct+declaration Box",
+            "typeParameter+declaration T",
+            "type T",
+            // The component declarations ([JLS §8.10.1]).
+            "property+declaration value",
+            "property+declaration names",
+            // A read of a component's private final field ([§8.10.1]).
+            "property+readonly names",
+            "property+readonly value",
+            // A call of a component's accessor ([§8.10.3]) is a method call.
+            "method names",
+        ],
+    );
+
+    insta::assert_json_snapshot!("record_component_semantic_tokens", rows);
+}

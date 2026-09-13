@@ -1,0 +1,18 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: rows
+---
+[
+  [
+    "header x",
+    "```java\nx: int\n```"
+  ],
+  [
+    "field x",
+    "```java\nint\n```"
+  ],
+  [
+    "accessor x",
+    "```java\nint\n```"
+  ]
+]

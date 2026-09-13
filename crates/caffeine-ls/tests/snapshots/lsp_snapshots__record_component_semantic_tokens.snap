@@ -1,0 +1,39 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: rows
+---
+[
+  "0:0:7 keyword package",
+  "0:8:11 namespace com.example",
+  "2:7:3 struct+declaration Box",
+  "2:10:1 operator <",
+  "2:11:1 typeParameter+declaration T",
+  "2:12:1 operator >",
+  "2:14:1 type T",
+  "2:16:5 property+declaration value",
+  "2:23:6 type String",
+  "2:29:3 operator ...",
+  "2:33:5 property+declaration names",
+  "3:4:6 type String",
+  "3:11:5 method+declaration first",
+  "4:8:6 keyword return",
+  "4:15:5 property+readonly names",
+  "4:21:1 number 0",
+  "7:4:1 typeParameter T",
+  "7:6:6 method+declaration unwrap",
+  "8:8:6 keyword return",
+  "8:15:5 property+readonly value",
+  "12:0:5 keyword class",
+  "12:6:6 class+declaration Client",
+  "13:4:6 type String",
+  "13:11:4 method+declaration read",
+  "13:16:3 type Box",
+  "13:19:1 operator <",
+  "13:20:7 type Integer",
+  "13:27:1 operator >",
+  "13:29:3 parameter+declaration box",
+  "14:8:6 keyword return",
+  "14:15:3 parameter box",
+  "14:19:5 method names",
+  "14:27:1 number 0"
+]

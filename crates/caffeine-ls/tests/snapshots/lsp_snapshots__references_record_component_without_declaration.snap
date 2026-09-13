@@ -1,0 +1,45 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: "reference_rows(&lsp, \"/src/com/example/Point.java\", position, false)"
+---
+[
+  {
+    "uri": "file://<WORKSPACE_ROOT>/src/com/example/Client.java",
+    "range": {
+      "start": {
+        "line": 4,
+        "character": 17
+      },
+      "end": {
+        "line": 4,
+        "character": 18
+      }
+    }
+  },
+  {
+    "uri": "file://<WORKSPACE_ROOT>/src/com/example/Point.java",
+    "range": {
+      "start": {
+        "line": 4,
+        "character": 15
+      },
+      "end": {
+        "line": 4,
+        "character": 16
+      }
+    }
+  },
+  {
+    "uri": "file://<WORKSPACE_ROOT>/src/com/example/Point.java",
+    "range": {
+      "start": {
+        "line": 8,
+        "character": 15
+      },
+      "end": {
+        "line": 8,
+        "character": 16
+      }
+    }
+  }
+]

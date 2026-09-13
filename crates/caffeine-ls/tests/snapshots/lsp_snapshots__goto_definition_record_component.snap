@@ -1,0 +1,114 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: rows
+---
+[
+  [
+    "header x",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Point.java",
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 17
+          },
+          "end": {
+            "line": 2,
+            "character": 18
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "header y",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Point.java",
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 24
+          },
+          "end": {
+            "line": 2,
+            "character": 25
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "field x",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Point.java",
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 17
+          },
+          "end": {
+            "line": 2,
+            "character": 18
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "accessor x",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Point.java",
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 17
+          },
+          "end": {
+            "line": 2,
+            "character": 18
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "accessor x other file",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Point.java",
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 17
+          },
+          "end": {
+            "line": 2,
+            "character": 18
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "accessor y other file",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Point.java",
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 24
+          },
+          "end": {
+            "line": 2,
+            "character": 25
+          }
+        }
+      }
+    ]
+  ]
+]
