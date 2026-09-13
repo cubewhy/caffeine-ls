@@ -1,6 +1,7 @@
 {
   "name": "caffeine-ls",
   "displayName": "Caffeine LS",
+  "publisher": "cubewhy",
   "description": "Language support for JVM family languages",
   "repository": "https://github.com/cubewhy/caffeine-ls",
   "version": "0.0.1",
@@ -81,7 +82,11 @@
         },
         "caffeine_ls.decompiler": {
           "type": "string",
-          "enum": ["cfr", "vineflower", "none"],
+          "enum": [
+            "cfr",
+            "vineflower",
+            "none"
+          ],
           "default": "vineflower",
           "markdownDescription": "Decompiler used to show library classes that ship no sources. `none` disables it. Changing it re-syncs the workspace."
         }
