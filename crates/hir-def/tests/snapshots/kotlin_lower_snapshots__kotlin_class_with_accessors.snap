@@ -1,0 +1,32 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Counter {
+    var count: Int = 0
+        private set
+
+    val total: Int
+        get() = count + 1
+
+    var custom: Int = 0
+        get() = field
+        set(value) {
+            field = value
+        }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Counter @1..211
+  var count: Int @21..61
+    set() private @48..59
+  val total: Int @65..107
+    get() @88..105
+  var custom: Int @111..210
+    get() @139..152
+    set(value: Int) @161..209

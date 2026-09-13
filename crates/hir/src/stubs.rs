@@ -90,6 +90,12 @@ impl<'a> StubStringTable<'a> {
             TypeRef::TypeVariable(v) => TypeRef::TypeVariable(self.symbol(*v)),
             TypeRef::Array(inner) => TypeRef::Array(Box::new(self.type_ref(inner))),
             TypeRef::Error => TypeRef::Error,
+            // Kotlin-only variants; carried through so the round-trip is
+            // lossless, though a library stub never contains one.
+            TypeRef::Nullable(inner) => TypeRef::Nullable(Box::new(self.type_ref(inner))),
+            TypeRef::DefinitelyNonNull(inner) => {
+                TypeRef::DefinitelyNonNull(Box::new(self.type_ref(inner)))
+            }
         }
     }
 
@@ -302,6 +308,12 @@ impl<'a> DiskResolver<'a> {
             TypeRef::TypeVariable(v) => TypeRef::TypeVariable(self.symbol(*v)),
             TypeRef::Array(inner) => TypeRef::Array(Box::new(self.type_ref(inner))),
             TypeRef::Error => TypeRef::Error,
+            // Kotlin-only variants; carried through so the round-trip is
+            // lossless, though a library stub never contains one.
+            TypeRef::Nullable(inner) => TypeRef::Nullable(Box::new(self.type_ref(inner))),
+            TypeRef::DefinitelyNonNull(inner) => {
+                TypeRef::DefinitelyNonNull(Box::new(self.type_ref(inner)))
+            }
         }
     }
 

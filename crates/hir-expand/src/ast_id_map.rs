@@ -18,6 +18,7 @@ use std::marker::PhantomData;
 use rustc_hash::FxHashMap;
 use syntax::SourceFile;
 use syntax::java::SyntaxKind as J;
+use syntax::kotlin::SyntaxKind as K;
 
 use crate::arena::{Arena, ArenaId};
 
@@ -164,81 +165,10 @@ impl AstIdMap {
     /// structure of the file changes, which is the load-bearing invariant
     /// behind salsa backdating of the item tree.
     pub fn from_source_file(source: &SourceFile) -> Self {
-        let mut map = AstIdMap::default();
         match source {
-            SourceFile::Java(file) => {
-                // `body` marks body content: visited to find the blocks that
-                // declare local classes, but with nothing indexed.
-                let mut stack = vec![(file.syntax_node.clone(), None, false)];
-                while let Some((node, parent, body)) = stack.pop() {
-                    let kind = node.kind();
-                    if !body && is_indexable(kind) {
-                        let ptr = node_ptr(&node);
-                        debug_assert!(
-                            !map.index.contains_key(&ptr),
-                            "two distinct syntax nodes share a node pointer"
-                        );
-                        map.index.insert(ptr, map.arena.alloc(ptr));
-                    }
-                    let mut children: Vec<_> = node.children().collect();
-                    children.reverse();
-                    let push = |stack: &mut Vec<_>, children: Vec<_>, body: bool| {
-                        for child in children {
-                            stack.push((child, Some(kind), body));
-                        }
-                    };
-                    match kind {
-                        // A block's class-like declarations are its *local*
-                        // declarations ([§14.3]) and are declaration skeleton:
-                        // they leave the body region and are indexed with
-                        // their own skeleton. Everything else in the block —
-                        // statements, expressions, and any nested block or
-                        // lambda body that is itself body content — stays in
-                        // the body region, so naming a local variable, adding
-                        // a statement or rewriting an expression still leaves
-                        // the indexed sequence untouched.
-                        J::BLOCK => {
-                            for child in children {
-                                let body = !is_class_like_decl(child.kind());
-                                stack.push((child, Some(kind), body));
-                            }
-                        }
-                        // The members of a named class are declarations, and
-                        // so are those of an enum constant's class body — the
-                        // anonymous class the constant denotes ([§8.9.1],
-                        // [§15.9.1]). An *anonymous* class body's members are
-                        // not lowered, so its body stays pruned whole.
-                        J::CLASS_BODY if parent != Some(J::CLASS_DECL) => {
-                            if parent == Some(J::ENUM_CONSTANT) {
-                                push(&mut stack, children, false);
-                            }
-                        }
-                        // The declarator itself is indexed; its name, dims and
-                        // initializer are re-walked at resolution time.
-                        J::VARIABLE_DECLARATOR | J::ENUM_CONSTANT => {
-                            push(&mut stack, children, true)
-                        }
-                        // The default value expression is body-side; the
-                        // element's modifiers and type are declarations.
-                        J::ANNOTATION_TYPE_ELEMENT_DECL => {
-                            let declarations: Vec<_> = children
-                                .into_iter()
-                                .filter(|child| matches!(child.kind(), J::MODIFIER_LIST | J::TYPE))
-                                .collect();
-                            for child in declarations.into_iter().rev() {
-                                stack.push((child, Some(kind), false));
-                            }
-                        }
-                        _ => push(&mut stack, children, body),
-                    }
-                }
-            }
-            SourceFile::Kotlin(_) => {
-                // Kotlin is not lowered yet (empty item tree), so nothing is
-                // indexed.
-            }
+            SourceFile::Java(file) => build(&file.syntax_node),
+            SourceFile::Kotlin(file) => build(&file.syntax_node),
         }
-        map
     }
 
     /// The id of the node `ptr` points to, when the node was indexed.
@@ -335,6 +265,257 @@ fn is_indexable(kind: J) -> bool {
             | J::OPENS_DIRECTIVE
             | J::USES_DIRECTIVE
             | J::PROVIDES_DIRECTIVE
+    )
+}
+
+/// The per-language rules of the declaration-skeleton DFS
+/// ([`AstIdMap::from_source_file`]): which nodes are indexed, and how a node's
+/// children partition into declaration skeleton and body content.
+///
+/// Implemented for each language's rowan [`Language`](rowan::Language); the
+/// traversal itself — pre-order, arena allocation, the parent/body stack — is
+/// shared, so the only thing a new language supplies is these two rules.
+trait Skeleton: rowan::Language<Kind: Into<rowan::SyntaxKind>> {
+    /// Whether a node of this kind is indexed.
+    fn is_indexable(kind: Self::Kind) -> bool;
+
+    /// The children of `node` to visit, in source order, each with the body
+    /// flag it is visited under (`true` = body content: traversed to find the
+    /// declarations it may nest, but with nothing indexed). `in_body` is the
+    /// flag `node` itself was visited under; `parent` is its parent's kind.
+    fn plan(
+        node: &rowan::SyntaxNode<Self>,
+        parent: Option<Self::Kind>,
+        in_body: bool,
+        children: Vec<rowan::SyntaxNode<Self>>,
+    ) -> Vec<(rowan::SyntaxNode<Self>, bool)>;
+}
+
+/// Runs the declaration-skeleton DFS over `root` with the language's rules
+/// ([`Skeleton`]).
+fn build<L: Skeleton>(root: &rowan::SyntaxNode<L>) -> AstIdMap {
+    let mut map = AstIdMap::default();
+    // `body` marks body content: visited to find the blocks that declare local
+    // classes, but with nothing indexed.
+    let mut stack = vec![(root.clone(), None, false)];
+    while let Some((node, parent, body)) = stack.pop() {
+        let kind = node.kind();
+        if !body && L::is_indexable(kind) {
+            let ptr = node_ptr(&node);
+            debug_assert!(
+                !map.index.contains_key(&ptr),
+                "two distinct syntax nodes share a node pointer"
+            );
+            map.index.insert(ptr, map.arena.alloc(ptr));
+        }
+        let children: Vec<_> = node.children().collect();
+        let planned = L::plan(&node, parent, body, children);
+        // Pushed in reverse so the pre-order visit is source order.
+        for (child, in_body) in planned.into_iter().rev() {
+            stack.push((child, Some(kind), in_body));
+        }
+    }
+    map
+}
+
+impl Skeleton for syntax::java::Lang {
+    fn is_indexable(kind: J) -> bool {
+        is_indexable(kind)
+    }
+
+    fn plan(
+        node: &rowan::SyntaxNode<Self>,
+        parent: Option<J>,
+        body: bool,
+        children: Vec<rowan::SyntaxNode<Self>>,
+    ) -> Vec<(rowan::SyntaxNode<Self>, bool)> {
+        let visit = |children: Vec<rowan::SyntaxNode<Self>>, body: bool| -> Vec<_> {
+            children.into_iter().map(|child| (child, body)).collect()
+        };
+        match node.kind() {
+            // A block's class-like declarations are its *local* declarations
+            // ([§14.3]) and are declaration skeleton: they leave the body
+            // region and are indexed with their own skeleton. Everything else
+            // in the block — statements, expressions, and any nested block or
+            // lambda body that is itself body content — stays in the body
+            // region, so naming a local variable, adding a statement or
+            // rewriting an expression still leaves the indexed sequence
+            // untouched.
+            J::BLOCK => children
+                .into_iter()
+                .map(|child| {
+                    let body = !is_class_like_decl(child.kind());
+                    (child, body)
+                })
+                .collect(),
+            // The members of a named class are declarations, and so are those
+            // of an enum constant's class body — the anonymous class the
+            // constant denotes ([§8.9.1], [§15.9.1]). An *anonymous* class
+            // body's members are not lowered, so its body stays pruned whole.
+            J::CLASS_BODY if parent != Some(J::CLASS_DECL) => {
+                if parent == Some(J::ENUM_CONSTANT) {
+                    visit(children, false)
+                } else {
+                    Vec::new()
+                }
+            }
+            // The declarator itself is indexed; its name, dims and
+            // initializer are re-walked at resolution time.
+            J::VARIABLE_DECLARATOR | J::ENUM_CONSTANT => visit(children, true),
+            // The default value expression is body-side; the element's
+            // modifiers and type are declarations.
+            J::ANNOTATION_TYPE_ELEMENT_DECL => children
+                .into_iter()
+                .filter(|child| matches!(child.kind(), J::MODIFIER_LIST | J::TYPE))
+                .map(|child| (child, false))
+                .collect(),
+            _ => visit(children, body),
+        }
+    }
+}
+
+impl Skeleton for syntax::kotlin::Lang {
+    fn is_indexable(kind: K) -> bool {
+        is_indexable_kotlin(kind)
+    }
+
+    fn plan(
+        node: &rowan::SyntaxNode<Self>,
+        _parent: Option<K>,
+        body: bool,
+        children: Vec<rowan::SyntaxNode<Self>>,
+    ) -> Vec<(rowan::SyntaxNode<Self>, bool)> {
+        let visit = |children: Vec<rowan::SyntaxNode<Self>>, body: bool| -> Vec<_> {
+            children.into_iter().map(|child| (child, body)).collect()
+        };
+        match node.kind() {
+            // A block is body content: its local declarations (a local class,
+            // a local function) are not members of any declaration. The
+            // expression-bodied members (`fun f() = …`, `val x = …`) are
+            // covered by the `EQUAL` rule below.
+            K::BLOCK => Vec::new(),
+            // A function's, accessor's or property's expression body and a
+            // parameter's default value are body content: everything *before*
+            // the `=` belongs to the declaration (its name, receiver, type
+            // parameters, parameters, declared type), everything after it is
+            // re-walked by the body lowering.
+            K::FUNCTION_DECL
+            | K::GETTER
+            | K::SETTER
+            | K::CLASS_PARAMETER
+            | K::VALUE_PARAMETER
+            | K::PROPERTY_DECL => {
+                let mut planned = Vec::with_capacity(children.len());
+                let mut seen_equal = false;
+                for child in children {
+                    match child.kind() {
+                        K::EQUAL => seen_equal = true,
+                        // A property's accessors follow its initializer
+                        // (`var x = 0` / `private set`) but are declarations
+                        // of the property, not body content.
+                        K::GETTER | K::SETTER => {}
+                        // A delegated property's `by <expr>` is body content
+                        // and, unlike an initializer, needs no `=` to follow.
+                        K::PROPERTY_DELEGATE => continue,
+                        _ => {}
+                    }
+                    if seen_equal && !matches!(child.kind(), K::GETTER | K::SETTER) {
+                        continue;
+                    }
+                    planned.push((child, false));
+                }
+                planned
+            }
+            // An enum entry's constructor arguments are body content; its
+            // class body (the anonymous class the entry denotes) is a
+            // declaration region whose members are lowered
+            // ([spec: grammar-rule-enumEntry]).
+            K::ENUM_ENTRY => children
+                .into_iter()
+                .filter(|child| child.kind() != K::VALUE_ARGUMENTS)
+                .map(|child| {
+                    let in_body = child.kind() != K::CLASS_BODY;
+                    (child, in_body)
+                })
+                .collect(),
+            // A delegation specifier's `VALUE_ARGUMENTS` — the superclass
+            // constructor arguments of `class C : Base(1)` — are body content,
+            // as are the arguments of an annotation (`@Ann(1)`) and of a
+            // constructor delegation (`: this(x)`); so is the delegated
+            // *expression* of `interface I by delegate` (only the delegated
+            // type is declaration skeleton).
+            K::VALUE_ARGUMENTS | K::PROPERTY_DELEGATE => Vec::new(),
+            K::EXPLICIT_DELEGATION => children
+                .into_iter()
+                .filter(|child| is_type_node(child.kind()))
+                .map(|child| (child, false))
+                .collect(),
+            _ => visit(children, body),
+        }
+    }
+}
+
+/// Whether a Kotlin node kind is a type node, in the shapes `type_` produces
+/// ([spec: grammar-rule-type]): the wrapper nodes and the two leaves.
+fn is_type_node(kind: K) -> bool {
+    matches!(
+        kind,
+        K::TYPE
+            | K::NULLABLE_TYPE
+            | K::DEFINITELY_NON_NULLABLE_TYPE
+            | K::PARENTHESIZED_TYPE
+            | K::FUNCTION_TYPE
+            | K::USER_TYPE
+    )
+}
+
+/// The Kotlin kinds that may be indexed: every declaration node an item or a
+/// resolved range can target, plus the narrower nodes ranges are derived from
+/// (the declaration-part containers, the parameter/type-parameter lists, the
+/// type nodes, annotations and qualified names).
+fn is_indexable_kotlin(kind: K) -> bool {
+    matches!(
+        kind,
+        K::FILE_ANNOTATION
+            | K::PACKAGE_HEADER
+            | K::IMPORT_HEADER
+            | K::TYPE_ALIAS
+            | K::CLASS_DECL
+            | K::OBJECT_DECL
+            | K::COMPANION_OBJECT
+            | K::CLASS_BODY
+            | K::ENUM_CLASS_BODY
+            | K::ENUM_ENTRIES
+            | K::ENUM_ENTRY
+            | K::FUNCTION_DECL
+            | K::PROPERTY_DECL
+            | K::VARIABLE_DECLARATION
+            | K::MULTI_VARIABLE_DECLARATION
+            | K::PRIMARY_CONSTRUCTOR
+            | K::SECONDARY_CONSTRUCTOR
+            | K::ANONYMOUS_INITIALIZER
+            | K::CLASS_PARAMETERS
+            | K::CLASS_PARAMETER
+            | K::VALUE_PARAMETERS
+            | K::VALUE_PARAMETER
+            | K::TYPE_PARAMETERS
+            | K::TYPE_PARAMETER
+            | K::TYPE_CONSTRAINTS
+            | K::TYPE_CONSTRAINT
+            | K::DELEGATION_SPECIFIERS
+            | K::DELEGATION_SPECIFIER
+            | K::CONSTRUCTOR_INVOCATION
+            | K::CONSTRUCTOR_DELEGATION_CALL
+            | K::EXPLICIT_DELEGATION
+            | K::RECEIVER_TYPE
+            | K::GETTER
+            | K::SETTER
+            | K::TYPE
+            | K::NULLABLE_TYPE
+            | K::DEFINITELY_NON_NULLABLE_TYPE
+            | K::PARENTHESIZED_TYPE
+            | K::ANNOTATION
+            | K::QUALIFIED_NAME
     )
 }
 

@@ -1,0 +1,24 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+package com.example.app
+
+import com.example.app.Foo
+import com.example.app.*
+import com.example.app.Foo as Bar
+import kotlin.collections.List
+
+class Foo
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+import com.example.app.Foo; @26..53
+import com.example.app.*; @53..78
+import com.example.app.Foo as Bar; @78..112
+import kotlin.collections.List; @112..144
+class Foo @144..154

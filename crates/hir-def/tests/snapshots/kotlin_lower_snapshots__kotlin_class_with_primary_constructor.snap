@@ -1,0 +1,16 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Point(val x: Int, var y: Int = 0, label: String)
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Point @1..56
+  primary constructor(x: Int, y: Int, label: String) @12..55
+  val x: Int @13..23
+  var y: Int @25..39

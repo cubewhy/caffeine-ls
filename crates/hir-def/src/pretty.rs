@@ -16,6 +16,7 @@ use crate::item_tree::{FileItemTree, LoweredFile, language_name};
 pub fn pretty_print(lowered: &LoweredFile, map: &AstIdMap, source: &SourceFile) -> String {
     match &lowered.items {
         FileItemTree::Java(tree) => crate::java::pretty::pretty_print(tree, map, source),
+        FileItemTree::Kotlin(tree) => crate::kotlin::pretty::pretty_print(tree, map, source),
         FileItemTree::Empty(language) => format!("file ({})\n", language_name(*language)),
     }
 }
@@ -24,6 +25,7 @@ pub fn pretty_print(lowered: &LoweredFile, map: &AstIdMap, source: &SourceFile) 
 pub fn pretty_body(lowered: &LoweredFile) -> String {
     match &lowered.items {
         FileItemTree::Java(tree) => crate::java::pretty::pretty_body(tree, &lowered.bodies),
-        FileItemTree::Empty(_) => String::new(),
+        // The Kotlin body IR has not landed: no body renders yet.
+        FileItemTree::Kotlin(_) | FileItemTree::Empty(_) => String::new(),
     }
 }

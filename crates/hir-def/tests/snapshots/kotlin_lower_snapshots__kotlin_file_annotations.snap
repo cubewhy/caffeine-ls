@@ -1,0 +1,17 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+@file:JvmName("FooKt")
+@file:Suppress("UNUSED")
+
+package com.example
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+file annotation @1..24
+file annotation @24..50

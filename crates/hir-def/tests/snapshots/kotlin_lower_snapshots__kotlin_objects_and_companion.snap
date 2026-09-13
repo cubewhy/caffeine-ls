@@ -1,0 +1,31 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+object Util {
+    fun f(): Int = 1
+}
+
+class Factory {
+    private companion object {
+        const val DEFAULT = 1
+    }
+}
+
+class Named {
+    companion object Factory
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+object Util @1..37
+  fun f(): Int @19..35
+class Factory @39..123
+  companion object Companion private @59..121
+    val DEFAULT const @94..116
+class Named @125..169
+  companion object Factory @143..168

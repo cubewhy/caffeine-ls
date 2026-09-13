@@ -32,6 +32,19 @@ pub enum TypeRef<N> {
     TypeVariable(N),
     Array(Box<TypeRef<N>>),
     Error,
+    /// A Kotlin nullable type `T?` ([KLS
+    /// `type-system.html#nullable-types`](https://kotlinlang.org/spec/type-system.html#nullable-types)).
+    ///
+    /// A Kotlin *source* type only: nullability is not a JVM concept, so the
+    /// classfile reader never produces one (a compiled Kotlin type carries its
+    /// nullability in `@Metadata`, not in the descriptor). The variants are
+    /// declared *after* [`TypeRef::Error`] so the encoding of every existing
+    /// variant — and of every persisted library stub — is unchanged.
+    Nullable(Box<TypeRef<N>>),
+    /// A Kotlin definitely-non-nullable type `T & Any` ([KLS
+    /// `type-system.html#intersection-types`](https://kotlinlang.org/spec/type-system.html#intersection-types)).
+    /// Kotlin source only, like [`TypeRef::Nullable`].
+    DefinitelyNonNull(Box<TypeRef<N>>),
 }
 
 impl<N> TypeRef<N> {

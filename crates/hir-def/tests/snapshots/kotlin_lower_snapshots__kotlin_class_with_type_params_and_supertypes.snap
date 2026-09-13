@@ -1,0 +1,28 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Box<out T : Any>(private val items: List<T>) : Iterable<T> {
+    override fun iterator(): Iterator<T> = items.iterator()
+}
+
+class Sorted<T>(val items: List<T>) : Iterable<T> where T : Comparable<T> {
+    override fun iterator(): Iterator<T> = items.iterator()
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Box<out T : Any> @1..129
+  : Iterable<T>
+  primary constructor(items: List<T>) @23..51
+  val items: List<T> private @24..50
+  fun iterator(): Iterator<T> override @72..127
+class Sorted<T : Comparable<T>> @131..268
+  : Iterable<T>
+  primary constructor(items: List<T>) @146..166
+  val items: List<T> @147..165
+  fun iterator(): Iterator<T> override @211..266

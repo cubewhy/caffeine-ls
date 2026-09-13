@@ -404,17 +404,3 @@ class Foo {
 }
 "#,
 }
-
-// -- kotlin placeholder -----------------------------------------------------
-
-lower_snapshot_lang! {
-    kotlin_placeholder,
-    LanguageKind::Kotlin,
-    r#"
-class Greeter {
-    fun greet(name: String): String {
-        return "hi"
-    }
-}
-"#,
-}

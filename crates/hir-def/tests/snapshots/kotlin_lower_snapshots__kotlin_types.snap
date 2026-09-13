@@ -1,0 +1,30 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Types<in T, out U> {
+    val nullable: String? = null
+    val star: List<*> = listOf(1)
+    val projected: List<out Number> = listOf(1)
+    val function: (Int) -> String = { it.toString() }
+    val suspendFunction: suspend () -> Unit = {}
+    val qualified: kotlin.collections.List<Int> = listOf(1)
+    val array: Array<String> = emptyArray()
+    val literal: Int = 1
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Types<in T, out U> @1..376
+  val nullable: String? @32..61
+  val star: List<*> @65..95
+  val projected: List<out Number> @99..143
+  val function: Function1<Int, String> @147..197
+  val suspendFunction: Function0<Unit> @201..246
+  val qualified: kotlin.collections.List<Int> @250..306
+  val array: Array<String> @310..350
+  val literal: Int @354..375

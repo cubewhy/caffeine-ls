@@ -1,0 +1,16 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+annotation class Ann(val name: String, val level: Int = 0)
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+annotation class Ann @1..60
+  primary constructor(name: String, level: Int) @21..59
+  val name: String @22..38
+  val level: Int @40..58

@@ -1,0 +1,42 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+val topLevel: String = "x"
+
+var counter: Int = 0
+    private set
+
+val total: Int
+    get() = counter + 1
+
+val delegated: String by lazy { "x" }
+
+lateinit var initialised: String
+
+val Response.body: String
+    get() = "body"
+
+class Response
+
+val <T> List<T>.first: T?
+    get() = null
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+val topLevel: String @1..29
+var counter: Int @29..67
+  set() private @54..65
+val total: Int @67..107
+  get() @86..105
+val delegated: String @107..146
+var initialised: String lateinit @146..180
+val Response.body: String @180..226
+  get() @210..224
+class Response @226..242
+val <T> List<T>.first: T? @242..285
+  get() @272..284

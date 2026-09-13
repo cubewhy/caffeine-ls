@@ -1,0 +1,33 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+@Deprecated("use Other")
+@Suppress("UNUSED", "UNCHECKED_CAST")
+class Annotated @Deprecated("inject") constructor(val name: String) {
+    @Deprecated("old")
+    fun f() {}
+
+    @get:JvmName("renamed")
+    val x: Int = 1
+}
+
+annotation class Marker
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Annotated @1..221
+  @Deprecated(value = "use Other")
+  @Suppress(value = "UNUSED", value = "UNCHECKED_CAST")
+  primary constructor(name: String) @80..131
+    @Deprecated(value = "inject")
+  val name: String @114..130
+  fun f() @138..171
+    @Deprecated(value = "old")
+  val x: Int @177..220
+    @JvmName(value = "renamed")
+annotation class Marker @223..247

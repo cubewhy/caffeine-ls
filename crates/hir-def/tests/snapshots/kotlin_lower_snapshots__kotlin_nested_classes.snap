@@ -1,0 +1,22 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Outer {
+    class Nested
+
+    inner class Inner
+
+    val x: Int = 1
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Outer @1..76
+  class Nested @19..33
+  class Inner inner @37..56
+  val x: Int @60..75

@@ -1,0 +1,28 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class C {
+    private companion object {
+        fun f() = 1
+    }
+
+    init {
+        println(1)
+    }
+
+    @Deprecated("d") constructor(x: Int)
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class C @1..148
+  companion object Companion private @15..67
+    fun f() @50..61
+  init @73..104
+  constructor(x: Int) @110..147
+    @Deprecated(value = "d")

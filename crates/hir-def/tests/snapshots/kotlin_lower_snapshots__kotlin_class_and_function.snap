@@ -1,5 +1,5 @@
 ---
-source: crates/hir-def/tests/lower_snapshots.rs
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
 expression: out
 ---
 SOURCE:
@@ -14,3 +14,5 @@ PARSE_ERRORS:
 <none>
 ITEM_TREE:
 file (kotlin)
+class Greeter @1..82
+  fun greet(name: String): String @21..80

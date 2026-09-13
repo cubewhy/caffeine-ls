@@ -21,6 +21,7 @@ use base_db::LanguageKind;
 use hir_expand::body::BodyTree;
 
 use crate::java;
+use crate::kotlin;
 
 /// The lowered item tree of one file, in whichever language the file is.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +32,8 @@ pub enum FileItemTree {
     Empty(LanguageKind),
     /// A Java file's declaration model.
     Java(Arc<java::item_tree::ItemTree>),
+    /// A Kotlin file's declaration model.
+    Kotlin(Arc<kotlin::item_tree::KotlinItemTree>),
 }
 
 impl FileItemTree {
@@ -39,6 +42,7 @@ impl FileItemTree {
         match self {
             FileItemTree::Empty(language) => *language,
             FileItemTree::Java(tree) => tree.language,
+            FileItemTree::Kotlin(tree) => tree.language,
         }
     }
 
@@ -46,8 +50,17 @@ impl FileItemTree {
     /// Java (or has no lowered items).
     pub fn as_java(&self) -> Option<&Arc<java::item_tree::ItemTree>> {
         match self {
-            FileItemTree::Empty(_) => None,
+            FileItemTree::Empty(_) | FileItemTree::Kotlin(_) => None,
             FileItemTree::Java(tree) => Some(tree),
+        }
+    }
+
+    /// The Kotlin declaration model of the file, or `None` when the file is
+    /// not Kotlin (or has no lowered items — a `.kts` script).
+    pub fn as_kotlin(&self) -> Option<&Arc<kotlin::item_tree::KotlinItemTree>> {
+        match self {
+            FileItemTree::Empty(_) | FileItemTree::Java(_) => None,
+            FileItemTree::Kotlin(tree) => Some(tree),
         }
     }
 }

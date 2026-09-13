@@ -1202,6 +1202,12 @@ pub fn ty_from_type_ref<N>(
         TypeRef::TypeVariable(v) => Ty::type_var(db, var(v), Vec::new()),
         TypeRef::Array(inner) => Ty::array(db, ty_from_type_ref(db, inner, name, var)),
         TypeRef::Error => Ty::error(db),
+        // Kotlin-only ([`TypeRef::Nullable`]): a Java source type and a
+        // classfile descriptor are never nullable ([JLS §4.1]).
+        TypeRef::Nullable(_) | TypeRef::DefinitelyNonNull(_) => {
+            debug_assert!(false, "a Java type reference is never nullable");
+            Ty::error(db)
+        }
     }
 }
 

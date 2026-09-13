@@ -1,27 +1,37 @@
 //! Kotlin-specific syntax and semantics.
 //!
-//! Scaffold for the Kotlin declaration layer: the Kotlin modifier model and
-//! the Kotlin `ItemTree` lowering will live here, depending only on the JVM
-//! substrate ([`crate::jvm`]) and never on [`crate::java`]. Nothing is
-//! implemented yet — the Kotlin CST is parsed but not yet lowered.
+//! Everything that is specific to the Kotlin source grammar — the modifier
+//! model ([`modifiers`]), the declaration layer ([`item_tree`]), the
+//! CST-to-item-tree lowering ([`lower`]), the pretty snapshot surface
+//! ([`pretty`]) and the declaration ranges ([`ranges`]) — lives in this
+//! namespace. It depends only on the JVM substrate ([`crate::jvm`]) and
+//! `hir-expand`'s primitives, and never on [`crate::java`].
+//!
+//! # Reference
+//!
+//! The normative reference for every Kotlin rule implemented here is the
+//! *Kotlin language specification: Kotlin/Core*, v1.9-rfc+0.1
+//! (<https://kotlinlang.org/spec/kotlin-spec.html>), cited per function. The
+//! empirical reference is kotlinc 2.4.20 (JRE 25): KLS is explicitly
+//! experimental and predates K2, so where the two disagree the implementation
+//! follows the compiler and records the deviation in the doc comment with the
+//! compiler message.
+//!
+//! # What is not implemented yet
+//!
+//! The Kotlin *body* IR: `.kt` files lower their declarations, and the bodies
+//! of functions, accessors, initializers and enum-entry arguments are not yet
+//! lowered (every `body`/`initializer_expr`/`delegate_expr`/`argument_exprs`
+//! field is empty — see [`crate::kotlin::lower::lower_kotlin_source`]).
+//!
+//! `.kts` scripts are out of scope: a script's top-level statements declare no
+//! file item, so [`crate::lower::lower_source`] leaves a
+//! [`LanguageKind::KotlinScript`](base_db::LanguageKind::KotlinScript) file
+//! empty.
 
-/// The Kotlin modifier model, prepared for the Kotlin ItemTree integration.
-///
-/// Kotlin's modifier set (`public`, `internal`, `protected`, `private`,
-/// `open`, `final`, `abstract`, `sealed`, `data`, `value`, `inline`,
-/// `suspend`, `operator`, ...) maps onto the same [`crate::jvm::access::JvmAccessFlags`]
-/// substrate at the JVM boundary.
-pub mod modifiers {
-    /// A placeholder documenting the intended module shape. Removed when the
-    /// Kotlin lowering lands.
-    #[allow(dead_code)]
-    pub const LAYOUT: &str = "kotlin::modifiers";
-}
-
-/// The Kotlin lowering scaffold: the Kotlin CST will be lowered here into a
-/// Kotlin item tree on top of the JVM substrate. Kotlin files currently
-/// produce an empty item tree (see [`crate::lower::lower_source`]).
-pub mod lower;
-
-/// The Kotlin database trait scaffold.
 pub mod db;
+pub mod item_tree;
+pub mod lower;
+pub mod modifiers;
+pub mod pretty;
+pub mod ranges;

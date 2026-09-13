@@ -927,6 +927,12 @@ fn resolve_type_ref_impl(
             resolve_type_ref_impl(db, scope, resolver, inner, resolving),
         ),
         TypeRef::Error => Ty::error(db),
+        // Kotlin-only ([`TypeRef::Nullable`]): the Java resolver never sees a
+        // nullable source type ([JLS §4.1]).
+        TypeRef::Nullable(_) | TypeRef::DefinitelyNonNull(_) => {
+            debug_assert!(false, "a Java type reference is never nullable");
+            Ty::error(db)
+        }
     }
 }
 

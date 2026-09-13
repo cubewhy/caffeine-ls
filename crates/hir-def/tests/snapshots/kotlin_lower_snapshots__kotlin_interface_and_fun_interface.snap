@@ -1,0 +1,24 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+interface Repository<T> {
+    fun find(id: Int): T?
+    fun save(value: T)
+}
+
+fun interface Factory<out T> {
+    fun create(): T
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+interface Repository<T> @1..77
+  fun find(id: Int): T? @31..53
+  fun save(value: T) @57..76
+interface Factory<out T> fun @79..131
+  fun create(): T @114..130

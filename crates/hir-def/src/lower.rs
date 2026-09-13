@@ -24,9 +24,10 @@ use crate::item_tree::{FileItemTree, LoweredFile};
 pub fn lower_source(language: LanguageKind, text: &str, map: &AstIdMap) -> LoweredFile {
     match language {
         LanguageKind::Java => crate::java::lower::lower_java_source(text, map),
-        // TODO(kotlin): lower the Kotlin CST into a Kotlin item tree on top of
-        // the JVM substrate; see crate::kotlin::lower.
-        LanguageKind::Kotlin | LanguageKind::KotlinScript | LanguageKind::Unknown => LoweredFile {
+        LanguageKind::Kotlin => crate::kotlin::lower::lower_kotlin_source(text, map),
+        // `.kts` scripts are not lowered yet: a script's top-level statements
+        // declare no file item to hang off.
+        LanguageKind::KotlinScript | LanguageKind::Unknown => LoweredFile {
             items: FileItemTree::Empty(language),
             bodies: Arc::default(),
         },

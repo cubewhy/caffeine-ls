@@ -1,0 +1,16 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+data class User(val name: String, val age: Int)
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class User data @1..49
+  primary constructor(name: String, age: Int) @16..48
+  val name: String @17..33
+  val age: Int @35..47

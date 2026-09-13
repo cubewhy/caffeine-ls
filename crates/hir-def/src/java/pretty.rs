@@ -471,6 +471,12 @@ pub fn render_type(ty: &TypeRef<Name>) -> String {
         TypeRef::TypeVariable(name) => name.to_string(),
         TypeRef::Array(inner) => format!("{}[]", render_type(inner)),
         TypeRef::Error => "<error>".to_owned(),
+        // Kotlin-only ([`TypeRef::Nullable`]): a Java source type is never
+        // nullable ([JLS §4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.1)),
+        // so this renders the Kotlin spelling rather than panicking — a
+        // renderer is not the place to report an unreachable input.
+        TypeRef::Nullable(inner) => format!("{}?", render_type(inner)),
+        TypeRef::DefinitelyNonNull(inner) => format!("{} & Any", render_type(inner)),
     }
 }
 

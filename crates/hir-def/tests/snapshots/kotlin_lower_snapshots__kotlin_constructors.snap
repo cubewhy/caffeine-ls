@@ -1,0 +1,27 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Server private constructor(val port: Int) {
+    @Deprecated("use the other one")
+    constructor(host: String) : this(port = 0) {
+        println(host)
+    }
+
+    init {
+        println(port)
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Server @1..206
+  primary constructor(port: Int) private @14..48
+  val port: Int @34..47
+  constructor(host: String) delegation @120..134 @55..164
+    @Deprecated(value = "use the other one")
+  init @170..204

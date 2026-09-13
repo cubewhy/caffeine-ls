@@ -1,0 +1,16 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+typealias StringMap<V> = Map<String, V>
+
+typealias Handler = (Int) -> Unit
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+typealias StringMap<V> = Map<String, V> @1..42
+typealias Handler = Function1<Int, Unit> @42..76

@@ -1,0 +1,19 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun apply(f: (Int, String) -> Boolean): Boolean = f(1, "")
+
+fun withReceiver(f: String.(Int) -> Boolean): Boolean = "".f(1)
+
+fun <T> generic(value: T?): T? = value
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun apply(f: Function2<Int, String, Boolean>): Boolean @1..59
+fun withReceiver(f: Function2<String, Int, Boolean>): Boolean @61..124
+fun <T> generic(value: T?): T? @126..164
