@@ -397,6 +397,16 @@ fn push_type_label(db: &dyn TyDatabase, ty: &Ty, out: &mut Vec<InlayHintLabelPar
         // No type the user could write: [`is_renderable`] drops these before a
         // label is built.
         TyKind::Void | TyKind::Null | TyKind::Error | TyKind::InferenceVar(_) => {}
+        // The Kotlin spellings: `T?` and `T & Any` (KLS
+        // `type-system.html#nullable-types`). A Java type never carries one.
+        TyKind::Nullable(inner) => {
+            push_type_label(db, inner, out);
+            out.push(part("?"));
+        }
+        TyKind::DefinitelyNonNull(inner) => {
+            push_type_label(db, inner, out);
+            out.push(part(" & Any"));
+        }
     }
 }
 
@@ -415,6 +425,10 @@ fn is_renderable(db: &dyn TyDatabase, ty: &Ty) -> bool {
             .as_deref()
             .is_none_or(|bound| is_renderable(db, &bound.ty)),
         TyKind::Intersection(members) => members.iter().all(|member| is_renderable(db, member)),
+        // A Kotlin nullable or definitely-non-nullable type is nameable when
+        // its inner type is (KLS
+        // `type-system.html#nullable-types`); a Java type never carries one.
+        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => is_renderable(db, inner),
     }
 }
 

@@ -92,6 +92,7 @@
 pub mod java;
 pub mod jvm;
 pub mod kotlin;
+pub mod ty;
 
 pub use java::db::TyDatabase;
 // `DiagnosticCode` lives in the shared `syntax` crate; re-export it here so
@@ -117,6 +118,5 @@ pub use java::resolve::{
     type_param_declaration,
 };
 pub use java::subtyping::{is_assignable, is_subtype, supertypes};
-pub use java::ty::{
-    BoundKind, Ty, TyData, TyDisplay, TyKind, WildcardBound, capture_conversion, ty_from_source,
-};
+pub use java::ty::{capture_conversion, ty_from_source};
+pub use ty::{BoundKind, Ty, TyData, TyDisplay, TyKind, TypeVarScope, WildcardBound};
