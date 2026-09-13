@@ -210,6 +210,53 @@ pub fn on_goto_definition(
     Ok(Some(DefinitionResponse::Definition(locations.into())))
 }
 
+/// The reference sites of the declaration(s) at a position, as LSP locations.
+///
+/// A query that resolves into a library whose declaring source is not loaded
+/// yet defers exactly like [`on_goto_definition`]: the main loop materializes
+/// (and, for a library without sources, decompiles) the declaring file and
+/// re-runs the request. Only then does the workspace sweep — whose sites
+/// resolve through the loaded declaration — compare against the query's.
+pub fn on_references(
+    state: GlobalStateSnapshot,
+    params: ReferenceParams,
+) -> anyhow::Result<Option<Vec<Location>>> {
+    let pos = params.text_document_position_params;
+    tracing::info!(uri = ?pos.text_document.uri, "request references");
+    // A whole-workspace sweep runs for seconds on a cold database: abort on
+    // entry when the client has already cancelled, like the workspace
+    // diagnostic pull (crate::diagnostics::check_cancelled).
+    crate::diagnostics::check_cancelled(&state)?;
+
+    let Some(file_id) = state.url_to_file_id(&pos.text_document.uri)? else {
+        return Ok(None);
+    };
+    let line_index = state.file_line_index(file_id)?;
+    let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
+    let references =
+        state
+            .analysis
+            .references(file_id, offset, params.context.include_declaration)?;
+    if references.is_empty() {
+        let files = state.analysis.pending_library_files(file_id, offset)?;
+        if !files.is_empty() {
+            return Err(DeferForLibraryFiles(files).into());
+        }
+        return Ok(None);
+    }
+
+    let mut locations = Vec::with_capacity(references.len());
+    for reference in references {
+        let uri = state.file_id_to_url(reference.file)?;
+        let line_index = state.file_line_index(reference.file)?;
+        locations.push(Location {
+            uri,
+            range: to_proto::range(&line_index, reference.range),
+        });
+    }
+    Ok(Some(locations))
+}
+
 /// The hover at a position: the merged signature of a library member, the type
 /// of the expression or the signature of the declaration there.
 ///

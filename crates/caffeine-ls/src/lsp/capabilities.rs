@@ -41,6 +41,7 @@ pub fn server_capabilities(_config: &Config) -> ServerCapabilities {
             .into(),
         ),
         definition_provider: Some(true.into()),
+        references_provider: Some(true.into()),
         hover_provider: Some(true.into()),
         semantic_tokens_provider: Some(
             SemanticTokensOptions {

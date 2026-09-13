@@ -187,6 +187,7 @@ impl GlobalState {
             .on_async::<WorkspaceSymbolRequest>(handlers::on_workspace_symbol)
             .on_async::<WorkspaceSymbolResolveRequest>(handlers::on_workspace_symbol_resolve)
             .on_async::<DefinitionRequest>(handlers::on_goto_definition)
+            .on_async::<ReferencesRequest>(handlers::on_references)
             .on_async::<HoverRequest>(handlers::on_hover)
             .on_async::<SemanticTokensRequest>(handlers::on_semantic_tokens)
             .on_async::<SemanticTokensDeltaRequest>(handlers::on_semantic_tokens_delta)

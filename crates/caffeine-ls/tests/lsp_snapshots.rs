@@ -1504,6 +1504,131 @@ class Nav {
     insta::assert_json_snapshot!("goto_definition_field_read", normalized);
 }
 
+/// The workspace of the references tests: `Api` declares a static field, a
+/// method, and a field whose name matches the local `Main` declares — the
+/// same-named declarations must not be conflated.
+const REFERENCES_LSP_FILES: &[(&str, &str)] = &[
+    (
+        "/src/com/example/Api.java",
+        r#"package com.example;
+
+public class Api {
+    public static int VALUE = 1;
+
+    public int v;
+
+    public void run() {}
+}
+"#,
+    ),
+    (
+        "/src/com/example/Main.java",
+        r#"package com.example;
+
+class Main {
+    void call(Api api) {
+        api.run();
+        int v = Api.VALUE;
+    }
+}
+"#,
+    ),
+];
+
+/// A harness over [`REFERENCES_LSP_FILES`] with both files opened and the
+/// workspace loaded: a cross-file query must see the whole source set.
+fn references_lsp() -> LspHarness {
+    let lsp = create_lsp_with_config(default_client_config(), |root| {
+        for (path, text) in REFERENCES_LSP_FILES {
+            let path = root.join(path.trim_start_matches('/'));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    });
+    for (path, _) in REFERENCES_LSP_FILES {
+        lsp.open_document(path);
+    }
+    lsp.wait_until_workspace_is_loaded();
+    lsp
+}
+
+/// The reference locations of a query, as client-shaped rows sorted by
+/// (uri, line, character). The server answers in file-id order — ids are
+/// assigned in load order — so the order is normalized in the test.
+fn reference_rows(
+    lsp: &LspHarness,
+    path: &str,
+    position: Position,
+    include_declaration: bool,
+) -> Vec<serde_json::Value> {
+    let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
+    let response = request_until(
+        lsp,
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": position,
+            "context": { "includeDeclaration": include_declaration },
+        }),
+        |response| !response.is_null(),
+    );
+    let mut rows = normalize_uris(response, &workspace_root)
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    rows.sort_by_key(|row| {
+        (
+            row["uri"].as_str().unwrap_or_default().to_owned(),
+            row["range"]["start"]["line"].as_u64().unwrap_or(u64::MAX),
+            row["range"]["start"]["character"]
+                .as_u64()
+                .unwrap_or(u64::MAX),
+        )
+    });
+    rows
+}
+
+/// §6.5 across files over stdio: a query on the method call `api.run()` names
+/// the call site, and with `includeDeclaration` the declaration in the other
+/// file too — the whole `textDocument/references` result, not just its sites.
+#[test]
+fn test_references_cross_file() {
+    let lsp = references_lsp();
+    let path = "/src/com/example/Main.java";
+    let main = REFERENCES_LSP_FILES[1].1;
+
+    let position = start_of(main, "run();", 0);
+    insta::assert_json_snapshot!(
+        "references_cross_file",
+        reference_rows(&lsp, path, position, true)
+    );
+    insta::assert_json_snapshot!(
+        "references_cross_file_without_declaration",
+        reference_rows(&lsp, path, position, false)
+    );
+}
+
+/// A local's references are its own: the declaration `Api.v` and the call's
+/// `run` name different declarations, so the answer is the local's name alone —
+/// one location, in the file that declares it.
+#[test]
+fn test_references_local_answers_single_file() {
+    let lsp = references_lsp();
+    let path = "/src/com/example/Main.java";
+    let main = REFERENCES_LSP_FILES[1].1;
+
+    let position = start_of(main, "v = Api.VALUE", 0);
+    let rows = reference_rows(&lsp, path, position, true);
+    assert_eq!(rows.len(), 1, "the local's own declaration only: {rows:#?}");
+    assert!(
+        rows[0]["uri"]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("Main.java"),
+        "the local is declared in Main.java: {rows:#?}"
+    );
+}
+
 /// The workspace of [`test_goto_definition_annotation_pairs`]: an annotation
 /// interface with an element of every value kind the pairs below use, and a
 /// use site for each.

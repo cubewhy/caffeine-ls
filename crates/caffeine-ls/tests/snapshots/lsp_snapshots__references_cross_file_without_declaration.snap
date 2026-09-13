@@ -1,0 +1,19 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: "reference_rows(&lsp, path, position, false)"
+---
+[
+  {
+    "uri": "file://<WORKSPACE_ROOT>/src/com/example/Main.java",
+    "range": {
+      "start": {
+        "line": 4,
+        "character": 12
+      },
+      "end": {
+        "line": 4,
+        "character": 15
+      }
+    }
+  }
+]
