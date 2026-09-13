@@ -1,0 +1,64 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class C {
+    private constructor(x: Int)
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "C"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "private"
+WHITESPACE " "
+IDENTIFIER "constructor"
+L_PAREN "("
+IDENTIFIER "x"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..44
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..43
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "C"
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..43
+      L_BRACE@8..9 "{"
+      NEWLINE@9..10 "\n"
+      WHITESPACE@10..14 "    "
+      SECONDARY_CONSTRUCTOR@14..42
+        MODIFIER_LIST@14..21
+          IDENTIFIER@14..21 "private"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..33 "constructor"
+        VALUE_PARAMETERS@33..41
+          L_PAREN@33..34 "("
+          VALUE_PARAMETER@34..40
+            IDENTIFIER@34..35 "x"
+            COLON@35..36 ":"
+            WHITESPACE@36..37 " "
+            TYPE@37..40
+              USER_TYPE@37..40
+                IDENTIFIER@37..40 "Int"
+          R_PAREN@40..41 ")"
+        NEWLINE@41..42 "\n"
+      R_BRACE@42..43 "}"
+  NEWLINE@43..44 "\n"

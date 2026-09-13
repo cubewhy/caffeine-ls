@@ -1,0 +1,81 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class C {
+    @Deprecated("d") constructor(x: Int)
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "C"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+AT "@"
+IDENTIFIER "Deprecated"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "d"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+WHITESPACE " "
+IDENTIFIER "constructor"
+L_PAREN "("
+IDENTIFIER "x"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..53
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..52
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "C"
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..52
+      L_BRACE@8..9 "{"
+      NEWLINE@9..10 "\n"
+      WHITESPACE@10..14 "    "
+      SECONDARY_CONSTRUCTOR@14..51
+        MODIFIER_LIST@14..30
+          ANNOTATION@14..30
+            AT@14..15 "@"
+            USER_TYPE@15..25
+              IDENTIFIER@15..25 "Deprecated"
+            VALUE_ARGUMENTS@25..30
+              L_PAREN@25..26 "("
+              VALUE_ARGUMENT@26..29
+                STRING_LITERAL@26..29
+                  OPEN_QUOTE@26..27 "\""
+                  STRING_CONTENT@27..28 "d"
+                  CLOSE_QUOTE@28..29 "\""
+              R_PAREN@29..30 ")"
+        WHITESPACE@30..31 " "
+        IDENTIFIER@31..42 "constructor"
+        VALUE_PARAMETERS@42..50
+          L_PAREN@42..43 "("
+          VALUE_PARAMETER@43..49
+            IDENTIFIER@43..44 "x"
+            COLON@44..45 ":"
+            WHITESPACE@45..46 " "
+            TYPE@46..49
+              USER_TYPE@46..49
+                IDENTIFIER@46..49 "Int"
+          R_PAREN@49..50 ")"
+        NEWLINE@50..51 "\n"
+      R_BRACE@51..52 "}"
+  NEWLINE@52..53 "\n"

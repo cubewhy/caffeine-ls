@@ -1,0 +1,97 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class C {
+    val x = 1
+    init {
+        println(x)
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "C"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "init"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "println"
+L_PAREN "("
+IDENTIFIER "x"
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..62
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..61
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "C"
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..61
+      L_BRACE@8..9 "{"
+      NEWLINE@9..10 "\n"
+      WHITESPACE@10..14 "    "
+      PROPERTY_DECL@14..24
+        VAL_KW@14..17 "val"
+        WHITESPACE@17..18 " "
+        VARIABLE_DECLARATION@18..19
+          IDENTIFIER@18..19 "x"
+        WHITESPACE@19..20 " "
+        EQUAL@20..21 "="
+        WHITESPACE@21..22 " "
+        PRIMARY_EXPRESSION@22..23
+          INTEGER_LITERAL@22..23 "1"
+        NEWLINE@23..24 "\n"
+      WHITESPACE@24..28 "    "
+      ANONYMOUS_INITIALIZER@28..59
+        IDENTIFIER@28..32 "init"
+        WHITESPACE@32..33 " "
+        BLOCK@33..59
+          L_BRACE@33..34 "{"
+          NEWLINE@34..35 "\n"
+          WHITESPACE@35..43 "        "
+          EXPRESSION_STATEMENT@43..53
+            POSTFIX_UNARY_EXPRESSION@43..53
+              PRIMARY_EXPRESSION@43..50
+                IDENTIFIER@43..50 "println"
+              CALL_EXPRESSION@50..53
+                VALUE_ARGUMENTS@50..53
+                  L_PAREN@50..51 "("
+                  VALUE_ARGUMENT@51..52
+                    PRIMARY_EXPRESSION@51..52
+                      IDENTIFIER@51..52 "x"
+                  R_PAREN@52..53 ")"
+          NEWLINE@53..54 "\n"
+          WHITESPACE@54..58 "    "
+          R_BRACE@58..59 "}"
+      NEWLINE@59..60 "\n"
+      R_BRACE@60..61 "}"
+  NEWLINE@61..62 "\n"

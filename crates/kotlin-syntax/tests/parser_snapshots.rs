@@ -2,6 +2,7 @@ mod common;
 
 use common::parser_snapshot;
 use indoc::indoc;
+use kotlin_syntax::SyntaxKind;
 
 parser_snapshot!(parse_empty_file, "");
 
@@ -483,3 +484,107 @@ parser_snapshot!(
         }
     "#}
 );
+
+// ————————————————————————————————————————————————————————————————
+// A class member's `companion`/`constructor` may be preceded by
+// `[modifiers]` and annotations ([spec: grammar-rule-companionObject],
+// [spec: grammar-rule-secondaryConstructor]); `anonymousInitializer` has no
+// `[modifiers]` prefix ([spec: grammar-rule-anonymousInitializer]), so a
+// modified `init` is not a member — K2 rejects `private init {}` with
+// "modifier 'private' is not applicable to 'initializer'".
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_class_with_private_secondary_constructor,
+    indoc! {r#"
+        class C {
+            private constructor(x: Int)
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_class_with_annotated_secondary_constructor,
+    indoc! {r#"
+        class C {
+            @Deprecated("d") constructor(x: Int)
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_class_with_modified_companion_object,
+    indoc! {r#"
+        class C {
+            private companion object {
+                fun f() = 1
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_class_with_annotated_companion_object,
+    indoc! {r#"
+        class C {
+            @Suppress("UNUSED") companion object
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_class_with_init_after_property,
+    indoc! {r#"
+        class C {
+            val x = 1
+            init {
+                println(x)
+            }
+        }
+    "#}
+);
+
+/// The three member forms dispatch on the keyword *after* the modifier list,
+/// so a modified/annotated member must lower to its own node kind with no
+/// parse error. Every fixture below compiles clean under kotlinc 2.4.20.
+#[test]
+fn class_member_dispatch_skips_modifiers_and_annotations() {
+    let src = indoc! {r#"
+        class C {
+            private companion object {
+                fun f() = 1
+            }
+
+            init {
+                println(1)
+            }
+
+            @Deprecated("d") constructor(x: Int)
+        }
+    "#};
+
+    let parse = kotlin_syntax::SourceFile::parse(src);
+    assert!(
+        parse.errors().is_empty(),
+        "expected no parse errors, got {:?}",
+        parse.errors()
+    );
+
+    let node = parse.into_syntax_node();
+    let body = node
+        .descendants()
+        .find(|n| n.kind() == SyntaxKind::CLASS_BODY)
+        .expect("class body");
+    let kinds = body
+        .children()
+        .map(|child| child.kind())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        vec![
+            SyntaxKind::COMPANION_OBJECT,
+            SyntaxKind::ANONYMOUS_INITIALIZER,
+            SyntaxKind::SECONDARY_CONSTRUCTOR,
+        ]
+    );
+}

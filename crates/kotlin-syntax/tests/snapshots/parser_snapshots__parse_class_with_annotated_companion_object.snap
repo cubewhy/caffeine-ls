@@ -1,0 +1,69 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class C {
+    @Suppress("UNUSED") companion object
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "C"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+AT "@"
+IDENTIFIER "Suppress"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "UNUSED"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+WHITESPACE " "
+IDENTIFIER "companion"
+WHITESPACE " "
+OBJECT_KW "object"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..53
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..52
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "C"
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..52
+      L_BRACE@8..9 "{"
+      NEWLINE@9..10 "\n"
+      WHITESPACE@10..14 "    "
+      COMPANION_OBJECT@14..51
+        MODIFIER_LIST@14..33
+          ANNOTATION@14..33
+            AT@14..15 "@"
+            USER_TYPE@15..23
+              IDENTIFIER@15..23 "Suppress"
+            VALUE_ARGUMENTS@23..33
+              L_PAREN@23..24 "("
+              VALUE_ARGUMENT@24..32
+                STRING_LITERAL@24..32
+                  OPEN_QUOTE@24..25 "\""
+                  STRING_CONTENT@25..31 "UNUSED"
+                  CLOSE_QUOTE@31..32 "\""
+              R_PAREN@32..33 ")"
+        WHITESPACE@33..34 " "
+        IDENTIFIER@34..43 "companion"
+        WHITESPACE@43..44 " "
+        OBJECT_KW@44..50 "object"
+        NEWLINE@50..51 "\n"
+      R_BRACE@51..52 "}"
+  NEWLINE@52..53 "\n"

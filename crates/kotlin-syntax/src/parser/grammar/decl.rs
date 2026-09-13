@@ -992,20 +992,68 @@ fn class_body(p: &mut Parser) {
 fn class_member_declaration(p: &mut Parser) {
     eat_nl(p);
 
-    if p.at_contextual_kw(ContextualKeyword::Companion) {
-        companion_object(p);
-        return;
+    match class_member_keyword(p) {
+        Some(ContextualKeyword::Companion) => companion_object(p),
+        Some(ContextualKeyword::Init) => anonymous_initializer(p),
+        Some(ContextualKeyword::Constructor) => secondary_constructor(p),
+        _ => declaration(p),
     }
+}
+
+/// The `companion`/`init`/`constructor` keyword that introduces the member, or
+/// `None` when the member is an ordinary `declaration`.
+///
+/// `companionObject` and `secondaryConstructor` both open with `[modifiers]`
+/// ([spec: grammar-rule-companionObject],
+/// [spec: grammar-rule-secondaryConstructor]), so the dispatch must skip a
+/// leading annotation/modifier list before testing the token:
+/// `private constructor(…)` and `@Inject constructor(…)` are secondary
+/// constructors, and `private companion object` is a companion, not a
+/// declaration whose keyword merely happens to be missing.
+///
+/// `anonymousInitializer` is deliberately *not* looked up through the modifier
+/// skip: its rule is `'init' {NL} block`, with no `[modifiers]` prefix
+/// ([spec: grammar-rule-anonymousInitializer]). K2 agrees — `private init {}`
+/// is `error: modifier 'private' is not applicable to 'initializer'` and
+/// `@Deprecated init {}` is `error: this annotation is not applicable to
+/// target 'initializer'` (kotlinc 2.4.20), so a modified `init` is not a member
+/// at all.
+///
+/// The lookahead consumes nothing: `companion_object` and
+/// `secondary_constructor` re-parse their own `modifiers`/`eat_nl`.
+fn class_member_keyword(p: &Parser) -> Option<ContextualKeyword> {
     if p.at_contextual_kw(ContextualKeyword::Init) {
-        anonymous_initializer(p);
-        return;
-    }
-    if p.at_contextual_kw(ContextualKeyword::Constructor) {
-        secondary_constructor(p);
-        return;
+        return Some(ContextualKeyword::Init);
     }
 
-    declaration(p);
+    let mut i = 0;
+    loop {
+        if i > 256 {
+            return None;
+        }
+        if p.nth(i) == Some(AT) {
+            i = skip_annotation(p, i);
+            continue;
+        }
+        if p.nth(i) == Some(NEWLINE) {
+            i += 1;
+            continue;
+        }
+        if matches!(p.nth(i), Some(IN_KW)) || nth_is_modifier(p, i) {
+            i += 1;
+            continue;
+        }
+        break;
+    }
+
+    if p.nth(i) != Some(IDENTIFIER) {
+        return None;
+    }
+    match p.nth_lexeme(i) {
+        Some("companion") => Some(ContextualKeyword::Companion),
+        Some("constructor") => Some(ContextualKeyword::Constructor),
+        _ => None,
+    }
 }
 
 /// `companionObject`: [modifiers] 'companion' ['data'] 'object' [name]
