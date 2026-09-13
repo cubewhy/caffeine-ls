@@ -26,10 +26,17 @@
 //!   unchecked warnings of §4.8/§5.1.9/§8.4.1/§15.12.4.2 as `"unchecked"`,
 //!   the deprecation warnings of §9.6.4.6 as `"deprecation"`, and — following
 //!   the reference implementation's documented `-Xlint` names — the raw-type
-//!   warnings of §4.8/§4.12.2 as `"rawtypes"`. Every other string, including
-//!   the frequently-misremembered `"all"`, names nothing here and is ignored
-//!   as §9.6.4.5 requires: a string the compiler does not recognize must not
-//!   suppress anything.
+//!   warnings of §4.8/§4.12.2 as `"rawtypes"`. Every other string names
+//!   nothing here and is ignored as §9.6.4.5 requires: a string the compiler
+//!   does not recognize must not suppress anything.
+//! * *`"all"`*: the one string this analyzer recognizes that javac does not.
+//!   §9.6.4.5 obliges a compiler to ignore a string it does not *recognize*,
+//!   not to refuse to recognize one, and the IDEs this server runs inside
+//!   (IntelliJ, Eclipse) accept `@SuppressWarnings("all")` as "every warning
+//!   written here" — it is what IntelliJ inserts. Honouring it means a
+//!   suppression the editor shows is not reported again here; the cost is
+//!   that the report is quieter than `javac`'s for a file javac compiles with
+//!   those warnings. See [`LintKey::ALL`].
 //!
 //! The rule is lexical, so it is evaluated on the syntax tree rather than on
 //! the item tree: an annotation on a *local variable declaration*
@@ -81,16 +88,32 @@ pub enum LintKey {
 }
 
 impl LintKey {
-    /// The key a `@SuppressWarnings` string names, or `None` for a string
-    /// this analyzer does not recognize — which §9.6.4.5 requires it to
-    /// ignore.
-    fn from_str(text: &str) -> Option<LintKey> {
+    /// Every key this analyzer reports, in one place — what the non-standard
+    /// string `"all"` names ([`LintKey::keys_of`]).
+    pub(crate) const ALL: &'static [LintKey] = &[
+        LintKey::Unchecked,
+        LintKey::RawTypes,
+        LintKey::Deprecation,
+        LintKey::Removal,
+    ];
+
+    /// The keys a `@SuppressWarnings` string names, or an empty slice for a
+    /// string this analyzer does not recognize — which §9.6.4.5 requires it
+    /// to ignore.
+    ///
+    /// The four javac names name one key each and are case-sensitive. `"all"`
+    /// names every key: it is not one of §9.6.4.5's four strings and javac
+    /// ignores it, but the IDEs this server runs inside honour it (see the
+    /// module docs), so `@SuppressWarnings("all")` suppresses here exactly
+    /// what it suppresses there.
+    fn keys_of(text: &str) -> &'static [LintKey] {
         match text {
-            "unchecked" => Some(LintKey::Unchecked),
-            "rawtypes" => Some(LintKey::RawTypes),
-            "deprecation" => Some(LintKey::Deprecation),
-            "removal" => Some(LintKey::Removal),
-            _ => None,
+            "unchecked" => &[LintKey::Unchecked],
+            "rawtypes" => &[LintKey::RawTypes],
+            "deprecation" => &[LintKey::Deprecation],
+            "removal" => &[LintKey::Removal],
+            "all" => LintKey::ALL,
+            _ => &[],
         }
     }
 }
@@ -245,7 +268,12 @@ fn annotation_keys(
     else {
         return;
     };
-    out.extend(values.iter().filter_map(|value| LintKey::from_str(value)));
+    out.extend(
+        values
+            .iter()
+            .flat_map(|value| LintKey::keys_of(value))
+            .copied(),
+    );
 }
 
 /// The `@SuppressWarnings` scopes of `file`, computed in a single tree walk

@@ -91,11 +91,63 @@ class Body {
 );
 
 // JLS §9.6.4.5: "Any other string specifies a non-standard warning. A Java
-// compiler must ignore any such string that it does not recognize." `"all"`
-// is not one of the four strings the language defines, so it suppresses
-// nothing — matching javac, which reports both warnings for it too.
+// compiler must ignore any such string that it does not recognize." A string
+// that names neither a language-defined warning nor one this analyzer
+// recognizes suppresses nothing, exactly as javac has it. javac:
+// ```text
+// Unknown.java:8: warning: [rawtypes] found raw type: List
+//         List raw = xs;
+//         ^
+//   missing type arguments for generic class List<E>
+// Unknown.java:9: warning: [unchecked] unchecked conversion
+//         List<String> unchecked = raw;
+//                                  ^
+//   required: List<String>
+//   found:    List
+// 2 warnings
+// ```
 snapshot!(
     unrecognized_string_suppresses_nothing,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Body {
+    @SuppressWarnings(\"checkstyle:MethodName\")
+    void m(List<String> xs) {
+        List raw = xs;
+        List<String> unchecked = raw;
+    }
+}
+",
+    )])
+);
+
+// JLS §9.6.4.5 — and the one place this analyzer is deliberately *not* javac:
+// `"all"` is not one of the four strings the language defines, and javac
+// ignores it. The IDEs this server runs inside accept it as "every warning
+// written here" (it is the string IntelliJ inserts), and §9.6.4.5 obliges a
+// compiler to ignore a string it does not *recognize*, not to refuse to
+// recognize one — so `"all"` suppresses every key reported here, where javac
+// reports both warnings:
+// ```text
+// javac -Xlint:rawtypes,unchecked All.java
+// All.java:8: warning: [rawtypes] found raw type: List
+//         List raw = xs;
+//         ^
+//   missing type arguments for generic class List<E>
+// All.java:9: warning: [unchecked] unchecked conversion
+//         List<String> unchecked = raw;
+//                                  ^
+//   required: List<String>
+//   found:    List
+// 2 warnings
+// ```
+snapshot!(
+    all_suppresses_every_key,
     check_body_diagnostic_spans(&[(
         "/src/com/example/Body.java",
         "\

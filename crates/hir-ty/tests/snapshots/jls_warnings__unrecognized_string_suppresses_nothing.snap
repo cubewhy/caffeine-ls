@@ -8,7 +8,7 @@ package com.example;
 import java.util.List;
 
 class Body {
-    @SuppressWarnings("all")
+    @SuppressWarnings("checkstyle:MethodName")
     void m(List<String> xs) {
         List raw = xs;
         List<String> unchecked = raw;
