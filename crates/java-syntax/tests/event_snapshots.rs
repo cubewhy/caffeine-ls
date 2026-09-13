@@ -30,3 +30,16 @@ event_snapshot!(
         }
     "#}
 );
+// [JLS §14.3]: `@interface` is an annotation type declaration, which the
+// grammar does not admit in a block, so it stays an error rather than being
+// lowered as a local declaration.
+event_snapshot!(
+    event_local_annotation_type_is_an_error,
+    indoc! {r#"
+        class Test {
+            void func() {
+                @interface X {}
+            }
+        }
+    "#}
+);

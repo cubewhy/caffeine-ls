@@ -49,15 +49,21 @@ pub fn decl(p: &mut Parser) {
 }
 
 pub fn is_record_decl(p: &Parser) -> bool {
-    if !p.at_contextual_kw(ContextualKeyword::Record) {
+    is_record_decl_at(p, 0)
+}
+
+/// [`is_record_decl`] at a lookahead offset, so a caller scanning forward from
+/// a modifier prefix can test it without consuming anything.
+pub fn is_record_decl_at(p: &Parser, at: usize) -> bool {
+    if !p.nth_at_contextual_kw(at, ContextualKeyword::Record) {
         return false;
     }
 
-    if p.nth(1) != Some(IDENTIFIER) {
+    if p.nth(at + 1) != Some(IDENTIFIER) {
         return false;
     }
 
-    let mut cur = 2;
+    let mut cur = at + 2;
     loop {
         match p.nth(cur) {
             Some(L_PAREN) | Some(LESS) => return true,

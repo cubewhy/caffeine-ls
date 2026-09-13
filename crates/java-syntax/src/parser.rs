@@ -205,16 +205,22 @@ impl<'a> Parser<'a> {
     /// `non-sealed` is not a single lexeme, so the keyword is recognized here
     /// as `IDENTIFIER(non) MINUS IDENTIFIER(sealed)`.
     pub(crate) fn at_non_sealed(&self) -> bool {
-        if self.override_token.is_some()
-            || self.current() != Some(IDENTIFIER)
-            || self.current_lexeme() != Some("non")
-        {
+        self.nth_at_non_sealed(0)
+    }
+
+    /// [`at_non_sealed`] at a lookahead offset, for callers scanning forward
+    /// from a modifier prefix.
+    pub(crate) fn nth_at_non_sealed(&self, n: usize) -> bool {
+        if n == 0 && self.override_token.is_some() {
             return false;
         }
-        self.source.nth(1).is_some_and(|t| t.kind == MINUS)
+        self.source
+            .nth(n)
+            .is_some_and(|t| t.kind == IDENTIFIER && t.lexeme == "non")
+            && self.source.nth(n + 1).is_some_and(|t| t.kind == MINUS)
             && self
                 .source
-                .nth(2)
+                .nth(n + 2)
                 .is_some_and(|t| t.kind == IDENTIFIER && t.lexeme == "sealed")
     }
 

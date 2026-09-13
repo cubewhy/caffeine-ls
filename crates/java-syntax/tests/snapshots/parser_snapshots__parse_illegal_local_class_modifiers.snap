@@ -1,0 +1,208 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        public class P {}
+        static class T {}
+        sealed class Q {}
+        non-sealed class N {}
+        static interface I {}
+        final record R(int x) {}
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+PUBLIC_KW "public"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "P"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+STATIC_KW "static"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "T"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+IDENTIFIER "sealed"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Q"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+IDENTIFIER "non"
+MINUS "-"
+IDENTIFIER "sealed"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "N"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+STATIC_KW "static"
+WHITESPACE " "
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "I"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+FINAL_KW "final"
+WHITESPACE " "
+IDENTIFIER "record"
+WHITESPACE " "
+IDENTIFIER "R"
+L_PAREN "("
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "x"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..210
+  CLASS_DECL@0..209
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..209
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..207
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        WHITESPACE@28..29 " "
+        BLOCK@29..207
+          L_BRACE@29..30 "{"
+          WHITESPACE@30..39 "\n        "
+          CLASS_DECL@39..56
+            MODIFIER_LIST@39..45
+              PUBLIC_KW@39..45 "public"
+            WHITESPACE@45..46 " "
+            CLASS_KW@46..51 "class"
+            WHITESPACE@51..52 " "
+            IDENTIFIER@52..53 "P"
+            WHITESPACE@53..54 " "
+            CLASS_BODY@54..56
+              L_BRACE@54..55 "{"
+              R_BRACE@55..56 "}"
+          WHITESPACE@56..65 "\n        "
+          CLASS_DECL@65..82
+            MODIFIER_LIST@65..71
+              STATIC_KW@65..71 "static"
+            WHITESPACE@71..72 " "
+            CLASS_KW@72..77 "class"
+            WHITESPACE@77..78 " "
+            IDENTIFIER@78..79 "T"
+            WHITESPACE@79..80 " "
+            CLASS_BODY@80..82
+              L_BRACE@80..81 "{"
+              R_BRACE@81..82 "}"
+          WHITESPACE@82..91 "\n        "
+          CLASS_DECL@91..108
+            MODIFIER_LIST@91..97
+              IDENTIFIER@91..97 "sealed"
+            WHITESPACE@97..98 " "
+            CLASS_KW@98..103 "class"
+            WHITESPACE@103..104 " "
+            IDENTIFIER@104..105 "Q"
+            WHITESPACE@105..106 " "
+            CLASS_BODY@106..108
+              L_BRACE@106..107 "{"
+              R_BRACE@107..108 "}"
+          WHITESPACE@108..117 "\n        "
+          CLASS_DECL@117..138
+            MODIFIER_LIST@117..127
+              IDENTIFIER@117..120 "non"
+              MINUS@120..121 "-"
+              IDENTIFIER@121..127 "sealed"
+            WHITESPACE@127..128 " "
+            CLASS_KW@128..133 "class"
+            WHITESPACE@133..134 " "
+            IDENTIFIER@134..135 "N"
+            WHITESPACE@135..136 " "
+            CLASS_BODY@136..138
+              L_BRACE@136..137 "{"
+              R_BRACE@137..138 "}"
+          WHITESPACE@138..147 "\n        "
+          INTERFACE_DECL@147..168
+            MODIFIER_LIST@147..153
+              STATIC_KW@147..153 "static"
+            WHITESPACE@153..154 " "
+            INTERFACE_KW@154..163 "interface"
+            WHITESPACE@163..164 " "
+            IDENTIFIER@164..165 "I"
+            WHITESPACE@165..166 " "
+            INTERFACE_BODY@166..168
+              L_BRACE@166..167 "{"
+              R_BRACE@167..168 "}"
+          WHITESPACE@168..177 "\n        "
+          RECORD_DECL@177..201
+            MODIFIER_LIST@177..182
+              FINAL_KW@177..182 "final"
+            WHITESPACE@182..183 " "
+            IDENTIFIER@183..189 "record"
+            WHITESPACE@189..190 " "
+            IDENTIFIER@190..191 "R"
+            FORMAL_PARAMETERS@191..198
+              L_PAREN@191..192 "("
+              FORMAL_PARAMETER@192..197
+                TYPE@192..195
+                  INT_KW@192..195 "int"
+                WHITESPACE@195..196 " "
+                IDENTIFIER@196..197 "x"
+              R_PAREN@197..198 ")"
+            WHITESPACE@198..199 " "
+            RECORD_BODY@199..201
+              L_BRACE@199..200 "{"
+              R_BRACE@200..201 "}"
+          WHITESPACE@201..206 "\n    "
+          R_BRACE@206..207 "}"
+      WHITESPACE@207..208 "\n"
+      R_BRACE@208..209 "}"
+  WHITESPACE@209..210 "\n"

@@ -1,0 +1,151 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        final class A {}
+        abstract class C {}
+        strictfp class S {}
+        @Anno class D {}
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+FINAL_KW "final"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "A"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+ABSTRACT_KW "abstract"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "C"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+STRICTFP_KW "strictfp"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "S"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+AT "@"
+IDENTIFIER "Anno"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "D"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..145
+  CLASS_DECL@0..144
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..144
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..142
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        WHITESPACE@28..29 " "
+        BLOCK@29..142
+          L_BRACE@29..30 "{"
+          WHITESPACE@30..39 "\n        "
+          CLASS_DECL@39..55
+            MODIFIER_LIST@39..44
+              FINAL_KW@39..44 "final"
+            WHITESPACE@44..45 " "
+            CLASS_KW@45..50 "class"
+            WHITESPACE@50..51 " "
+            IDENTIFIER@51..52 "A"
+            WHITESPACE@52..53 " "
+            CLASS_BODY@53..55
+              L_BRACE@53..54 "{"
+              R_BRACE@54..55 "}"
+          WHITESPACE@55..64 "\n        "
+          CLASS_DECL@64..83
+            MODIFIER_LIST@64..72
+              ABSTRACT_KW@64..72 "abstract"
+            WHITESPACE@72..73 " "
+            CLASS_KW@73..78 "class"
+            WHITESPACE@78..79 " "
+            IDENTIFIER@79..80 "C"
+            WHITESPACE@80..81 " "
+            CLASS_BODY@81..83
+              L_BRACE@81..82 "{"
+              R_BRACE@82..83 "}"
+          WHITESPACE@83..92 "\n        "
+          CLASS_DECL@92..111
+            MODIFIER_LIST@92..100
+              STRICTFP_KW@92..100 "strictfp"
+            WHITESPACE@100..101 " "
+            CLASS_KW@101..106 "class"
+            WHITESPACE@106..107 " "
+            IDENTIFIER@107..108 "S"
+            WHITESPACE@108..109 " "
+            CLASS_BODY@109..111
+              L_BRACE@109..110 "{"
+              R_BRACE@110..111 "}"
+          WHITESPACE@111..120 "\n        "
+          CLASS_DECL@120..136
+            MODIFIER_LIST@120..125
+              MARKER_ANNOTATION@120..125
+                AT@120..121 "@"
+                QUALIFIED_NAME@121..125
+                  IDENTIFIER@121..125 "Anno"
+            WHITESPACE@125..126 " "
+            CLASS_KW@126..131 "class"
+            WHITESPACE@131..132 " "
+            IDENTIFIER@132..133 "D"
+            WHITESPACE@133..134 " "
+            CLASS_BODY@134..136
+              L_BRACE@134..135 "{"
+              R_BRACE@135..136 "}"
+          WHITESPACE@136..141 "\n    "
+          R_BRACE@141..142 "}"
+      WHITESPACE@142..143 "\n"
+      R_BRACE@143..144 "}"
+  WHITESPACE@144..145 "\n"

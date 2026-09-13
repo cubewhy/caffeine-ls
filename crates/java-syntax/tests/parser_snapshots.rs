@@ -1086,3 +1086,52 @@ parser_snapshot!(
         }
     "#}
 );
+
+// [JLS §14.3]: a local class or interface declaration is a
+// `ClassDeclaration` / `NormalInterfaceDeclaration` behind the optional
+// `{ClassModifier}` prefix, so every modifier below parses. §14.3 makes the
+// access modifiers, `static`, `sealed` and `non-sealed` *compile-time* errors
+// instead, so the parse stays clean here and the check is reported later.
+parser_snapshot!(
+    parse_legal_local_class_modifiers,
+    indoc! {r#"
+        class Test {
+            void func() {
+                final class A {}
+                abstract class C {}
+                strictfp class S {}
+                @Anno class D {}
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_illegal_local_class_modifiers,
+    indoc! {r#"
+        class Test {
+            void func() {
+                public class P {}
+                static class T {}
+                sealed class Q {}
+                non-sealed class N {}
+                static interface I {}
+                final record R(int x) {}
+            }
+        }
+    "#}
+);
+
+// The controls: a modifier prefix that is not followed by one of the four
+// declarations is still a local variable declaration.
+parser_snapshot!(
+    parse_local_variable_after_annotation,
+    indoc! {r#"
+        class Test {
+            void func() {
+                @Anno int x = 0;
+                final int y = 0;
+            }
+        }
+    "#}
+);

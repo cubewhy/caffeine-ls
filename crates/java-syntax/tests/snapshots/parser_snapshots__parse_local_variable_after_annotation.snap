@@ -1,0 +1,123 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        @Anno int x = 0;
+        final int y = 0;
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+AT "@"
+IDENTIFIER "Anno"
+WHITESPACE " "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0"
+SEMICOLON ";"
+WHITESPACE "\n        "
+FINAL_KW "final"
+WHITESPACE " "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "y"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..89
+  CLASS_DECL@0..88
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..88
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..86
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        WHITESPACE@28..29 " "
+        BLOCK@29..86
+          L_BRACE@29..30 "{"
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..55
+            LOCAL_VARIABLE_DECLARATION@39..54
+              MODIFIER_LIST@39..44
+                MARKER_ANNOTATION@39..44
+                  AT@39..40 "@"
+                  QUALIFIED_NAME@40..44
+                    IDENTIFIER@40..44 "Anno"
+              WHITESPACE@44..45 " "
+              TYPE@45..48
+                INT_KW@45..48 "int"
+              WHITESPACE@48..49 " "
+              VARIABLE_DECLARATOR_LIST@49..54
+                VARIABLE_DECLARATOR@49..54
+                  IDENTIFIER@49..50 "x"
+                  WHITESPACE@50..51 " "
+                  EQUAL@51..52 "="
+                  WHITESPACE@52..53 " "
+                  LITERAL@53..54
+                    INTEGER_LITERAL@53..54 "0"
+            SEMICOLON@54..55 ";"
+          WHITESPACE@55..64 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@64..80
+            LOCAL_VARIABLE_DECLARATION@64..79
+              MODIFIER_LIST@64..69
+                FINAL_KW@64..69 "final"
+              WHITESPACE@69..70 " "
+              TYPE@70..73
+                INT_KW@70..73 "int"
+              WHITESPACE@73..74 " "
+              VARIABLE_DECLARATOR_LIST@74..79
+                VARIABLE_DECLARATOR@74..79
+                  IDENTIFIER@74..75 "y"
+                  WHITESPACE@75..76 " "
+                  EQUAL@76..77 "="
+                  WHITESPACE@77..78 " "
+                  LITERAL@78..79
+                    INTEGER_LITERAL@78..79 "0"
+            SEMICOLON@79..80 ";"
+          WHITESPACE@80..85 "\n    "
+          R_BRACE@85..86 "}"
+      WHITESPACE@86..87 "\n"
+      R_BRACE@87..88 "}"
+  WHITESPACE@88..89 "\n"

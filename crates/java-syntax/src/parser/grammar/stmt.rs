@@ -1,8 +1,8 @@
 use stacksafe::stacksafe;
 
 use crate::grammar::decl::{
-    class_decl_rest, enum_decl_rest, interface_decl_rest, is_record_decl, record_decl_rest,
-    variable_declarator_list, variable_declarator_no_init_expr,
+    class_decl_rest, enum_decl_rest, interface_decl_rest, is_record_decl, is_record_decl_at,
+    record_decl_rest, variable_declarator_list, variable_declarator_no_init_expr,
 };
 use crate::grammar::error_recover::{
     recover_block_statement, recover_catch_parameter, recover_switch_statement, recover_until,
@@ -11,7 +11,7 @@ use crate::grammar::error_recover::{
 use crate::grammar::expr::{
     case_pattern_or_constant, expression, expression_list, is_expression_start,
 };
-use crate::grammar::modifiers::variable_modifier;
+use crate::grammar::modifiers::{modifiers, variable_modifier};
 use crate::grammar::types::{dimensions, is_primitive_type, reference_type, type_};
 use crate::parser::marker::{CompletedMarker, Marker};
 use crate::parser::{ExpectedConstruct, Parser};
@@ -59,6 +59,21 @@ pub fn block_statement(p: &mut Parser) {
     } else if is_record_decl(p) {
         let m = p.start();
         record_decl_rest(p, m);
+    } else if at_local_type_declaration(p) {
+        // §14.3's grammar is `{ClassModifier} ClassDeclaration` /
+        // `{ClassModifier} NormalInterfaceDeclaration`; whether the modifier
+        // is legal here is a compile-time error (§14.3), not a syntax error.
+        let m = p.start();
+        modifiers(p);
+        if p.at(CLASS_KW) {
+            class_decl_rest(p, m);
+        } else if p.at(ENUM_KW) {
+            enum_decl_rest(p, m);
+        } else if p.at(INTERFACE_KW) {
+            interface_decl_rest(p, m);
+        } else {
+            record_decl_rest(p, m);
+        }
     } else {
         if is_local_variable_declaration(p) {
             local_variable_declaration_statement(p).ok();
@@ -976,6 +991,90 @@ fn continue_statement(p: &mut Parser) {
     p.eat(IDENTIFIER); // optional label
     p.expect(SEMICOLON);
     m.complete(p, CONTINUE_STMT);
+}
+
+/// Whether the current position begins a *local* class, interface, enum or
+/// record declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
+/// one of the four declarations, optionally prefixed by the `{ClassModifier}`
+/// the grammar admits (`final class A {}`, `@Anno class D {}`,
+/// `sealed class S {}`). Whether a given modifier is *legal* here is a
+/// compile-time error rather than a syntax error (§14.3 bans the access
+/// modifiers, `static`, `sealed` and `non-sealed`), so the lookahead accepts
+/// the whole modifier set and leaves the verdict to `hir-ty`.
+///
+/// Returns `false` for `@interface`, which §14.3 does not admit in a block: a
+/// local declaration is a `ClassDeclaration` or a `NormalInterfaceDeclaration`,
+/// and an annotation type is neither.
+fn at_local_type_declaration(p: &Parser) -> bool {
+    let mut i = 0;
+
+    loop {
+        if is_class_modifier(p, i) {
+            i += 1;
+        } else if p.nth_at_non_sealed(i) {
+            // `non-sealed` lexes as three tokens ([§8.1.1.2]).
+            i += 3;
+        } else if p.nth(i) == Some(AT) {
+            if p.nth(i + 1) == Some(INTERFACE_KW) {
+                return false;
+            }
+
+            // skip the annotation's dotted name ([§9.7.4]); only DOT-separated
+            // segments belong to it — the identifier right after a segment is
+            // the declared type, not part of the name.
+            if !matches!(p.nth(i + 1), Some(IDENTIFIER)) {
+                return false;
+            }
+            i += 2;
+            while p.nth(i) == Some(DOT) && p.nth(i + 1) == Some(IDENTIFIER) {
+                i += 2;
+            }
+
+            // skip annotation arguments
+            if p.nth(i) == Some(L_PAREN) {
+                let mut depth = 1;
+                i += 1;
+                while depth > 0 {
+                    match p.nth(i) {
+                        Some(L_PAREN) => depth += 1,
+                        Some(R_PAREN) => depth -= 1,
+                        Some(EOF) | None => return false,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+        } else {
+            break;
+        }
+    }
+
+    matches!(p.nth(i), Some(CLASS_KW | ENUM_KW | INTERFACE_KW)) || is_record_decl_at(p, i)
+}
+
+/// A modifier keyword [`modifiers`] consumes, plus the contextual
+/// `sealed` / `non-sealed`. Used by [`at_local_type_declaration`] to look past
+/// a local declaration's prefix.
+fn is_class_modifier(p: &Parser, i: usize) -> bool {
+    matches!(
+        p.nth(i),
+        Some(
+            PUBLIC_KW
+                | PRIVATE_KW
+                | PROTECTED_KW
+                | FINAL_KW
+                | STATIC_KW
+                | ABSTRACT_KW
+                | DEFAULT_KW
+                | NATIVE_KW
+                | SYNCHRONIZED_KW
+                | TRANSIENT_KW
+                | VOLATILE_KW
+                | STRICTFP_KW
+        )
+    ) || p.nth_at_contextual_kw(i, ContextualKeyword::Sealed)
+        || p.nth_at_contextual_kw(i, ContextualKeyword::NonSealed)
 }
 
 pub fn is_local_variable_declaration(p: &Parser) -> bool {
