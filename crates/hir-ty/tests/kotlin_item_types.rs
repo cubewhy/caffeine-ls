@@ -7,7 +7,7 @@
 
 use base_db::{FileChange, FileSourceRootInput, SourceDatabase, SourceRoot, SourceRootId};
 use hir::SourceSetId;
-use hir_ty::Ty;
+use hir_ty::{Ty, TyKind};
 use tempfile::TempDir;
 use triomphe::Arc;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
@@ -51,6 +51,8 @@ fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
         class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601),
         // `interface Function1<in P1, out R>`.
         class("kotlin/Function1", Some("kotlin/Any"), &[], 0x0601),
+        // `abstract class Enum<E>`, the implicit supertype of an `enum class`.
+        class("kotlin/Enum", Some("kotlin/Any"), &[], 0x0421),
         // `interface Iterable<out T>` with `iterator()`.
         ClassSpec {
             methods: &[("iterator", "()Ljava/util/Iterator;")],
@@ -411,5 +413,334 @@ fun broken() {
             rendered.contains(expected),
             "expected {expected:?} in:\n{rendered}"
         );
+    }
+}
+
+// -- platform types, mapped classifiers and the resolution gaps --------------
+
+/// The Java↔Kotlin boundary of the type model.
+///
+/// Every case is checked against kotlinc 2.4.20 (JRE 21.0.11) first, with the
+/// probe fixture `J.java` +
+///
+/// ```kotlin
+/// typealias Handler<T> = (T) -> Unit
+/// abstract class Box<T>(val v: T) : List<T>
+/// enum class Direction { NORTH }
+/// class Outer { class Inner }
+/// val ints: List<Int> = listOf()
+/// val handler: Handler<Int> = {}
+/// val direction: Enum<Direction> = Direction.NORTH
+/// fun <T : Number> bounded(t: T): T = t
+/// fun takesInts(x: List<Int>) {}
+/// fun takesStrings(x: List<String>) {}
+/// fun takesNumbers(x: List<Number>) {}
+/// fun boxProbe(boxed: Box<Int>) { takesInts(boxed); takesNumbers(boxed) }
+/// fun probes() {
+///     val a: String = J.javaMethod()      // a Java `String javaMethod()`
+///     val b: String? = J.javaMethod()
+///     val c: List<Number> = ints
+///     val f: String? = null
+///     val h: Number = bounded(1)
+///     val i: Outer.Inner = Outer.Inner()
+/// }
+/// ```
+///
+/// which compiles clean:
+///
+/// ```text
+/// $ JAVA_HOME=/home/cubewhy/.jdks/temurin-21.0.11 kotlinc -d out J.java Ok.kt
+/// (exit status 0, no diagnostics)
+/// ```
+///
+/// and a `Bad.kt` beside it whose three probes the compiler rejects with
+/// exactly these messages:
+///
+/// ```text
+/// Bad.kt:2:18: error: argument type mismatch: actual type is 'Box<Int>', but 'List<String>' was expected.
+///     takesStrings(boxed)
+///                  ^^^^^
+/// Bad.kt:6:21: error: null cannot be a value of a non-null type 'String'.
+///     val g: String = null
+///                     ^^^^
+/// Bad.kt:10:13: error: type arguments are not allowed for type parameters.
+///     val x: T<Int>? = null
+///             ^^^^^
+/// ```
+mod interop_types {
+    use super::*;
+    use hir_ty::kotlin::ty::ty_from_java;
+
+    fn scope(db: &TestDatabase, file: FileId) -> hir::ResolutionScope {
+        hir::ResolutionScope::SourceSet(
+            hir::source_set_for_file(db, file).expect("a mapped source set"),
+        )
+    }
+
+    /// A classfile reference type is a *platform* type: `java.lang.String` is
+    /// `kotlin.String!` — the flexible type `String..String?` — and a value of
+    /// it is usable both where a `String` and where a `String?` is expected.
+    /// kotlinc accepts `val a: String = javaMethod()` and
+    /// `val b: String? = javaMethod()` for a Java `String javaMethod()`.
+    #[test]
+    fn a_classfile_type_becomes_a_platform_type() {
+        let (db, file) = kotlin_fixture(&[(
+            "/src/main/kotlin/Sample.kt",
+            "val plain: String = \"\"\nval optional: String? = null\n",
+        )]);
+        let scope = scope(&db, file);
+        let plain = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "plain"));
+        let optional = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "optional"));
+
+        let java = ty_from_java(&db, Ty::reference(&db, "java.lang.String", Vec::new()));
+        assert_eq!(
+            hir_ty::display_kotlin(&db, java).to_string(),
+            "String..String?",
+            "`java.lang.String` is the platform type `String!`"
+        );
+        assert!(
+            hir_ty::kotlin_subtype(&db, &scope, &java, &plain),
+            "a platform `String!` is usable as `String`"
+        );
+        assert!(
+            hir_ty::kotlin_subtype(&db, &scope, &java, &optional),
+            "a platform `String!` is usable as `String?`"
+        );
+        // The mapping is part of the conversion: the *lower* half is
+        // `kotlin.String`, not `java.lang.String`.
+        assert_eq!(
+            hir_ty::display_kotlin(
+                &db,
+                ty_from_java(&db, Ty::primitive(&db, syntax::stub::PrimitiveType::Int))
+            )
+            .to_string(),
+            "Int",
+            "`int` denotes `kotlin.Int`"
+        );
+    }
+
+    /// The standard-library variance the classfile cannot carry comes from the
+    /// mapped-variance table: `interface List<out E>`.
+    ///
+    /// kotlinc accepts `val c: List<Number> = ints` for a `List<Int>` — `List`
+    /// is declared `List<out E>` — and a `Box<Int> : List<T>` is accepted
+    /// where `List<Int>` and `List<Number>` are expected but rejected for
+    /// `List<String>` (`argument type mismatch: actual type is 'Box<Int>', but
+    /// 'List<String>' was expected.`).
+    #[test]
+    fn the_mapped_variance_table_makes_the_standard_library_covariant() {
+        let source = "val ints: List<Int> = listOf()\nval numbers: List<Number> = listOf()\nval anys: List<Any> = listOf()\n";
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let scope = scope(&db, file);
+        let ints = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "ints"));
+        let numbers = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "numbers"));
+        let anys = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "anys"));
+        assert!(
+            hir_ty::kotlin_subtype(&db, &scope, &ints, &numbers),
+            "List<Int> <: List<Number> for the `out E` of kotlin.collections.List"
+        );
+        assert!(
+            hir_ty::kotlin_subtype(&db, &scope, &ints, &anys),
+            "List<Int> <: List<Any>"
+        );
+    }
+
+    /// A supertype list is declared over the class's own parameters, so a
+    /// receiver's arguments are substituted into it: `class Box<T> : List<T>`
+    /// makes `Box<Int> <: List<Int>` — kotlinc accepts `takesInts(boxed)` for
+    /// a `Box<Int>`. The substitution is what the *covariance* of `List` then
+    /// widens to `List<Number>`, while `List<String>` stays out of reach.
+    #[test]
+    fn a_source_supertype_list_is_substituted_with_the_receivers_arguments() {
+        let source = "class Box<T>(val v: T) : List<T>\nval box: Box<Int> = TODO()\nval ints: List<Int> = TODO()\nval numbers: List<Number> = TODO()\nval strings: List<String> = TODO()\n";
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let scope = scope(&db, file);
+        let boxed = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "box"));
+        let ints = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "ints"));
+        let numbers = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "numbers"));
+        assert!(
+            hir_ty::kotlin_subtype(&db, &scope, &boxed, &ints),
+            "Box<Int> <: List<Int>"
+        );
+        let strings = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "strings"));
+        assert!(
+            !hir_ty::kotlin_subtype(&db, &scope, &boxed, &strings),
+            "Box<Int> !<: List<String>: the substituted argument is Int"
+        );
+    }
+
+    /// The null type is a subtype of every nullable type and of nothing else:
+    /// kotlinc accepts `val f: String? = null` and rejects
+    /// `val g: String = null` with
+    /// `null cannot be a value of a non-null type 'String'.`
+    #[test]
+    fn null_is_a_subtype_of_every_nullable_type_only() {
+        let source = "val optional: String? = null\nval plain: String = \"\"\n";
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let scope = scope(&db, file);
+        let null = Ty::null(&db);
+        let optional = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "optional"));
+        let plain = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "plain"));
+        assert!(optional.is_nullable(&db));
+        assert!(hir_ty::kotlin_subtype(&db, &scope, &null, &optional));
+        assert!(
+            !hir_ty::kotlin_subtype(&db, &scope, &null, &plain),
+            "`null` is not a value of a non-null type"
+        );
+    }
+
+    /// An unresolved name is the *error* type, and the error type absorbs every
+    /// subtyping question: a name that could not be resolved must not *also*
+    /// report a mismatch downstream. kotlinc reports the unresolved reference
+    /// and nothing else for `val x: String = missing()`.
+    #[test]
+    fn the_error_type_absorbs_subtyping_in_both_positions() {
+        let (db, file) = kotlin_fixture(&[(
+            "/src/main/kotlin/Sample.kt",
+            "val x: String = \"\"\nval missing: Missing = TODO()\n",
+        )]);
+        let scope = scope(&db, file);
+        let string = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "x"));
+        let missing = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "missing"));
+        assert!(
+            missing.is_error(&db),
+            "an unresolved name is the error type"
+        );
+        assert!(hir_ty::kotlin_subtype(&db, &scope, &missing, &string));
+        assert!(hir_ty::kotlin_subtype(&db, &scope, &string, &missing));
+    }
+
+    /// A type parameter reaches its declared bounds: `fun <T : Number>
+    /// bounded(t: T): T` compiles and passes `T` where a `Number` is expected
+    /// (`val h: Number = bounded(1)`), which is what `T <: U` means
+    /// ([KLS
+    /// `type-system.html#type-parameters`](https://kotlinlang.org/spec/type-system.html#type-parameters)).
+    #[test]
+    fn a_type_parameter_is_bounded_by_its_declared_bounds() {
+        let source =
+            "class Box<T : Number>(val v: T)\nval n: Number = TODO()\nval s: String = \"\"\n";
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let scope = scope(&db, file);
+        let number = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "n"));
+        let string = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "s"));
+        let param = item_named(&db, file, "v");
+        let param_ty = hir_ty::kotlin_item_ty(&db, file, param);
+        assert!(
+            hir_ty::kotlin_subtype(&db, &scope, &param_ty, &number),
+            "`T : Number` makes T a subtype of Number"
+        );
+        assert!(!hir_ty::kotlin_subtype(&db, &scope, &param_ty, &string));
+    }
+
+    /// A `typealias` is expanded with its arguments, not named: `Handler<Int>`
+    /// *is* `(Int) -> Unit`, which is what kotlinc's `val handler: Handler<Int>
+    /// = {}` accepts ([KLS
+    /// `declarations.html#type-alias`](https://kotlinlang.org/spec/declarations.html#type-alias)).
+    #[test]
+    fn a_type_alias_is_expanded_with_its_arguments() {
+        let source = "typealias Handler<T> = (T) -> Unit\ntypealias Name = String\nval h: Handler<Int> = {}\nval n: Name = \"\"\n";
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let h = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "h"));
+        let n = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "n"));
+        assert_eq!(hir_ty::display_kotlin(&db, h).to_string(), "(Int) -> Unit");
+        assert_eq!(hir_ty::display_kotlin(&db, n).to_string(), "String");
+    }
+
+    /// A type parameter is not a classifier and takes no type arguments ([KLS
+    /// `type-system.html#classifier-types`](https://kotlinlang.org/spec/type-system.html#classifier-types)):
+    /// `type arguments are not allowed for type parameters.` (kotlinc 2.4.20),
+    /// and `T<Int>` must not silently resolve to `T`, which a classifier
+    /// lookup without this guard would do.
+    #[test]
+    fn a_type_parameter_with_type_arguments_is_the_error_type() {
+        let (db, file) = kotlin_fixture(&[(
+            "/src/main/kotlin/Sample.kt",
+            "class Box<T>(val v: T<Int>)\n",
+        )]);
+        let v = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "v"));
+        assert!(v.is_error(&db), "`T<Int>` is an error: {v:?}");
+    }
+
+    /// An `enum class` has the implicit supertype `kotlin.Enum<E>` ([KLS
+    /// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)),
+    /// with itself as the argument — kotlinc accepts
+    /// `val direction: Enum<Direction> = Direction.NORTH`.
+    #[test]
+    fn an_enum_class_has_the_implicit_enum_supertype() {
+        let (db, file) = kotlin_fixture(&[(
+            "/src/main/kotlin/Sample.kt",
+            "enum class Direction { NORTH }\n",
+        )]);
+        let direction = item_named(&db, file, "Direction");
+        let supertypes: Vec<String> = hir_ty::kotlin_supertypes(&db, file, direction)
+            .iter()
+            .map(|ty| hir_ty::display_kotlin(&db, *ty).to_string())
+            .collect();
+        assert!(
+            supertypes.iter().any(|name| name == "Enum<Direction>"),
+            "an enum is a subtype of `Enum<Direction>`: {supertypes:?}"
+        );
+    }
+
+    /// A nested classifier resolves through its enclosing declaration, and a
+    /// name written inside the enclosing class finds the nested one first —
+    /// kotlinc accepts `val i: Outer.Inner = Outer.Inner()`.
+    #[test]
+    fn a_nested_classifier_resolves_through_its_enclosing_declaration() {
+        let source = "class Outer {\n    class Inner\n    val v: Inner = TODO()\n}\nval w: Outer.Inner? = null\n";
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let v = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "v"));
+        let w = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "w"));
+        // The *canonical* name says which classifier resolved — the display
+        // renders simple names, which a nested and a top-level class share.
+        assert_eq!(reference_name(&db, &v), "Outer.Inner");
+        assert_eq!(
+            reference_name(&db, &w.strip_nullability(&db)),
+            "Outer.Inner",
+            "`Outer.Inner?` names the same classifier"
+        );
+    }
+
+    /// A Kotlin class is named by the *source symbol index*, so the Java layer
+    /// can key it — and resolving it must not index the empty Java item tree
+    /// (`ClassKey::of_ty` used to).
+    #[test]
+    fn the_java_layer_keys_a_kotlin_class_by_its_name() {
+        let (db, file) = kotlin_fixture(&[(
+            "/src/main/kotlin/Util.kt",
+            "package a\n\nclass Util(val n: Int)\n",
+        )]);
+        let util = item_named(&db, file, "Util");
+        assert_eq!(
+            hir::source_class_fqn(&db, file, util).map(|name| name.to_string()),
+            Some("a.Util".to_owned())
+        );
+        let ty = Ty::reference(&db, "a.Util", Vec::new());
+        let key = hir_ty::ClassKey::of_ty(&db, &ty).expect("a reference type");
+        assert_eq!(
+            hir_ty::ClassKey::display_name(&key, &db).to_string(),
+            "a.Util"
+        );
+    }
+
+    /// The canonical name of a reference type, for the assertions that must
+    /// tell two same-named classifiers apart.
+    fn reference_name(db: &TestDatabase, ty: &Ty) -> String {
+        match ty.kind(db) {
+            TyKind::Reference { name, .. } => name.to_string(),
+            other => panic!("not a reference type: {other:?}"),
+        }
+    }
+
+    /// The item id of the declaration named `name` in the fixture's file.
+    fn item_named(db: &TestDatabase, file: FileId, name: &str) -> hir_expand::ids::ItemId {
+        let tree = hir::file_item_tree(db, file);
+        let tree = tree.as_kotlin().expect("a Kotlin file").clone();
+        for (id, data) in tree.items.iter() {
+            if data.name().map(|n| n.as_str()) == Some(name) {
+                return hir_expand::ids::ItemId(id);
+            }
+        }
+        panic!("no item named {name} in the fixture");
     }
 }

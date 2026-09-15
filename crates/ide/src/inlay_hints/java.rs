@@ -407,6 +407,11 @@ fn push_type_label(db: &dyn TyDatabase, ty: &Ty, out: &mut Vec<InlayHintLabelPar
             push_type_label(db, inner, out);
             out.push(part(" & Any"));
         }
+        // A flexible type `L..U` (KLS
+        // `type-system.html#flexible-types`) renders the type the value has
+        // when it is used, which is what a Java position sees; a Java type
+        // never carries one.
+        TyKind::Flexible { lower, .. } => push_type_label(db, lower, out),
     }
 }
 
@@ -429,6 +434,7 @@ fn is_renderable(db: &dyn TyDatabase, ty: &Ty) -> bool {
         // its inner type is (KLS
         // `type-system.html#nullable-types`); a Java type never carries one.
         TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => is_renderable(db, inner),
+        TyKind::Flexible { lower, .. } => is_renderable(db, lower),
     }
 }
 

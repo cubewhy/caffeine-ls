@@ -36,6 +36,7 @@ use hir_expand::name::Name;
 use vfs::FileId;
 
 use crate::java::db::TyDatabase;
+use crate::kotlin::ty::ty_from_java;
 use crate::ty::{Ty, TyKind};
 
 /// The direct supertypes of `ty` in `scope`.
@@ -50,23 +51,71 @@ pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) ->
         hir::Resolved::Source(class) => {
             let tree = hir::file_item_tree(db, class.file);
             let Some(tree) = tree.as_kotlin() else {
-                // A Java source class: the Java layer owns its supertypes.
-                return crate::java::subtyping::supertypes(db, scope, ty);
+                // A Java source class: the Java layer owns its supertypes, and
+                // its types are Java's — [`ty_from_java`] is what makes them
+                // Kotlin's (a classfile receiver becomes a platform type).
+                return crate::java::subtyping::supertypes(db, scope, ty)
+                    .into_iter()
+                    .map(|supertype| ty_from_java(db, supertype))
+                    .collect();
             };
             let _ = tree;
+            // A source supertype list is declared over the *class's* type
+            // parameters: `class C<T> : List<T>` gives `C<Int> <: List<Int>`
+            // ([KLS
+            // `type-system.html#type-containment`](https://kotlinlang.org/spec/type-system.html#type-containment)),
+            // so the receiver's arguments are substituted into each supertype.
+            let binding = class_binding(db, class, ty);
             super::db::supertypes(db, class.file, class.item)
                 .iter()
-                .copied()
+                .map(|supertype| supertype.substitute(db, &binding))
                 .collect()
         }
         // A library classifier's supertypes come from its classfile record, as
-        // interned binary names ('the Java layer's own spelling).
-        hir::Resolved::Library(_) => hir::super_types(db, &resolved)
+        // interned binary names — the Java layer's own spelling of them — and
+        // each is converted to the Kotlin type it denotes.
+        hir::Resolved::Library(_) => crate::java::subtyping::supertypes(db, scope, ty)
             .into_iter()
-            .map(|symbol| Name::new(&db.hir_state().interner.resolve(&symbol)))
-            .map(|fqn| Ty::reference(db, fqn, Vec::new()))
+            .map(|supertype| ty_from_java(db, supertype))
             .collect(),
     }
+}
+
+/// The binding of a *source* class's declared type parameters to the receiver's
+/// arguments ([KLS
+/// `type-system.html#type-containment`](https://kotlinlang.org/spec/type-system.html#type-containment)):
+/// `class C<T>` used at `C<Int>` substitutes `T → Int` in every supertype it
+/// declares. A receiver with no arguments — a raw or non-generic use — binds
+/// nothing, exactly as [`Ty::substitute`] leaves an unbound variable alone.
+fn class_binding(
+    db: &dyn TyDatabase,
+    class: &hir::SourceClass,
+    ty: &Ty,
+) -> rustc_hash::FxHashMap<crate::ty::TypeVarScope, Ty> {
+    let TyKind::Reference { args, .. } = ty.kind(db) else {
+        return rustc_hash::FxHashMap::default();
+    };
+    let tree = hir::file_item_tree(db, class.file);
+    let Some(tree) = tree.as_kotlin() else {
+        return rustc_hash::FxHashMap::default();
+    };
+    let KotlinItemData::Class(data) = tree.data(class.item) else {
+        return rustc_hash::FxHashMap::default();
+    };
+    data.type_params
+        .iter()
+        .zip(args.iter().copied())
+        .map(|(param, arg)| {
+            (
+                crate::ty::TypeVarScope::Class {
+                    file: class.file,
+                    item: class.item,
+                    name: param.name.clone(),
+                },
+                arg,
+            )
+        })
+        .collect()
 }
 
 /// Whether `sub` is a subtype of `sup` ([KLS
@@ -78,6 +127,26 @@ pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, s
     let sub_kind = sub.kind(db).clone();
     let sup_kind = sup.kind(db).clone();
 
+    // An unresolved name is compatible with everything in both positions: the
+    // error type is the analyzer's permissiveness, so a name that could not be
+    // resolved does not *also* report a mismatch downstream ([KLS
+    // `type-system.html`](https://kotlinlang.org/spec/type-system.html) has no
+    // error type — a recorded deviation).
+    if matches!(sub_kind, TyKind::Error) || matches!(sup_kind, TyKind::Error) {
+        return true;
+    }
+
+    // A flexible type `L..U` is a subtype of `S` when its *lower* bound is, on
+    // the sub side, and `S` is a subtype of it when `S <: U` on the sup side
+    // ([KLS
+    // `type-system.html#subtyping-for-flexible-types`](https://kotlinlang.org/spec/type-system.html#subtyping-for-flexible-types)).
+    if let TyKind::Flexible { lower, .. } = sub_kind {
+        return is_subtype(db, scope, &lower, sup);
+    }
+    if let TyKind::Flexible { upper, .. } = sup_kind {
+        return is_subtype(db, scope, sub, &upper);
+    }
+
     // `T & Any <: T` and `T & Any <: T?`; a definitely-non-nullable type is
     // its inner type for every subtyping question.
     if let TyKind::DefinitelyNonNull(inner) = sub_kind {
@@ -87,6 +156,16 @@ pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, s
         // `T <: U & Any` needs `T <: U` *and* `T` definitely non-null; a
         // non-null `T` satisfies both, a nullable one neither.
         return !sub.is_nullable(db) && is_subtype(db, scope, sub, &inner);
+    }
+
+    // The null type is a subtype of every nullable type and of nothing else
+    // ([KLS
+    // `type-system.html#subtyping-for-nullable-types`](https://kotlinlang.org/spec/type-system.html#subtyping-for-nullable-types)):
+    // `val x: String? = null` is legal, `val x: String = null` is not. The
+    // `Nothing?` case follows from the same rule, since `Nothing?` *is*
+    // `Nullable(Nothing)`.
+    if matches!(sub_kind, TyKind::Null) {
+        return sup.is_nullable(db);
     }
 
     // A nullable sub- or supertype: Kotlin's `T?` lattice.
@@ -152,11 +231,16 @@ pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, s
             }
             false
         }
-        (TyKind::TypeVar { scope: var, .. }, _) | (_, TyKind::TypeVar { scope: var, .. }) => {
-            // A type variable is its own type and nothing else: the bounds are
-            // consulted by the constraint solver, not here.
-            let _ = var;
-            false
+        // A type variable is a subtype of each of its upper bounds ([KLS
+        // `type-system.html#type-parameters`](https://kotlinlang.org/spec/type-system.html#type-parameters):
+        // `T : U` makes `T` a subtype of `U`). An unbounded variable is bounded
+        // by `Any?`, which every type satisfies — the `Any?` case is handled
+        // before this match.
+        (TyKind::TypeVar { bounds, .. }, _) => {
+            bounds.iter().any(|bound| is_subtype(db, scope, bound, sup))
+        }
+        (_, TyKind::TypeVar { bounds, .. }) => {
+            bounds.iter().any(|bound| is_subtype(db, scope, sub, bound))
         }
         (TyKind::Array(sub_inner), TyKind::Array(sup_inner)) => {
             // Kotlin's array types are invariant
@@ -239,13 +323,20 @@ fn reference_fqn(db: &dyn TyDatabase, ty: &Ty) -> Option<Name> {
 }
 
 /// The declaration-site variances of the type parameters of the classifier
-/// `fqn` names, in order — from the item tree for a source class, and `None`
-/// for a library one (see the module docs).
+/// `fqn` names, in order — from the item tree for a source class, from
+/// [`MAPPED_VARIANCE`] for a standard-library classifier the compiler maps onto
+/// a JVM type (whose variance lives in `@Metadata`, which the stub layer does
+/// not decode), and `None` for any other library class.
 pub fn declared_variances(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     fqn: &str,
 ) -> Option<Vec<Option<KotlinVariance>>> {
+    // The mapped classifiers first: `kotlin.collections.List` has no classfile
+    // of its own, so `fqn_resolve` finds nothing for it.
+    if let Some(variances) = super::ty::mapped_variances(&Name::new(fqn)) {
+        return Some(variances.to_vec());
+    }
     let resolved = hir::fqn_resolve(db, scope, fqn)?;
     let hir::Resolved::Source(class) = &resolved else {
         return None;

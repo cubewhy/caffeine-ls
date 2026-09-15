@@ -24,14 +24,20 @@
 //!
 //! KLS does not enumerate the default imports (the *Kotlin/Core* specification
 //! has no section for them), so the list below is pinned empirically with the
-//! probe oracle of kotlinc 2.4.20 (JRE 25): `listOf(1)` is a
+//! probe oracle of kotlinc 2.4.20 (JRE 21.0.11): `listOf(1)` is a
 //! `kotlin.collections.List<Int>` with no import (so `List` comes from
-//! `kotlin.collections`), `String`/`Exception`/`StringBuilder` resolve with no
-//! import (so `kotlin` and `java.lang` are both default), and `String::class`
-//! needs no import for `kotlin.reflect`. The list is the compiler's documented
-//! one (<https://kotlinlang.org/docs/packages.html#default-imports>) checked
+//! `kotlin.collections`), and `String`/`Exception`/`StringBuilder` resolve with
+//! no import (so `kotlin` and `java.lang` are both default). The list is the
+//! compiler's documented one
+//! (<https://kotlinlang.org/docs/packages.html#default-imports>) checked
 //! against it; a standard-library member that resolves through none of these
 //! packages is a missing entry.
+//!
+//! `kotlin.reflect` is deliberately *not* a default import: `fun f(): KClass<*>`
+//! with no import is `unresolved reference 'KClass'.` under kotlinc 2.4.20, and
+//! the compiler's documented list has no entry for the package. `String::class`
+//! still needs no import — the class literal is an *expression* whose type is
+//! `kotlin.reflect.KClass`, and an expression's type needs no name in scope.
 
 use hir::hir_def::kotlin::item_tree::{
     KotlinClassKind, KotlinItemData, KotlinItemTree, KotlinTypeParam,
@@ -62,9 +68,19 @@ pub struct KotlinResolver<'a> {
     db: &'a dyn TyDatabase,
     file: FileId,
     tree: &'a KotlinItemTree,
+    /// The declaration the resolved name is written in: what the enclosing
+    /// chain — of nested classifiers and of type parameters — is walked from
+    /// ([`KotlinResolver::local_declaration`]).
+    item: hir_expand::ids::ItemId,
     scope: hir::ResolutionScope,
     /// The type parameters in scope at the resolved item, innermost last.
     type_params: Vec<TypeParamScope>,
+    /// The type parameters whose *bounds* are being resolved, so a re-entrant
+    /// bound (`T : Comparable<T>`) yields the variable without bounds and
+    /// interning terminates — the guard the Java layer keeps in
+    /// [`crate::java::resolve`]'s `resolve_type_ref_impl`, here as state
+    /// because name resolution is `&self`.
+    resolving: std::cell::RefCell<Vec<Name>>,
 }
 
 /// One declared type parameter, with the declaration that declares it.
@@ -111,8 +127,10 @@ impl<'a> KotlinResolver<'a> {
             db,
             file,
             tree,
+            item,
             scope,
             type_params,
+            resolving: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -164,13 +182,61 @@ impl<'a> KotlinResolver<'a> {
 
     /// The type variable of a type parameter — declared by `item` itself, so
     /// the scope carries both the file and the declaring item.
+    ///
+    /// The variable carries its declared bounds ([KLS
+    /// `type-system.html#type-parameters`](https://kotlinlang.org/spec/type-system.html#type-parameters)):
+    /// `T : U` makes `T` a subtype of `U`, and the constraint solver reads the
+    /// bounds off the type. A parameter without a bound has none recorded — the
+    /// implicit `kotlin.Any?` is what an empty bound list means.
     pub fn type_var(&self, item: hir_expand::ids::ItemId, param: &TypeParamScope) -> Ty {
-        let scope = TypeVarScope::Class {
+        let scope = self.param_scope(item, &param.name);
+        let bounds = self.param_bounds(&param.name, &param.param);
+        Ty::type_var(self.db, scope, bounds)
+    }
+
+    /// The [`TypeVarScope`] a type parameter of `item` is identified by: a
+    /// classifier's parameter is a [`TypeVarScope::Class`], a function's, a
+    /// property's and a type alias's a [`TypeVarScope::Method`] ([KLS
+    /// `type-system.html#type-parameters`](https://kotlinlang.org/spec/type-system.html#type-parameters)
+    /// scopes the variable to its declaring parameter, and the two kinds are
+    /// distinct variables).
+    fn param_scope(&self, item: hir_expand::ids::ItemId, name: &Name) -> TypeVarScope {
+        let scope = |name: &Name| TypeVarScope::Method {
             file: self.file,
             item,
-            name: param.name.clone(),
+            name: name.clone(),
         };
-        Ty::type_var(self.db, scope, Vec::new())
+        match self.tree.data(item) {
+            KotlinItemData::Class(_) => TypeVarScope::Class {
+                file: self.file,
+                item,
+                name: name.clone(),
+            },
+            _ => scope(name),
+        }
+    }
+
+    /// The resolved bounds of a type parameter, with the recursion guard of
+    /// [`Self::resolving`]: a bound that names the parameter itself
+    /// (`T : Comparable<T>`) is resolved with an *empty* bound list for the
+    /// re-entrant occurrence, so interning terminates.
+    fn param_bounds(&self, name: &Name, param: &KotlinTypeParam) -> Vec<Ty> {
+        if self
+            .resolving
+            .borrow()
+            .iter()
+            .any(|resolving| resolving == name)
+        {
+            return Vec::new();
+        }
+        self.resolving.borrow_mut().push(name.clone());
+        let bounds = param
+            .bounds
+            .iter()
+            .map(|bound| crate::kotlin::ty::ty_from_type_ref(self.db, self, &bound.ty))
+            .collect();
+        self.resolving.borrow_mut().pop();
+        bounds
     }
 
     /// The type the written reference `name` denotes, or [`Ty::error`] when it
@@ -182,15 +248,53 @@ impl<'a> KotlinResolver<'a> {
     pub fn resolve_reference(&self, name: &Name, args: Vec<Ty>) -> Ty {
         let text = name.as_str();
         let simple = text.rsplit('.').next().unwrap_or(text);
-        if args.is_empty()
-            && let Some(param) = self.type_param(simple)
-        {
-            return self.type_var(param.declaring, &param);
+        if let Some(param) = self.type_param(simple) {
+            // A type parameter is not a classifier and takes no type
+            // arguments ([KLS
+            // `type-system.html#classifier-types`](https://kotlinlang.org/spec/type-system.html#classifier-types)):
+            // `T<Int>` is an error, not a classifier lookup of `T`.
+            return if args.is_empty() {
+                self.type_var(param.declaring, &param)
+            } else {
+                Ty::error(self.db)
+            };
+        }
+        // A type alias is expanded, not named ([KLS
+        // `declarations.html#type-alias`](https://kotlinlang.org/spec/declarations.html#type-alias)):
+        // `Handler<Int>` *is* the `(Int) -> Unit` the alias stands for.
+        if let Some(alias) = self.type_alias(simple) {
+            return self.expand_alias(alias, args);
         }
         match self.class_fqn(text) {
             Some(fqn) => Ty::reference(self.db, fqn, args),
             None => Ty::error(self.db),
         }
+    }
+
+    /// The `typealias` declaration this file declares under `simple`, if any.
+    fn type_alias(&self, simple: &str) -> Option<hir_expand::ids::ItemId> {
+        let item = self.local_declaration(simple)?;
+        matches!(self.tree.data(item), KotlinItemData::TypeAlias(_)).then_some(item)
+    }
+
+    /// The expansion of a type-alias reference ([KLS
+    /// `declarations.html#type-alias`](https://kotlinlang.org/spec/declarations.html#type-alias)):
+    /// the aliased type, with the alias's own parameters substituted by the
+    /// written arguments — `typealias Handler<T> = (T) -> Unit` used as
+    /// `Handler<Int>` is `(Int) -> Unit`. The alias keeps no identity of its
+    /// own: the compiler substitutes into its target, which is why a
+    /// reference to an alias is never a distinct type.
+    fn expand_alias(&self, item: hir_expand::ids::ItemId, args: Vec<Ty>) -> Ty {
+        let KotlinItemData::TypeAlias(data) = self.tree.data(item) else {
+            return Ty::error(self.db);
+        };
+        let alias = KotlinResolver::for_item(self.db, self.file, self.tree, item);
+        let mut binding = rustc_hash::FxHashMap::default();
+        for (param, arg) in data.type_params.iter().zip(args) {
+            binding.insert(alias.param_scope(item, &param.name), arg);
+        }
+        let target = crate::kotlin::ty::ty_from_type_ref(self.db, &alias, &data.target.ty);
+        target.substitute(self.db, &binding)
     }
 
     /// The canonical fully qualified name the written reference `name` denotes.
@@ -272,7 +376,12 @@ impl<'a> KotlinResolver<'a> {
         })
     }
 
-    /// The declaration of this file that `simple` names, if any.
+    /// The declaration of this file that `simple` names, if any: the *members
+    /// of the enclosing classifiers first*, innermost outwards, then the file's
+    /// own declarations ([KLS
+    /// `declarations.html#nested-and-inner-classes`](https://kotlinlang.org/spec/declarations.html#nested-and-inner-classes)
+    /// scopes a nested classifier to its enclosing declaration, so it shadows a
+    /// file-level declaration of the same name).
     fn local_declaration(&self, simple: &str) -> Option<hir_expand::ids::ItemId> {
         fn walk(
             tree: &KotlinItemTree,
@@ -288,6 +397,17 @@ impl<'a> KotlinResolver<'a> {
                 }
             }
             None
+        }
+        // The enclosing classifiers, innermost first: their members are in
+        // scope where the name is written.
+        let mut current = Some(self.item);
+        while let Some(id) = current {
+            if let Some(declaration) = self.tree.data(id).body().iter().find(|&&member| {
+                self.tree.data(member).name().map(|name| name.as_str()) == Some(simple)
+            }) {
+                return Some(*declaration);
+            }
+            current = self.tree.parent_of(id);
         }
         for &top in &self.tree.top {
             if let Some(found) = walk(self.tree, top, simple) {
@@ -326,21 +446,28 @@ impl<'a> KotlinResolver<'a> {
             let any = self
                 .class_fqn("Any")
                 .unwrap_or_else(|| Name::new("kotlin.Any"));
-            return vec![Ty::reference(self.db, any, Vec::new())];
+            let mut out = vec![Ty::reference(self.db, any, Vec::new())];
+            // An `enum class` has the implicit supertype `kotlin.Enum<E>`,
+            // `E` being the enum class itself ([KLS
+            // `built-in-types-and-their-semantics.html#enum-types`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html#enum-types)):
+            // it is what gives the entries `name` and `ordinal`, and it is the
+            // type a Java `Enum<?>` position accepts.
+            if class.kind == KotlinClassKind::Enum {
+                let self_ty = match self.local_fqn(class.name.as_str()) {
+                    Some(fqn) => Ty::reference(self.db, fqn, Vec::new()),
+                    None => Ty::reference(self.db, class.name.clone(), Vec::new()),
+                };
+                let enumeration = self
+                    .class_fqn("Enum")
+                    .unwrap_or_else(|| Name::new("kotlin.Enum"));
+                out.push(Ty::reference(self.db, enumeration, vec![self_ty]));
+            }
+            return out;
         }
         class
             .super_types
             .iter()
             .map(|super_type| crate::kotlin::ty::ty_from_type_ref(self.db, self, &super_type.ty.ty))
             .collect()
-    }
-
-    /// Whether the classifier is an interface (or an annotation class), whose
-    /// supertypes are all interfaces.
-    pub fn is_interface(class: &hir::hir_def::kotlin::item_tree::ClassData) -> bool {
-        matches!(
-            class.kind,
-            KotlinClassKind::Interface | KotlinClassKind::Annotation
-        )
     }
 }

@@ -121,8 +121,14 @@ impl ClassKey {
     /// name ([JVMS §4.2]).
     pub fn of_resolved(db: &dyn TyDatabase, resolved: &hir::Resolved) -> ClassKey {
         match resolved {
+            // The name is read from the class's *source*, never from the Java
+            // item tree: a Kotlin class has none
+            // ([`crate::java::resolve::source_class_fqn_of`]).
             hir::Resolved::Source(class) => {
-                ClassKey::of(&hir::java_item_tree(db, class.file), class.file, class.item)
+                match crate::java::resolve::source_class_fqn_of(db, *class) {
+                    Some(fqn) => ClassKey::Named(fqn),
+                    None => ClassKey::Local(*class),
+                }
             }
             hir::Resolved::Library(_) => ClassKey::Named(resolved.fqn(db).as_name().clone()),
         }
@@ -149,9 +155,17 @@ impl ClassKey {
     /// identity travels on the type itself, so no name lookup is needed.
     pub fn of_ty(db: &dyn TyDatabase, ty: &Ty) -> Option<ClassKey> {
         match ty.kind(db) {
+            // A local *declaration* — which has no canonical name ([§6.7]) — is
+            // identified by itself; a named one, Kotlin source included, by its
+            // canonical name ([`crate::java::resolve::source_class_fqn_of`]).
             TyKind::Reference {
                 local: Some(class), ..
-            } => Some(ClassKey::Local(*class)),
+            } => Some(
+                match crate::java::resolve::source_class_fqn_of(db, *class) {
+                    Some(fqn) => ClassKey::Named(fqn),
+                    None => ClassKey::Local(*class),
+                },
+            ),
             TyKind::Reference {
                 name, local: None, ..
             } => Some(ClassKey::Named(name.clone())),

@@ -163,6 +163,20 @@ pub enum TyKind {
     /// removed, which is what a smart cast produces from a nullable value.
     /// Kotlin source only, like [`TyKind::Nullable`].
     DefinitelyNonNull(Ty),
+    /// A Kotlin flexible type `L..U` ([KLS
+    /// `type-system.html#flexible-types`](https://kotlinlang.org/spec/type-system.html#flexible-types)):
+    /// the type a Java declaration's type denotes, `T!` being the shorthand for
+    /// `T..T?`. `lower` is the type the compiler uses when the value is *read*
+    /// and `upper` the one it uses when the value is *passed* — the two halves
+    /// of nullability variance at the Java boundary ([KLS
+    /// `type-system.html#platform-types`](https://kotlinlang.org/spec/type-system.html#platform-types):
+    /// a platform type is a flexible type over a nullable upper bound).
+    ///
+    /// Kotlin source only, like [`TyKind::Nullable`]: a Java-typed expression
+    /// never produces one, so the Java-side matches delegate to `lower` — the
+    /// type such a value has when it is used, which is what a Java body would
+    /// see of it.
+    Flexible { lower: Ty, upper: Ty },
 }
 
 /// The next capture-variable name: capture variables are ordinary type
@@ -335,6 +349,17 @@ impl Ty {
             return inner;
         }
         Self::new(db, TyKind::DefinitelyNonNull(inner))
+    }
+
+    /// A Kotlin flexible type `L..U` ([KLS
+    /// `type-system.html#flexible-types`](https://kotlinlang.org/spec/type-system.html#flexible-types)) —
+    /// what a Java or classfile type denotes. A pair whose halves are the same
+    /// type denotes that type, so it is not wrapped.
+    pub fn flexible(db: &dyn TyDatabase, lower: Ty, upper: Ty) -> Self {
+        if lower == upper {
+            return lower;
+        }
+        Self::new(db, TyKind::Flexible { lower, upper })
     }
 
     /// The inner type of a nullable or definitely-non-nullable wrapper, or
@@ -1175,6 +1200,12 @@ impl fmt::Display for TyDisplay<'_> {
             // `T?` and the intersection notation `T & Any`.
             TyKind::Nullable(inner) => write!(f, "{}?", inner.display(self.db)),
             TyKind::DefinitelyNonNull(inner) => write!(f, "{} & Any", inner.display(self.db)),
+            // A flexible type renders in the notation the type system writes
+            // it in (KLS `type-system.html#flexible-types`): `T..T?` for the
+            // platform type `T!`.
+            TyKind::Flexible { lower, upper } => {
+                write!(f, "{}..{}", lower.display(self.db), upper.display(self.db))
+            }
         }
     }
 }
@@ -1194,6 +1225,14 @@ impl fmt::Display for TySimpleDisplay<'_> {
             TyKind::Nullable(inner) => write!(f, "{}?", inner.display_simple(self.db)),
             TyKind::DefinitelyNonNull(inner) => {
                 write!(f, "{} & Any", inner.display_simple(self.db))
+            }
+            TyKind::Flexible { lower, upper } => {
+                write!(
+                    f,
+                    "{}..{}",
+                    lower.display_simple(self.db),
+                    upper.display_simple(self.db)
+                )
             }
             TyKind::Reference { name, args, .. } => {
                 f.write_str(name.simple_name())?;

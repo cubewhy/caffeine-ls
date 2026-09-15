@@ -1694,6 +1694,24 @@ fn resolved_fqn(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Option<Name> {
     }
 }
 
+/// The canonical fully qualified name of a *source* class, or `None` when the
+/// file declares no Java items — a Kotlin declaration has no Java item tree,
+/// and indexing the empty tree with its id is out of bounds
+/// ([`canonical_class_fqn`] indexes the arena unchecked).
+///
+/// A Kotlin declaration is named through the *source symbol index*
+/// ([`hir::source_class_fqn`]), which is the one naming the file's Kotlin
+/// items; a `object` is class-like there and is named exactly as a `class` is.
+/// The two agree for a Java file — both name a declaration exactly when no
+/// local declaration encloses it — so the Java path keeps its own walk.
+pub(crate) fn source_class_fqn_of(db: &dyn TyDatabase, source: hir::SourceClass) -> Option<Name> {
+    let tree = hir::file_item_tree(db, source.file);
+    match tree.as_java() {
+        Some(tree) => canonical_class_fqn(tree, source.item),
+        None => hir::source_class_fqn(db, source.file, source.item),
+    }
+}
+
 /// JLS §4.5: the number of type arguments a *parameterized type* must carry
 /// for the class named by `fqn`, or `None` when the name does not resolve to a
 /// class whose parameter list is recoverable.

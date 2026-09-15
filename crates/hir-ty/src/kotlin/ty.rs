@@ -22,6 +22,10 @@ use syntax::stub::{TypeBound, TypeRef};
 
 use hir_expand::name::Name;
 
+use syntax::stub::PrimitiveType;
+
+use hir_def::kotlin::modifiers::KotlinVariance as Variance;
+
 use super::resolve::KotlinResolver;
 use crate::java::db::TyDatabase;
 use crate::ty::{BoundKind, Ty, TyKind, WildcardBound};
@@ -74,6 +78,165 @@ pub fn ty_from_type_ref(
     }
 }
 
+/// The Kotlin type a Java or classfile type denotes ([KLS
+/// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)
+/// for the mapped classifiers,
+/// [KLS `type-system.html#platform-types`](https://kotlinlang.org/spec/type-system.html#platform-types)
+/// for the `T!` wrapping).
+///
+/// The conversion is the compiler's, in three steps:
+///
+/// * a primitive is the Kotlin classifier it maps onto — `int` is
+///   `kotlin.Int`, `void` is `kotlin.Unit`
+///   ([`MAPPED_TYPES`] names the reference mappings);
+/// * a *reference* name is rewritten through the mapping table, so
+///   `java.lang.String` is `kotlin.String` and `java.util.List` is
+///   `kotlin.collections.List`;
+/// * a reference type coming from a **classfile** declaration — one with no
+///   Kotlin source, so the compiler has no nullability information about it —
+///   is wrapped in the platform type `T!`, which is the flexible type
+///   `T..T?` ([KLS
+///   `type-system.html#flexible-types`](https://kotlinlang.org/spec/type-system.html#flexible-types)).
+///   A *Java source* type is not wrapped: within a mixed source set the
+///   compiler reads the Java source's annotations, and this model carries no
+///   `@Nullable`-equivalent for it — a recorded deviation, and one that only
+///   under-reports nullability (a Java source type stays usable from Kotlin
+///   without an unsafe-call warning either way).
+pub fn ty_from_java(db: &dyn TyDatabase, ty: Ty) -> Ty {
+    match ty.kind(db) {
+        TyKind::Primitive(primitive) => {
+            let name = match primitive {
+                PrimitiveType::Boolean => "Boolean",
+                PrimitiveType::Char => "Char",
+                PrimitiveType::Byte => "Byte",
+                PrimitiveType::Short => "Short",
+                PrimitiveType::Int => "Int",
+                PrimitiveType::Long => "Long",
+                PrimitiveType::Float => "Float",
+                PrimitiveType::Double => "Double",
+                PrimitiveType::Void => "Unit",
+            };
+            Ty::reference(db, format!("kotlin.{name}"), Vec::new())
+        }
+        // `void` is not a primitive of the *Kotlin* model: it is `kotlin.Unit`
+        // ([KLS
+        // `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)).
+        TyKind::Void => Ty::reference(db, "kotlin.Unit", Vec::new()),
+        TyKind::Reference { name, args, local } => {
+            let args = args.iter().map(|arg| ty_from_java(db, *arg)).collect();
+            // A local class keeps its declaration: it is the type's identity
+            // ([JLS §6.7]), and a local class has no canonical name to map.
+            let mapped = match local {
+                Some(class) => Ty::local_reference(db, *class, mapped_type_name(name), args),
+                None => Ty::reference(db, mapped_type_name(name), args),
+            };
+            if local.is_none() && !name.as_str().starts_with("kotlin.") {
+                // A classfile type: the compiler knows nothing about its
+                // nullability, so it is a platform type.
+                let upper = Ty::nullable(db, mapped);
+                Ty::flexible(db, mapped, upper)
+            } else {
+                mapped
+            }
+        }
+        TyKind::Array(inner) => Ty::array(db, ty_from_java(db, **inner)),
+        TyKind::TypeVar { .. } => ty,
+        // Everything else is either a Kotlin-only form (which a Java type
+        // cannot be) or already Kotlin's.
+        _ => ty,
+    }
+}
+
+/// The mapped classifier a Java reference name denotes ([KLS
+/// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)
+/// names the classifiers the compiler maps onto JVM types; the mapping itself
+/// is spelled out in <https://kotlinlang.org/docs/java-interop.html#mapped-types>,
+/// which KLS does not cover). A name not in the table is itself.
+fn mapped_type_name(name: &Name) -> Name {
+    MAPPED_TYPES
+        .iter()
+        .find(|(java, _)| name.as_str() == *java)
+        .map(|(_, kotlin)| Name::new(*kotlin))
+        .unwrap_or_else(|| name.clone())
+}
+
+/// The Java classes the compiler maps onto Kotlin classifiers
+/// (<https://kotlinlang.org/docs/java-interop.html#mapped-types>; KLS
+/// *Kotlin/Core* has no Java-interop section, so the compiler's documentation
+/// is the reference). The arrays (`int[]` ↔ `IntArray`), the primitives — which
+/// map by kind, not by name ([`ty_from_java`]) — and `java.lang.Object`'s
+/// removal of the `Number` hierarchy from the mapping are not listed.
+pub const MAPPED_TYPES: &[(&str, &str)] = &[
+    ("java.lang.Object", "kotlin.Any"),
+    ("java.lang.String", "kotlin.String"),
+    ("java.lang.CharSequence", "kotlin.CharSequence"),
+    ("java.lang.Throwable", "kotlin.Throwable"),
+    ("java.lang.Cloneable", "kotlin.Cloneable"),
+    ("java.lang.Number", "kotlin.Number"),
+    ("java.lang.Comparable", "kotlin.Comparable"),
+    ("java.lang.Iterable", "kotlin.collections.Iterable"),
+    ("java.lang.Enum", "kotlin.Enum"),
+    ("java.lang.Annotation", "kotlin.Annotation"),
+    ("java.lang.Integer", "kotlin.Int"),
+    ("java.lang.Boolean", "kotlin.Boolean"),
+    ("java.lang.Character", "kotlin.Char"),
+    ("java.lang.Long", "kotlin.Long"),
+    ("java.lang.Float", "kotlin.Float"),
+    ("java.lang.Double", "kotlin.Double"),
+    ("java.lang.Short", "kotlin.Short"),
+    ("java.lang.Byte", "kotlin.Byte"),
+    ("java.lang.Void", "kotlin.Unit"),
+    ("java.util.List", "kotlin.collections.List"),
+    ("java.util.Set", "kotlin.collections.Set"),
+    ("java.util.Map", "kotlin.collections.Map"),
+    ("java.util.Map$Entry", "kotlin.collections.Map.Entry"),
+    ("java.util.Collection", "kotlin.collections.Collection"),
+    ("java.util.Iterator", "kotlin.collections.Iterator"),
+    ("java.util.ListIterator", "kotlin.collections.ListIterator"),
+    ("java.util.ArrayList", "kotlin.collections.ArrayList"),
+    ("java.util.HashMap", "kotlin.collections.HashMap"),
+    (
+        "java.util.LinkedHashMap",
+        "kotlin.collections.LinkedHashMap",
+    ),
+];
+
+/// The declaration-site variance of the mapped standard-library classifiers
+/// ([KLS
+/// `type-system.html#declaration-site-variance`](https://kotlinlang.org/spec/type-system.html#declaration-site-variance)),
+/// one entry per type parameter, in declaration order.
+///
+/// The classfile cannot carry it: the compiler reads `List<out E>` from the
+/// `@Metadata` annotation, which this model does not decode, and
+/// `kotlin.collections.List` has no classfile of its own — it *is*
+/// `java.util.List`. The table is therefore a recorded deviation, checked
+/// against kotlinc 2.4.20's own reports of the standard library's declarations
+/// (`List<out E>`, `Map<K, out V>`, `Map.Entry<out K, out V>`,
+/// `Iterable<out T>`); a standard-library classifier the table does not name is
+/// invariant.
+pub const MAPPED_VARIANCE: &[(&str, &[Option<Variance>])] = &[
+    ("kotlin.collections.List", &[Some(Variance::Out)]),
+    ("kotlin.collections.Set", &[Some(Variance::Out)]),
+    ("kotlin.collections.Map", &[None, Some(Variance::Out)]),
+    (
+        "kotlin.collections.Map.Entry",
+        &[Some(Variance::Out), Some(Variance::Out)],
+    ),
+    ("kotlin.collections.Iterable", &[Some(Variance::Out)]),
+    ("kotlin.collections.Iterator", &[Some(Variance::Out)]),
+    ("kotlin.collections.Sequence", &[Some(Variance::Out)]),
+];
+
+/// The declaration-site variance of a classifier named by `fqn`, if the table
+/// above records it ([`MAPPED_VARIANCE`]) — one entry per type parameter, in
+/// declaration order, `None` for an invariant parameter.
+pub fn mapped_variances(fqn: &Name) -> Option<&'static [Option<Variance>]> {
+    MAPPED_VARIANCE
+        .iter()
+        .find(|(name, _)| fqn.as_str() == *name)
+        .map(|(_, variances)| *variances)
+}
+
 /// The Kotlin spelling of a type (KLS
 /// `type-system.html#type-kinds`](https://kotlinlang.org/spec/type-system.html#type-kinds)):
 /// `String?`, `List<out Number>`, `List<*>`, `(Int) -> String`.
@@ -114,6 +277,22 @@ impl std::fmt::Display for KotlinTyDisplay<'_> {
                     }
                 )
             }
+            // A flexible type renders the way kotlinc's own type printer
+            // renders it, `L..U` (KLS
+            // `type-system.html#flexible-types`); a platform type spelled `T!`
+            // is `T..T?`.
+            TyKind::Flexible { lower, upper } => write!(
+                f,
+                "{}..{}",
+                KotlinTyDisplay {
+                    ty: *lower,
+                    db: self.db
+                },
+                KotlinTyDisplay {
+                    ty: *upper,
+                    db: self.db
+                }
+            ),
             TyKind::Wildcard(bound) => match bound {
                 None => f.write_str("*"),
                 Some(bound) => {

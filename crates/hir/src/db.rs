@@ -1474,6 +1474,12 @@ fn source_resolve(db: &dyn HirDatabase, source_set: &SourceSetId, fqn: &str) -> 
                     | SourceSymbolKind::Record
                     | SourceSymbolKind::Annotation
                     | SourceSymbolKind::Module
+                    // A Kotlin `object` declares a class ([KLS
+                    // `declarations.html#object-declaration`](https://kotlinlang.org/spec/declarations.html#object-declaration)),
+                    // so the name it declares is reachable by FQN exactly as a
+                    // `class` name is — `Util` in another file, and from Java
+                    // as `Util.INSTANCE`.
+                    | SourceSymbolKind::Object
             ) {
                 return Some(Resolved::Source(SourceClass {
                     file: reference.file,
