@@ -205,31 +205,40 @@ pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, s
             TyKind::Reference {
                 name: sub_name,
                 args: sub_args,
-                ..
+                local: sub_local,
             },
             TyKind::Reference {
                 name: sup_name,
                 args: sup_args,
-                ..
+                local: sup_local,
             },
         ) => {
             // The same classifier: its arguments are compared with the
             // *declaration-site* variance of the class's parameters.
-            if sub_name == sup_name {
+            //
+            // "The same" is the *mapped* name ([`MAPPED_TYPES`]): the compiler
+            // maps the JVM classes onto Kotlin classifiers
+            // (<https://kotlinlang.org/docs/java-interop.html#mapped-types>),
+            // so `java.util.List` and `kotlin.collections.List` *are* one
+            // classifier — a Kotlin file may write either name, and a Java
+            // declaration's type carries the Java one. A *local* class is
+            // identified by its declaration, not by its name ([JLS §6.7]), so
+            // the two must agree on that too.
+            let sup_name = super::ty::mapped_type_name(sup_name);
+            if sub_local == sup_local && super::ty::mapped_type_name(sub_name) == sup_name {
                 let variances = declared_variances(db, scope, sup_name.as_str());
                 return arguments_are_subtypes(db, scope, variances.as_deref(), sub_args, sup_args);
             }
             let _ = sup_args;
             // A supertype of the sub-classifier that is the super classifier.
-            for supertype in supertypes(db, scope, sub) {
-                if !matches!(supertype.kind(db), TyKind::Reference { .. }) {
-                    continue;
-                }
-                if is_subtype(db, scope, &supertype, sup) {
-                    return true;
-                }
-            }
-            false
+            // Every supertype is walked, whatever shape it has: a *library* or
+            // Java supertype arrives as the platform type `T..T?`
+            // ([`ty_from_java`]), and the flexible rules above compare it by
+            // its halves — a filter for `Reference` here would skip exactly
+            // those and make every classpath supertype unreachable.
+            supertypes(db, scope, sub)
+                .iter()
+                .any(|supertype| is_subtype(db, scope, supertype, sup))
         }
         // A type variable is a subtype of each of its upper bounds ([KLS
         // `type-system.html#type-parameters`](https://kotlinlang.org/spec/type-system.html#type-parameters):

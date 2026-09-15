@@ -188,14 +188,26 @@ pub fn edit_file(db: &mut TestDatabase, file_id: FileId, text: &str) {
 
 /// A temporary JDK-like jar with the class hierarchy used by the tests.
 pub struct JdkFixture {
+    /// The directory holding the jar. The loader reads the jar *lazily*, so it
+    /// must outlive every database the fixture is registered in — a caller
+    /// that keeps the database past the fixture's scope leaks this with
+    /// [`JdkFixture::keep_alive`] rather than dropping the file out from under
+    /// it.
     _dir: TempDir,
     pub jar: camino::Utf8PathBuf,
     pub lib: LibraryId,
 }
 
 impl JdkFixture {
+    /// Keeps the fixture's directory alive for the rest of the process: the
+    /// loaded jar is read on demand, so a database that outlives the fixture
+    /// would otherwise resolve nothing from it.
+    pub fn keep_alive(self) {
+        std::mem::forget(self._dir);
+    }
+
     /// The fixture jar's library registration, as the source set's JDK built-in.
-    fn library(&self) -> (LibraryId, LibraryInfo) {
+    pub fn library(&self) -> (LibraryId, LibraryInfo) {
         (
             self.lib,
             LibraryInfo::new(

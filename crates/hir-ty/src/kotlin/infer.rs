@@ -103,6 +103,7 @@ pub fn infer_item(
     let mut ctx = InferCtx {
         db,
         file,
+        item,
         scope,
         tree,
         bodies: &bodies,
@@ -135,6 +136,9 @@ pub fn infer_item(
 struct InferCtx<'a> {
     db: &'a dyn TyDatabase,
     file: FileId,
+    /// The declaration the body belongs to: the *call site* every member
+    /// lookup is attributed to ([`method::CallSite`]).
+    item: hir_expand::ids::ItemId,
     scope: hir::ResolutionScope,
     tree: &'a KotlinItemTree,
     bodies: &'a hir_expand::body::BodyTree,
@@ -343,6 +347,15 @@ impl<'a> InferCtx<'a> {
             }
             ExprData::FieldAccess { target, name } => match target {
                 Some(target) => {
+                    // A fully qualified classifier reference is a *type* in
+                    // expression position — `java.util.ArrayList` of
+                    // `java.util.ArrayList<String>(16)`, and the receiver of
+                    // `java.lang.System.currentTimeMillis()`.
+                    if let Some(path) = self.name_path(expr)
+                        && let Some(fqn) = self.resolver.class_fqn(&path)
+                    {
+                        return Ty::reference(self.db, fqn, Vec::new());
+                    }
                     let receiver = self.infer_expr(target);
                     self.member_ty(&receiver, &name)
                 }
@@ -367,12 +380,26 @@ impl<'a> InferCtx<'a> {
                 args,
                 ..
             } => {
-                let receiver_ty = match receiver {
-                    Some(receiver) => self.infer_expr(receiver),
-                    None => self.builtin("Any"),
-                };
                 let arg_types: Vec<Ty> = args.iter().map(|arg| self.infer_expr(*arg)).collect();
-                self.call_ty(&receiver_ty, &name, &arg_types)
+                match receiver {
+                    Some(receiver) => {
+                        // A fully qualified *constructor* call: the lowering
+                        // folds the class's simple name into the member name and
+                        // the rest of the path into the receiver, so
+                        // `a.b.C(1)` is a call of `C` on `a.b`. The *path* is
+                        // what resolves to a classifier, and the call is then a
+                        // constructor invocation on it.
+                        if let Some(path) = self.name_path(receiver)
+                            && let Some(fqn) = self.resolver.class_fqn(&format!("{path}.{name}"))
+                        {
+                            let class = Ty::reference(self.db, fqn, Vec::new());
+                            return self.constructor_ty(&class, &name, &arg_types);
+                        }
+                        let receiver_ty = self.infer_expr(receiver);
+                        self.call_ty(&receiver_ty, &name, &arg_types)
+                    }
+                    None => self.call_without_receiver(&name, &arg_types),
+                }
             }
             ExprData::InfixCall {
                 receiver,
@@ -666,46 +693,65 @@ impl<'a> InferCtx<'a> {
             return *narrowed;
         }
         let _ = expr;
-        // A member of the enclosing class, without a written receiver.
-        let any = self.builtin("Any");
-        let ty = self.member_ty(&any, name);
-        if ty == self.error() {
-            // An unresolved *simple* name: kotlinc's `unresolved reference`.
-            let range = self.bodies.expr_range(expr);
-            self.types
-                .diagnostics
-                .push(KotlinTypeError::UnresolvedReference {
-                    expr,
-                    name: name.clone(),
-                    range,
-                });
-        }
-        ty
-    }
-
-    /// The type of the member `name` on `receiver`: a property's type, or the
-    /// return type of a function the member set resolves.
-    fn member_ty(&mut self, receiver: &Ty, name: &Name) -> Ty {
-        let members = method::member_set(self.db, &self.scope, receiver, name);
-        for member in &members {
-            if let Ok(ty) = self.item_ty(member.file, member.item) {
-                return ty;
+        // A member of an enclosing classifier, without a written receiver —
+        // the innermost first ([KLS
+        // `type-inference.html#call-without-an-explicit-receiver`](https://kotlinlang.org/spec/type-inference.html#call-without-an-explicit-receiver)).
+        for receiver in self.implicit_receivers() {
+            let members = method::member_set(self.db, &self.scope, &receiver, name, self.site());
+            if let Some(member) = members.first() {
+                return member.ty(self.db);
             }
         }
+        // A top-level declaration of this file: a property or a function's
+        // value form (a callable reference's target).
+        if let Some(&top) = self.tree.top.iter().find(|&&id| {
+            matches!(
+                self.tree.data(id),
+                KotlinItemData::Property(_) | KotlinItemData::Function(_)
+            ) && self.tree.data(id).name() == Some(name)
+        }) {
+            return super::db::item_ty(self.db, self.file, top);
+        }
+        // A classifier used as a *receiver*: `Foo.bar()` types its `Foo` as
+        // the class.
+        if let Some(class) = self.class_receiver(name) {
+            return class;
+        }
+        // An unresolved *simple* name: kotlinc's `unresolved reference`.
+        let range = self.bodies.expr_range(expr);
+        self.types
+            .diagnostics
+            .push(KotlinTypeError::UnresolvedReference {
+                expr,
+                name: name.clone(),
+                range,
+            });
         self.error()
     }
 
-    /// The type of a *source* member item, from the item tree.
-    fn item_ty(&self, file: FileId, item: hir_expand::ids::ItemId) -> Result<Ty, ()> {
-        if file == self.file {
-            return Ok(super::db::item_ty(self.db, file, item));
+    /// The call site every member lookup is attributed to.
+    fn site(&self) -> method::CallSite {
+        method::CallSite {
+            file: self.file,
+            item: self.item,
         }
-        Err(())
+    }
+
+    /// The type of the member `name` on `receiver`: a property's type, the
+    /// return type of a function the member set resolves, the field's type of a
+    /// Java field — each in its *Kotlin* form, so a classfile member's type is
+    /// the platform type it denotes ([`method::Member::ty`]).
+    fn member_ty(&mut self, receiver: &Ty, name: &Name) -> Ty {
+        let members = method::member_set(self.db, &self.scope, receiver, name, self.site());
+        match members.first() {
+            Some(member) => member.ty(self.db),
+            None => self.error(),
+        }
     }
 
     /// The type of a call: the return type of the candidate the arguments
-    /// select, or `Unit` when the receiver's members declare no such callable
-    /// (a call whose result is discarded).
+    /// select, or the error type when the receiver's members declare no such
+    /// callable — a call kotlinc reports as `unresolved reference`.
     fn call_ty(&mut self, receiver: &Ty, name: &Name, arg_tys: &[Ty]) -> Ty {
         let args: Vec<CallArg<'_>> = arg_tys
             .iter()
@@ -714,12 +760,106 @@ impl<'a> InferCtx<'a> {
                 ty: *ty,
             })
             .collect();
-        match method::pick_callable(self.db, &self.scope, receiver, name, &args) {
-            Some(member) => self
-                .item_ty(member.file, member.item)
-                .unwrap_or_else(|_| self.error()),
+        match method::pick_callable(self.db, &self.scope, receiver, name, &args, self.site()) {
+            // A constructor call's type is the class it constructs — the
+            // receiver, with the arguments the call wrote — not the
+            // constructor's own `void` return.
+            Some(member) if member.kind == method::MemberKind::Constructor => receiver.clone(),
+            Some(member) => member.ty(self.db),
             None => self.error(),
         }
+    }
+
+    /// The type of a call written *without* a receiver ([KLS
+    /// `type-inference.html#call-without-an-explicit-receiver`](https://kotlinlang.org/spec/type-inference.html#call-without-an-explicit-receiver)):
+    ///
+    /// * the name of a classifier is a *constructor* invocation — `Foo(1)` —
+    ///   whose candidate set is the class's constructors;
+    /// * otherwise the callee is a member of an enclosing classifier (innermost
+    ///   first) or a top-level declaration of the file.
+    fn call_without_receiver(&mut self, name: &Name, arg_tys: &[Ty]) -> Ty {
+        let args: Vec<CallArg<'_>> = arg_tys
+            .iter()
+            .map(|ty| CallArg {
+                name: None,
+                ty: *ty,
+            })
+            .collect();
+        if let Some(class) = self.class_receiver(name) {
+            return self.constructor_ty(&class, name, &arg_tys);
+        }
+        for receiver in self.implicit_receivers() {
+            if let Some(member) =
+                method::pick_callable(self.db, &self.scope, &receiver, name, &args, self.site())
+            {
+                return member.ty(self.db);
+            }
+        }
+        match method::top_level_callable(self.db, &self.scope, self.file, name, &args) {
+            Some(member) => member.ty(self.db),
+            None => self.error(),
+        }
+    }
+
+    /// The dotted name an expression writes, when it is a *name path*: a
+    /// `Var` or a chain of field accesses on one — `java.util.ArrayList`. What
+    /// a fully qualified classifier reference looks like in expression
+    /// position.
+    fn name_path(&self, expr: ExprId) -> Option<String> {
+        match self.bodies.expr(expr).clone() {
+            ExprData::Var(name) | ExprData::NamePath(name) => Some(name.to_string()),
+            ExprData::FieldAccess {
+                target: Some(target),
+                name,
+            } => {
+                let mut path = self.name_path(target)?;
+                path.push('.');
+                path.push_str(name.as_str());
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// The type of a *constructor* call on the classifier type `class` under
+    /// the class's own name: the member set of a class type under that name is
+    /// its constructors, and the call's type is the class it constructs.
+    fn constructor_ty(&mut self, class: &Ty, name: &Name, arg_tys: &[Ty]) -> Ty {
+        let args: Vec<CallArg<'_>> = arg_tys
+            .iter()
+            .map(|ty| CallArg {
+                name: None,
+                ty: *ty,
+            })
+            .collect();
+        match method::pick_callable(self.db, &self.scope, class, name, &args, self.site()) {
+            Some(_) => class.clone(),
+            None => self.error(),
+        }
+    }
+
+    /// The type of the *classifier* a name denotes, if it denotes one — what
+    /// makes `Foo(1)` a constructor call and `Foo.bar()` a static access.
+    fn class_receiver(&self, name: &Name) -> Option<Ty> {
+        let fqn = self.resolver.class_fqn(name.as_str())?;
+        Some(Ty::reference(self.db, fqn, Vec::new()))
+    }
+
+    /// The types of the *implicit* receivers of an unqualified name: the
+    /// enclosing classifiers, innermost first ([KLS
+    /// `type-inference.html#call-without-an-explicit-receiver`](https://kotlinlang.org/spec/type-inference.html#call-without-an-explicit-receiver)).
+    fn implicit_receivers(&self) -> Vec<Ty> {
+        let mut out = Vec::new();
+        let mut current = Some(self.item);
+        while let Some(id) = current {
+            if self.tree.as_class(id).is_some()
+                && let Some(fqn) = hir::source_class_fqn(self.db, self.file, id)
+            {
+                out.push(Ty::reference(self.db, fqn, Vec::new()));
+            }
+            current = self.tree.parent_of(id);
+        }
+        out
     }
 
     /// An assignment: the destination must be a `var`, and the value

@@ -81,12 +81,56 @@ fn library(
     )
 }
 
+/// The Java class the interop tests need and the hand-encoded JDK fixture does
+/// not carry: a Swing-shaped class whose members are the shapes kotlinc's
+/// interop rules distinguish — a `getDragEnabled()`/`setDragEnabled` pair (the
+/// property `dragEnabled`), a `getLayout()`/`setLayout` pair next to a
+/// *method* named `layout()` (which is why `container.layout` is the property
+/// and `container.layout()` the method), and a `protected` method for the
+/// subclass case.
+fn interop_classes() -> Vec<ClassSpec<'static>> {
+    vec![ClassSpec {
+        fqn: "javax/swing/JList",
+        super_class: Some("java/lang/Object"),
+        interfaces: &[],
+        access: 0x0021,
+        fields: &[],
+        field_access: &[],
+        methods: &[
+            ("<init>", "()V"),
+            ("getDragEnabled", "()Z"),
+            ("setDragEnabled", "(Z)V"),
+            ("getLayout", "()Ljava/lang/Object;"),
+            ("setLayout", "(Ljava/lang/Object;)V"),
+            ("layout", "()V"),
+            ("guarded", "()Ljava/lang/String;"),
+        ],
+        method_sigs: &["", "", "", "", "", "", ""],
+        method_access: &[0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0004],
+        sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
+        method_defaults: &[],
+    }]
+}
+
 /// A database with the JDK fixture, a hand-encoded Kotlin stdlib and one
 /// Kotlin source root whose classpath carries both.
 fn kotlin_fixture(files: &[(&str, &str)]) -> (TestDatabase, FileId) {
+    kotlin_fixture_with(files, interop_classes())
+}
+
+/// [`kotlin_fixture`] with `extra` classes added to the classpath, for the
+/// interop fixtures whose Java shapes the JDK fixture does not carry.
+fn kotlin_fixture_with(
+    files: &[(&str, &str)],
+    extra: Vec<ClassSpec<'static>>,
+) -> (TestDatabase, FileId) {
     let dir = TempDir::new().unwrap();
     let jdk = jdk_fixture();
     let (stdlib_id, stdlib_path) = library(&dir, "kotlin-stdlib.jar", &kotlin_stdlib_classes());
+    let (extra_id, extra_path) = library(&dir, "java-interop.jar", &extra);
 
     let mut db = TestDatabase::default();
     let mut file_set = FileSet::default();
@@ -120,6 +164,10 @@ fn kotlin_fixture(files: &[(&str, &str)]) -> (TestDatabase, FileId) {
         stdlib_id,
         hir::LibraryInfo::new(hir::LibraryKind::Jar, stdlib_path),
     );
+    data.libraries.insert(
+        extra_id,
+        hir::LibraryInfo::new(hir::LibraryKind::Jar, extra_path),
+    );
     data.jdk_libraries.push(jdk.lib);
     data.source_sets.insert(
         source_set.clone(),
@@ -127,6 +175,7 @@ fn kotlin_fixture(files: &[(&str, &str)]) -> (TestDatabase, FileId) {
             entries: vec![
                 hir::ClasspathEntry::Library(jdk.lib),
                 hir::ClasspathEntry::Library(stdlib_id),
+                hir::ClasspathEntry::Library(extra_id),
             ],
         }),
     );
@@ -137,7 +186,9 @@ fn kotlin_fixture(files: &[(&str, &str)]) -> (TestDatabase, FileId) {
         AbsPathBuf::assert_utf8(dir.path().to_string_lossy().to_string().into()),
     );
     hir::set_project_graph(&mut db, data);
+    // The database outlives the fixtures; their jars are read lazily.
     std::mem::forget(dir);
+    jdk.keep_alive();
     (db, FileId::from_raw(1))
 }
 
@@ -412,6 +463,173 @@ fun broken() {
         assert!(
             rendered.contains(expected),
             "expected {expected:?} in:\n{rendered}"
+        );
+    }
+}
+
+// -- Java and classfile members on a Kotlin receiver --------------------------
+
+/// The member bridge: what a call, a read or a write on a Java or classfile
+/// receiver resolves to.
+///
+/// Each case is checked with kotlinc 2.4.20 against the same sources first.
+mod java_members {
+    use super::*;
+
+    /// The fixture's Java class, whose members exercise every shape the bridge
+    /// has a rule for: an instance method, a static method, a field, a
+    /// getter/setter pair, and a `protected` method for a Kotlin subclass.
+    const JAVA_BASE: &str = r#"
+package a;
+
+public class JavaBase {
+    public int field = 1;
+
+    private boolean dragEnabled;
+
+    public static String hello() {
+        return "hello";
+    }
+
+    public String instance() {
+        return "instance";
+    }
+
+    public boolean getDragEnabled() {
+        return dragEnabled;
+    }
+
+    public void setDragEnabled(boolean value) {
+        dragEnabled = value;
+    }
+
+    protected String guarded() {
+        return "guarded";
+    }
+}
+"#;
+
+    /// A Kotlin file that calls, reads and writes those members.
+    const KOTLIN_USE: &str = r#"
+package a
+
+fun use(base: JavaBase) {
+    val hello: String = JavaBase.hello()
+    val instance: String = base.instance()
+    val field: Int = base.field
+    val guarded: String = guarded(base)
+    base.dragEnabled = true
+    val enabled: Boolean = base.dragEnabled
+}
+
+class Sub : JavaBase() {
+    fun call(): String = guarded()
+}
+"#;
+
+    /// Every shape the bridge covers resolves, with no diagnostic at all:
+    /// kotlinc compiles the same sources clean.
+    #[test]
+    fn a_java_source_member_resolves_without_a_diagnostic() {
+        let (db, _) = kotlin_fixture(&[
+            ("/src/main/java/a/JavaBase.java", JAVA_BASE),
+            ("/src/main/kotlin/a/Use.kt", KOTLIN_USE),
+        ]);
+        // File 1 is the Java source; the Kotlin one is file 2.
+        let rendered = render_bodies(&db, FileId::from_raw(2));
+        assert!(
+            !rendered.contains("kotlin."),
+            "no diagnostic for a resolved Java member: {rendered}"
+        );
+        // A Java declaration's type is a *platform* type in Kotlin: the Java
+        // source's `String instance()` is `String..String?`, which kotlinc
+        // accepts both where a `String` and where a `String?` is expected
+        // (`val x: String = base.instance()` compiles).
+        assert!(
+            rendered.contains("String..String?"),
+            "a Java source member's type is a platform type: {rendered}"
+        );
+    }
+
+    /// A classfile class, through the same bridge: the fixture's
+    /// `java.util.ArrayList`, whose element type is substituted with the
+    /// argument the receiver writes (`String`), and whose `size()` is the
+    /// *property* `size` the standard library declares over it — kotlinc
+    /// 2.4.20 accepts `val n: Int = a.size` and `val l: Int = list.size`, and
+    /// `val s: String = list.get(0)` for an `ArrayList<String>`.
+    #[test]
+    fn a_classfile_member_resolves_through_the_mapping() {
+        let source = r#"
+fun use(list: java.util.ArrayList<String>): Int {
+    val size: Int = list.size
+    val isEmpty: Boolean = list.isEmpty()
+    val first: String = list.get(0)
+    val created = java.util.ArrayList()
+    val createdSize: Int = created.size
+    return size
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Use.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "every member of the classfile receiver resolves: {rendered}"
+        );
+
+        // The mapping *is* the classifier identity: a `java.util.ArrayList` is
+        // a `kotlin.collections.List`, which is what the covariance of the
+        // standard library treats as one type
+        // (<https://kotlinlang.org/docs/java-interop.html#mapped-types>).
+        let scope = hir::ResolutionScope::SourceSet(
+            hir::source_set_for_file(&db, file).expect("a mapped source set"),
+        );
+        let java = Ty::reference(&db, "java.util.ArrayList", Vec::new());
+        let kotlin = Ty::reference(&db, "kotlin.collections.List", Vec::new());
+        assert!(
+            hir_ty::kotlin_subtype(&db, &scope, &java, &kotlin),
+            "`java.util.ArrayList` *is* a `kotlin.collections.List`"
+        );
+    }
+
+    /// A Kotlin *subclass* of a Java class reaches its `protected` members,
+    /// exactly as a Java subclass does ([JLS §6.6.2]): the access context of a
+    /// Kotlin call site is its enclosing classifier and that classifier's
+    /// first supertype.
+    #[test]
+    fn a_kotlin_subclass_reaches_a_protected_classfile_member() {
+        let source = r#"
+class Sub : javax.swing.JList() {
+    fun call(): String = guarded()
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Use.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "a `protected` classfile member is visible to the subclass: {rendered}"
+        );
+    }
+
+    /// The synthetic property of a Java getter/setter pair is a Kotlin
+    /// property, and a same-named *method* does not take its place: kotlinc
+    /// 2.4.20 accepts `j.dragEnabled = true` for a
+    /// `getDragEnabled()`/`setDragEnabled(boolean)` pair, and reads the
+    /// property — not the `void layout()` method — in `container.layout`.
+    #[test]
+    fn a_classfile_property_and_a_shadowing_method_both_resolve() {
+        let source = r#"
+fun use(list: javax.swing.JList) {
+    list.dragEnabled = true
+    val dragEnabled: Boolean = list.dragEnabled
+    val layout: Any = list.layout
+    list.layout()
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Use.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "the property and the method both resolve: {rendered}"
         );
     }
 }

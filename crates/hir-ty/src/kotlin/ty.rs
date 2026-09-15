@@ -152,7 +152,7 @@ pub fn ty_from_java(db: &dyn TyDatabase, ty: Ty) -> Ty {
 /// names the classifiers the compiler maps onto JVM types; the mapping itself
 /// is spelled out in <https://kotlinlang.org/docs/java-interop.html#mapped-types>,
 /// which KLS does not cover). A name not in the table is itself.
-fn mapped_type_name(name: &Name) -> Name {
+pub(crate) fn mapped_type_name(name: &Name) -> Name {
     MAPPED_TYPES
         .iter()
         .find(|(java, _)| name.as_str() == *java)
