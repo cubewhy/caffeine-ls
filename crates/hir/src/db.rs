@@ -528,6 +528,16 @@ pub struct SourceClass {
 pub enum Resolved {
     Library(ResolvedClass),
     Source(SourceClass),
+    /// The JVM facade class the compiler synthesizes for a Kotlin file's
+    /// top-level declarations
+    /// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+    /// A facade has no declaration — no item, no item-tree entry — so it is
+    /// identified by the file it is a facade of, and carries the name it was
+    /// resolved under.
+    KotlinFacade {
+        file: FileId,
+        fqn: Name,
+    },
 }
 
 impl Resolved {
@@ -540,7 +550,19 @@ impl Resolved {
             Resolved::Library(class) => {
                 hir_def::jvm::fqn::FqName::from(db.hir_state().interner.resolve(&class.entry.fqn))
             }
+            // The facade carries its own name: the file it belongs to is its
+            // definition, and the name the compiler gives the facade.
+            Resolved::KotlinFacade { fqn, .. } => hir_def::jvm::fqn::FqName::from(fqn.as_str()),
             Resolved::Source(_) => hir_def::jvm::fqn::FqName::from(""),
+        }
+    }
+
+    /// The file a *Kotlin facade* class is the facade of, `None` for a real
+    /// class.
+    pub fn facade_file(&self) -> Option<FileId> {
+        match self {
+            Resolved::KotlinFacade { file, .. } => Some(*file),
+            _ => None,
         }
     }
 }
@@ -1265,6 +1287,58 @@ pub fn file_path_segments(db: &dyn HirDatabase, file: FileId) -> Option<Arc<Vec<
     Some(Arc::new(dir_segments(abs.parent()?)))
 }
 
+/// The file whose synthesized JVM facade class is `fqn`, if any — the class a
+/// *Java* caller names when it uses a Kotlin file's top-level declarations
+/// ([`file_facade_class`]'s Kotlin twin,
+/// <https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+///
+/// A facade has no declaration: the source symbol index carries no symbol of
+/// that name, so the answer is derived from the files of the FQN's candidate
+/// packages — a file's facade is its *definition*, and there is no other.
+pub fn file_facade_source(
+    db: &dyn HirDatabase,
+    scope: &ResolutionScope,
+    fqn: &str,
+) -> Option<FileId> {
+    let ResolutionScope::SourceSet(source_set) = scope else {
+        return None;
+    };
+    let graph = ProjectGraph::try_get(db)?;
+    for package in package_prefixes(fqn) {
+        for file in
+            source_set_package_files_query(db, graph, source_set.clone(), package.clone()).iter()
+        {
+            let tree = file_item_tree(db, *file);
+            let Some(tree) = tree.as_kotlin() else {
+                continue;
+            };
+            let Some(facade) = tree.facade_class() else {
+                continue;
+            };
+            let name = match &tree.package {
+                Some(package) => format!("{package}.{facade}"),
+                None => facade,
+            };
+            if name == fqn {
+                return Some(*file);
+            }
+        }
+    }
+    None
+}
+
+/// The file *name* of `file` — its last path segment, `Foo.kt` — when the file
+/// belongs to a source root and its path is not virtual. The compiler derives
+/// a Kotlin file's JVM facade class from it
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>),
+/// so the name it compiles to is recoverable from the source alone.
+pub fn file_name(db: &dyn HirDatabase, file: FileId) -> Option<String> {
+    let root = db.source_root_for_file(file)?;
+    let root = db.source_root(root);
+    let path = root.source_root(db).path_for_file(&file)?;
+    Some(path.as_path()?.file_name()?.to_owned())
+}
+
 /// The package *directory* of `file` relative to its source root, rendered
 /// IntelliJ-style for the package-path diagnostic ([JLS §7.2.1]): the
 /// parent-directory segments left after the source root's base is stripped,
@@ -1461,6 +1535,19 @@ pub fn source_set_fqn_symbols(
 /// leaves every resolver here memoized.
 fn source_resolve(db: &dyn HirDatabase, source_set: &SourceSetId, fqn: &str) -> Option<Resolved> {
     let graph = ProjectGraph::try_get(db)?;
+    // A Kotlin file's facade class is not a declaration: it is synthesized for
+    // the file's top-level declarations, and the source symbol index carries no
+    // symbol of that name
+    // (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+    // It is a source-set class all the same, and one that shadows a classpath
+    // class of the same name.
+    if let Some(file) = file_facade_source(db, &ResolutionScope::SourceSet(source_set.clone()), fqn)
+    {
+        return Some(Resolved::KotlinFacade {
+            file,
+            fqn: Name::new(fqn),
+        });
+    }
     let fqn = Name::new(fqn);
     for package in package_prefixes(fqn.as_str()) {
         for reference in
@@ -1547,7 +1634,9 @@ pub fn super_types(_db: &dyn HirDatabase, resolved: &Resolved) -> Vec<Symbol> {
             out.extend(resolved.entry.interfaces.iter().copied());
             out
         }
-        Resolved::Source(_) => Vec::new(),
+        // A source class and a facade have no classfile supertypes: `hir-ty`
+        // answers theirs from the item tree — a facade's are `Object`'s.
+        Resolved::Source(_) | Resolved::KotlinFacade { .. } => Vec::new(),
     }
 }
 
@@ -1571,7 +1660,7 @@ pub struct ClassGenericInfo {
 pub fn class_generic_info(db: &dyn HirDatabase, resolved: &Resolved) -> Option<ClassGenericInfo> {
     let resolved = match resolved {
         Resolved::Library(resolved) => resolved,
-        Resolved::Source(_) => return None,
+        Resolved::Source(_) | Resolved::KotlinFacade { .. } => return None,
     };
     let record = class_record(db, resolved)?;
     let ClassOrModuleStub::Class(class) = record.as_ref() else {

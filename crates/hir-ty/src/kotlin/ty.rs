@@ -147,6 +147,105 @@ pub fn ty_from_java(db: &dyn TyDatabase, ty: Ty) -> Ty {
     }
 }
 
+/// The Java or JVM type a Kotlin type denotes, for the Java layer that
+/// consumes it: the inverse of [`ty_from_java`], and erased — the classfile a
+/// Java caller reads carries no Kotlin type arguments.
+///
+/// * `kotlin.Int` and its siblings are the JVM **primitives** ([KLS
+///   `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html):
+///   `Int` is an `int` where the compiler can unbox it, and `java.lang.Integer`
+///   is the same classifier's *boxed* form — the projection here is the
+///   primitive, which is what a method signature declares);
+/// * every other mapped classifier is the JVM class [`MAPPED_TYPES`] pairs it
+///   with, and a Kotlin classifier the table does not name keeps its own name
+///   (the classfile the compiler emits for `class Wrapper` *is* `Wrapper`) —
+///   with `$` joining nested segments, which is how the JVM spells a nested
+///   class ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2));
+/// * `T?` is `T` (a Java type has no nullability) and a definitely-non-nullable
+///   `T & Any` is `T`;
+/// * a flexible type is its `lower` half — the type the value has when it is
+///   used;
+/// * a type variable is its *erasure* ([JLS §4.6]): its first bound, or
+///   `java.lang.Object` when it has none, because a generic Kotlin declaration
+///   compiles to the erased signature;
+/// * `kotlin.Unit` is `void` where the compiler uses it as a return type, and
+///   the `kotlin.Unit` class otherwise — the JVM view of a `Unit`-returning
+///   function is `void`, so the primitive is what this returns for it;
+/// * an array is the JVM array of its element's conversion.
+pub fn ty_from_kotlin(db: &dyn TyDatabase, ty: Ty) -> Ty {
+    match ty.kind(db) {
+        TyKind::Reference { name, args, local } => {
+            if let Some(primitive) = primitive_of_mapped(name) {
+                return Ty::primitive(db, primitive);
+            }
+            if name.as_str() == "kotlin.Unit" {
+                return Ty::reference(db, "void", Vec::new());
+            }
+            // The JVM name of a nested classifier joins with `$`
+            // ([JVMS §4.2]).
+            let jvm = java_name(name);
+            let args = args.iter().map(|arg| ty_from_kotlin(db, *arg)).collect();
+            match local {
+                Some(class) => Ty::local_reference(db, *class, jvm, args),
+                None => Ty::reference(db, jvm, args),
+            }
+        }
+        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => ty_from_kotlin(db, *inner),
+        TyKind::Flexible { lower, .. } => ty_from_kotlin(db, *lower),
+        TyKind::TypeVar { bounds, .. } => match bounds.first() {
+            Some(bound) => ty_from_kotlin(db, *bound),
+            None => Ty::reference(db, "java.lang.Object", Vec::new()),
+        },
+        TyKind::Array(inner) => {
+            let inner = ty_from_kotlin(db, **inner);
+            // `kotlin.Array<T>`'s element is the JVM array's component type.
+            Ty::array(db, inner)
+        }
+        // Primitives, `void` and the Java-only shapes are already JVM types.
+        _ => ty,
+    }
+}
+
+/// The JVM primitive a mapped Kotlin classifier is, when it is one: `kotlin.Int`
+/// is an `int` in a signature, and the boxed `java.lang.Integer` its allocated
+/// form ([KLS
+/// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)).
+fn primitive_of_mapped(name: &Name) -> Option<PrimitiveType> {
+    Some(match name.as_str() {
+        "kotlin.Int" => PrimitiveType::Int,
+        "kotlin.Long" => PrimitiveType::Long,
+        "kotlin.Float" => PrimitiveType::Float,
+        "kotlin.Double" => PrimitiveType::Double,
+        "kotlin.Boolean" => PrimitiveType::Boolean,
+        "kotlin.Byte" => PrimitiveType::Byte,
+        "kotlin.Char" => PrimitiveType::Char,
+        "kotlin.Short" => PrimitiveType::Short,
+        _ => return None,
+    })
+}
+
+/// The JVM name of a Kotlin classifier: the JVM class [`MAPPED_TYPES`] pairs it
+/// with, else the Kotlin name itself.
+///
+/// A Kotlin classifier the table does not name keeps its Kotlin spelling, which
+/// is the name the classfile carries for a top-level class (`kotlin.ranges
+/// .IntRange` *is* `kotlin/ranges/IntRange`) and the name the Java layer keys a
+/// *source* declaration by ([`hir::source_class_fqn`]); the compiler spells a
+/// nested segment `$` ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2))
+/// and this conversion keeps the dotted form, so a nested library classifier the
+/// table does not name is one name away from its binary spelling — a recorded
+/// deviation, since telling the package segments from the type segments needs a
+/// resolution this function has no scope for.
+fn java_name(name: &Name) -> Name {
+    if let Some((java, _)) = MAPPED_TYPES
+        .iter()
+        .find(|(_, kotlin)| name.as_str() == *kotlin)
+    {
+        return Name::new(*java);
+    }
+    name.clone()
+}
+
 /// The mapped classifier a Java reference name denotes ([KLS
 /// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)
 /// names the classifiers the compiler maps onto JVM types; the mapping itself

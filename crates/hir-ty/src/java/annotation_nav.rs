@@ -525,6 +525,8 @@ fn is_annotation_interface(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fq
             hir::java_item_tree(db, class.file).data(class.item),
             ItemData::Annotation(_)
         ),
+        // A Kotlin file's facade is no annotation interface.
+        Some(hir::Resolved::KotlinFacade { .. }) => false,
         Some(hir::Resolved::Library(resolved)) => {
             hir::class_record(db, &resolved).is_some_and(|record| {
                 matches!(

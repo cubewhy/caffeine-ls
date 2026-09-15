@@ -253,6 +253,8 @@ pub(crate) fn class_deprecation(
     fqn: &Name,
 ) -> Option<Deprecation> {
     match hir::fqn_resolve(db, scope, fqn.as_str())? {
+        // A Kotlin file's facade declares nothing to deprecate.
+        hir::Resolved::KotlinFacade { .. } => None,
         hir::Resolved::Source(class) => source_item(db, class.file, class.item),
         hir::Resolved::Library(class) => {
             let record = hir::class_record(db, &class)?;
@@ -378,6 +380,11 @@ pub(crate) fn class_owner(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn
             let tree = hir::java_item_tree(db, class.file);
             source_owner(tree.package.as_ref(), text)
         }
+        // A facade is a top-level class: its owner is its package.
+        Some(hir::Resolved::KotlinFacade { .. }) => match text.rfind('.') {
+            Some(index) => Name::new(&text[..index]),
+            None => Name::new(""),
+        },
         // A library class's *binary* name nests with `$` ([JVMS §4.2]), while
         // the reference may write the nesting with dots (`Legacy.Nested`), so
         // the resolution's own FQN — not the written name — decides the

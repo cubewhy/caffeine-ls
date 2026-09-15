@@ -234,6 +234,8 @@ impl Lub<'_> {
             return false;
         };
         match resolved {
+            // A Kotlin file's facade declares no type parameters.
+            hir::Resolved::KotlinFacade { .. } => false,
             hir::Resolved::Library(_) => hir::class_generic_info(self.db, &resolved)
                 .is_some_and(|info| !info.type_params.is_empty()),
             hir::Resolved::Source(source) => {

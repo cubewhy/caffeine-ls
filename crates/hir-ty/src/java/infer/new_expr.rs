@@ -414,6 +414,8 @@ impl InferCtx<'_> {
         };
         let resolved = resolved.clone();
         let names: Vec<Name> = match &resolved {
+            // A Kotlin file's facade declares no type parameters.
+            hir::Resolved::KotlinFacade { .. } => Vec::new(),
             hir::Resolved::Library(library) => {
                 let Some(info) =
                     hir::class_generic_info(self.db, &hir::Resolved::Library(library.clone()))
@@ -444,6 +446,12 @@ impl InferCtx<'_> {
             .into_iter()
             .map(|name| {
                 let scope = match &resolved {
+                    // Unreachable — a facade has no type parameters, so `names`
+                    // is empty and this closure runs never — but the scope must
+                    // type-check: a variable with no declaring declaration.
+                    hir::Resolved::KotlinFacade { .. } => {
+                        TypeVarScope::Unnamed { name: name.clone() }
+                    }
                     hir::Resolved::Library(library) => TypeVarScope::LibraryClass {
                         owner: {
                             let interner = &self.db.hir_state().interner;
@@ -471,6 +479,8 @@ impl InferCtx<'_> {
             return Vec::new();
         };
         match resolved {
+            // A Kotlin file's facade declares no type parameters.
+            hir::Resolved::KotlinFacade { .. } => Vec::new(),
             hir::Resolved::Library(library) => {
                 let Some(info) =
                     hir::class_generic_info(self.db, &hir::Resolved::Library(library.clone()))

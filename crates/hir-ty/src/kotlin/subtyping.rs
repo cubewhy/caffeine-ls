@@ -48,6 +48,11 @@ pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) ->
         return Vec::new();
     };
     match &resolved {
+        // A Kotlin file's facade is a Java class with no declared supertype but
+        // `Object` — `kotlin.Any` from a Kotlin receiver.
+        hir::Resolved::KotlinFacade { .. } => {
+            return vec![Ty::reference(db, "kotlin.Any", Vec::new())];
+        }
         hir::Resolved::Source(class) => {
             let tree = hir::file_item_tree(db, class.file);
             let Some(tree) = tree.as_kotlin() else {

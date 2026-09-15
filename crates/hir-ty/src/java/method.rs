@@ -130,6 +130,8 @@ impl ClassKey {
                     None => ClassKey::Local(*class),
                 }
             }
+            // A facade is keyed by the name the compiler gives it.
+            hir::Resolved::KotlinFacade { fqn, .. } => ClassKey::Named(fqn.clone()),
             hir::Resolved::Library(_) => ClassKey::Named(resolved.fqn(db).as_name().clone()),
         }
     }
@@ -372,6 +374,8 @@ pub fn class_declares_type_params(
             hir::class_generic_info(db, &hir::Resolved::Library(class))
                 .map(|info| !info.type_params.is_empty())
         }
+        // A Kotlin file's facade declares none.
+        Some(hir::Resolved::KotlinFacade { .. }) => Some(false),
         Some(hir::Resolved::Source(source)) => {
             let tree = hir::java_item_tree(db, source.file);
             match crate::java::resolve::item_data(&tree, source.item) {
@@ -1064,6 +1068,8 @@ fn is_raw_use(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) 
         return false;
     };
     match resolved {
+        // A Kotlin file's facade declares no type parameters.
+        hir::Resolved::KotlinFacade { .. } => false,
         hir::Resolved::Library(library) => {
             hir::class_generic_info(db, &hir::Resolved::Library(library))
                 .is_some_and(|info| !info.type_params.is_empty())
@@ -1169,6 +1175,8 @@ fn abstract_methods_impl(
         };
         let args = args.clone();
         match resolved {
+            // A Kotlin file's facade is no functional interface.
+            hir::Resolved::KotlinFacade { .. } => continue,
             hir::Resolved::Library(class) => {
                 let Some(record) = hir::class_record(db, &class) else {
                     continue;
@@ -1352,8 +1360,25 @@ fn class_methods(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) -
     let args = args.clone();
     match resolved {
         hir::Resolved::Library(class) => library_class_methods(db, class, args, name),
+        // A Kotlin source class has no Java item tree: its JVM-visible members
+        // are the ones the compiler emits for it
+        // ([`crate::kotlin::jvm_view`]).
+        hir::Resolved::Source(source) if is_kotlin(db, source) => {
+            crate::kotlin::jvm_view::java_view_members(db, source, name)
+        }
         hir::Resolved::Source(source) => source_class_methods(db, source, args, name),
+        // A facade's methods are the file's top-level functions.
+        hir::Resolved::KotlinFacade { file, .. } => {
+            crate::kotlin::jvm_view::file_facade_members(db, file, name)
+        }
     }
+}
+
+/// Whether the file declaring `source` is a Kotlin one — a Kotlin class has no
+/// Java item tree, so the Java layer must answer for it through its JVM view
+/// ([`crate::kotlin::jvm_view`]).
+pub(crate) fn is_kotlin(db: &dyn TyDatabase, source: hir::SourceClass) -> bool {
+    hir::file_item_tree(db, source.file).as_kotlin().is_some()
 }
 
 /// The package of a fully qualified class name, or `None` for the unnamed
@@ -2242,7 +2267,7 @@ fn self_type_param_indexes(
     let resolved = hir::fqn_resolve(db, scope, fqn)?;
     let params = match resolved {
         hir::Resolved::Library(_) => hir::class_generic_info(db, &resolved)?.type_params,
-        hir::Resolved::Source(_) => return Some(Vec::new()),
+        hir::Resolved::Source(_) | hir::Resolved::KotlinFacade { .. } => return Some(Vec::new()),
     };
     fn mention(
         bound: &syntax::stub::TypeRef<hir::Symbol>,
@@ -3102,7 +3127,14 @@ fn class_fields(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) ->
     let args = args.clone();
     match resolved {
         hir::Resolved::Library(class) => library_class_fields(db, class, args, name),
+        hir::Resolved::Source(source) if is_kotlin(db, source) => {
+            crate::kotlin::jvm_view::java_view_fields(db, source, name)
+        }
         hir::Resolved::Source(source) => source_class_fields(db, source, args, name),
+        // A facade's fields are the file's top-level `const val`s.
+        hir::Resolved::KotlinFacade { file, .. } => {
+            crate::kotlin::jvm_view::file_facade_fields(db, file, name)
+        }
     }
 }
 

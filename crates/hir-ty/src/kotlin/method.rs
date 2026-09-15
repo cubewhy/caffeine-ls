@@ -237,6 +237,12 @@ fn collect_members(
         hir::Resolved::Library(_) => {
             java_members(db, scope, receiver, name, ctx, constructors, out)
         }
+        // A Kotlin file's facade class: Kotlin reaches a file's top-level
+        // declarations by *import*, not through the facade's name, so the arm
+        // contributes nothing here — the file's own top level is what
+        // [`super::infer`] consults, and a Java caller reaches them through the
+        // facade, which the Java layer answers ([`crate::java::method`]).
+        hir::Resolved::KotlinFacade { .. } => {}
     }
     // Inherited: the declared supertypes, then their own. The walk goes through
     // the Kotlin subtyping relation, which substitutes the receiver's arguments

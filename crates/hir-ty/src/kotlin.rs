@@ -30,6 +30,7 @@
 pub mod db;
 pub mod diagnostics;
 pub mod infer;
+pub mod jvm_view;
 pub mod method;
 pub mod resolve;
 pub mod subtyping;

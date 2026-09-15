@@ -222,6 +222,30 @@ impl KotlinItemTree {
         self.parent.get(item.0.0 as usize).copied().flatten()
     }
 
+    /// The JVM facade class the compiler synthesizes for this file's top-level
+    /// declarations — `<stem>Kt`, or the `@file:JvmName` the file writes
+    /// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+    ///
+    /// It is derived from the file's *name*, which the item tree does not
+    /// carry; a caller that has the file passes it in
+    /// ([`Self::facade_class_from`]), and one that does not gets `None`
+    /// unless the file writes `@file:JvmName`.
+    pub fn facade_class(&self) -> Option<String> {
+        for application in &self.file_annotations {
+            if application.annotation.name.as_str() != "JvmName" {
+                continue;
+            }
+            for arg in &application.annotation.args {
+                if let ItemAnnotationValue::Literal(hir_expand::body::Literal::Str(value)) =
+                    &arg.value
+                {
+                    return Some(value.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// The local declarations nested in `owner`, in source order.
     pub fn local_types_of(&self, owner: ItemId) -> impl Iterator<Item = ItemId> + '_ {
         self.local_types

@@ -2532,6 +2532,11 @@ fn has_no_accessible_no_arg_ctor(
             "<init>"
         }
         Some(hir::Resolved::Source(_)) => fqn.as_str().rsplit('.').next().unwrap_or(fqn.as_str()),
+        // A Kotlin file's facade: the class's *simple* name is what its
+        // `<init>` is looked up under (the Java `new` path's own naming).
+        Some(hir::Resolved::KotlinFacade { .. }) => {
+            fqn.as_str().rsplit('.').next().unwrap_or(fqn.as_str())
+        }
         // An unresolvable superclass is already reported as a missing type by
         // the name check; whether it has a no-arg constructor is unknowable.
         None => return None,
@@ -2997,6 +3002,8 @@ fn sealed_permits(
 ) -> Option<Vec<Name>> {
     let resolved = hir::fqn_resolve(db, scope, fqn)?;
     match resolved {
+        // A Kotlin file's facade is neither sealed nor a permitted subclass.
+        hir::Resolved::KotlinFacade { .. } => None,
         hir::Resolved::Source(source) => {
             let tree = hir::java_item_tree(db, source.file);
             let (permits, sealed) = match tree.data(source.item) {
@@ -3993,6 +4000,11 @@ fn local_class_diagnostics(
 /// `PermittedSubclasses` attribute ([JVMS §4.7.31]).
 fn class_is_sealed(db: &dyn TyDatabase, resolved: &hir::Resolved) -> bool {
     match resolved {
+        // A Kotlin file's facade carries no Kotlin `sealed` modifier.
+        hir::Resolved::KotlinFacade { file, .. } => {
+            let _ = file;
+            false
+        }
         hir::Resolved::Source(source) => {
             let tree = hir::java_item_tree(db, source.file);
             class_like_modifiers(tree.data(source.item)).is_some_and(|m| m.is_sealed())
@@ -4092,6 +4104,8 @@ fn local_redeclaration_is_legal(
 /// source declaration's own name, or the last segment of a classpath name.
 fn class_simple_name(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Name {
     match resolved {
+        // A facade is named after the file it belongs to.
+        hir::Resolved::KotlinFacade { fqn, .. } => Name::new(fqn.simple_name()),
         hir::Resolved::Source(source) => hir::java_item_tree(db, source.file)
             .data(source.item)
             .name()

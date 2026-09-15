@@ -229,7 +229,9 @@ pub fn module_for_class(
     let resolved = fqn_resolve(db, scope, fqn)?;
     let resolved = match resolved {
         Resolved::Library(resolved) => resolved,
-        Resolved::Source(_) => return None,
+        // A source class and a Kotlin facade live in no *library* module
+        // ([JLS §7.7] is a classfile question).
+        Resolved::Source(_) | Resolved::KotlinFacade { .. } => return None,
     };
     let module = resolved.entry.module?;
     let stub = module_descriptor(db, resolved.library, module)?;

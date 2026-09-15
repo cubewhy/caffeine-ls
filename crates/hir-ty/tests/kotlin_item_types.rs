@@ -15,110 +15,10 @@ use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 mod common;
 use common::{ClassSpec, DeprecationSpec, TestDatabase, build_jar, jdk_fixture};
 
-/// A minimal Kotlin standard library: the classifiers the default imports are
-/// claimed to provide, with the shapes kotlinc compiles them to (`kotlin.Int`
-/// is a class, `kotlin.collections.List` an interface with one type parameter).
-fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
-    let class = |fqn: &'static str,
-                 super_class: Option<&'static str>,
-                 interfaces: &'static [&'static str],
-                 access: u16| ClassSpec {
-        fqn,
-        super_class,
-        interfaces,
-        access,
-        fields: &[],
-        field_access: &[],
-        methods: &[],
-        method_sigs: &[],
-        method_access: &[],
-        sig: None,
-        deprecation: DeprecationSpec::NONE,
-        field_deprecations: &[],
-        method_deprecations: &[],
-        method_defaults: &[],
-    };
-    vec![
-        class("kotlin/Any", None, &[], 0x0021),
-        class("kotlin/String", Some("kotlin/Any"), &[], 0x0031),
-        class("kotlin/Int", Some("kotlin/Number"), &[], 0x0031),
-        class("kotlin/Number", Some("kotlin/Any"), &[], 0x0421),
-        class("kotlin/Boolean", Some("kotlin/Any"), &[], 0x0031),
-        class("kotlin/Unit", Some("kotlin/Any"), &[], 0x0031),
-        class("kotlin/Nothing", Some("kotlin/Any"), &[], 0x0031),
-        // `interface List<out E>` — an interface, hence `ACC_INTERFACE |
-        // ACC_ABSTRACT`.
-        class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601),
-        // `interface Function1<in P1, out R>`.
-        class("kotlin/Function1", Some("kotlin/Any"), &[], 0x0601),
-        // `abstract class Enum<E>`, the implicit supertype of an `enum class`.
-        class("kotlin/Enum", Some("kotlin/Any"), &[], 0x0421),
-        // `interface Iterable<out T>` with `iterator()`.
-        ClassSpec {
-            methods: &[("iterator", "()Ljava/util/Iterator;")],
-            ..class(
-                "kotlin/collections/Iterable",
-                Some("kotlin/Any"),
-                &[],
-                0x0601,
-            )
-        },
-    ]
-}
-
-/// A library holding `specs`, plus its id.
-fn library(
-    dir: &TempDir,
-    name: &str,
-    specs: &[ClassSpec<'static>],
-) -> (hir::LibraryId, AbsPathBuf) {
-    let path = camino::Utf8PathBuf::from_path_buf(dir.path().join(name)).unwrap();
-    build_jar(&path, specs);
-    let abs = AbsPathBuf::assert_utf8(path.as_std_path().to_owned());
-    (
-        hir::LibraryId::from_file_path(path.as_std_path()).unwrap(),
-        abs,
-    )
-}
-
-/// The Java class the interop tests need and the hand-encoded JDK fixture does
-/// not carry: a Swing-shaped class whose members are the shapes kotlinc's
-/// interop rules distinguish — a `getDragEnabled()`/`setDragEnabled` pair (the
-/// property `dragEnabled`), a `getLayout()`/`setLayout` pair next to a
-/// *method* named `layout()` (which is why `container.layout` is the property
-/// and `container.layout()` the method), and a `protected` method for the
-/// subclass case.
-fn interop_classes() -> Vec<ClassSpec<'static>> {
-    vec![ClassSpec {
-        fqn: "javax/swing/JList",
-        super_class: Some("java/lang/Object"),
-        interfaces: &[],
-        access: 0x0021,
-        fields: &[],
-        field_access: &[],
-        methods: &[
-            ("<init>", "()V"),
-            ("getDragEnabled", "()Z"),
-            ("setDragEnabled", "(Z)V"),
-            ("getLayout", "()Ljava/lang/Object;"),
-            ("setLayout", "(Ljava/lang/Object;)V"),
-            ("layout", "()V"),
-            ("guarded", "()Ljava/lang/String;"),
-        ],
-        method_sigs: &["", "", "", "", "", "", ""],
-        method_access: &[0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0004],
-        sig: None,
-        deprecation: DeprecationSpec::NONE,
-        field_deprecations: &[],
-        method_deprecations: &[],
-        method_defaults: &[],
-    }]
-}
-
 /// A database with the JDK fixture, a hand-encoded Kotlin stdlib and one
 /// Kotlin source root whose classpath carries both.
 fn kotlin_fixture(files: &[(&str, &str)]) -> (TestDatabase, FileId) {
-    kotlin_fixture_with(files, interop_classes())
+    kotlin_fixture_with(files, common::interop_classes())
 }
 
 /// [`kotlin_fixture`] with `extra` classes added to the classpath, for the
@@ -129,8 +29,9 @@ fn kotlin_fixture_with(
 ) -> (TestDatabase, FileId) {
     let dir = TempDir::new().unwrap();
     let jdk = jdk_fixture();
-    let (stdlib_id, stdlib_path) = library(&dir, "kotlin-stdlib.jar", &kotlin_stdlib_classes());
-    let (extra_id, extra_path) = library(&dir, "java-interop.jar", &extra);
+    let (stdlib_id, stdlib_path) =
+        common::fixture_library(&dir, "kotlin-stdlib.jar", &common::kotlin_stdlib_classes());
+    let (extra_id, extra_path) = common::fixture_library(&dir, "java-interop.jar", &extra);
 
     let mut db = TestDatabase::default();
     let mut file_set = FileSet::default();

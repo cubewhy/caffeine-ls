@@ -88,6 +88,9 @@ pub(crate) fn supertypes_impl(
             // it transitively, so it is added explicitly below.
             let object = Ty::reference(db, "java.lang.Object", Vec::new());
             match resolved {
+                // A Kotlin file's facade extends `Object` and implements
+                // nothing.
+                hir::Resolved::KotlinFacade { .. } => vec![object.clone()],
                 hir::Resolved::Library(resolved) => {
                     let is_interface = hir::class_record(db, &resolved)
                         .map(|record| match &*record {
@@ -202,6 +205,21 @@ pub(crate) fn source_supertypes(
     source: hir::SourceClass,
     args: &[Ty],
 ) -> Vec<Ty> {
+    // A Kotlin source class: its supertypes are Kotlin's, and a Java caller
+    // reads them in their JVM form ([`ty_from_kotlin`]) — a Kotlin class
+    // extending `JFrame` is a Java subtype of `javax.swing.JFrame`.
+    if crate::java::method::is_kotlin(db, source) {
+        let ty = Ty::reference(
+            db,
+            hir::source_class_fqn(db, source.file, source.item).unwrap_or_else(|| Name::new("")),
+            args.to_vec(),
+        );
+        let scope = scope_for_file(db, source.file);
+        return crate::kotlin::subtyping::supertypes(db, &scope, &ty)
+            .into_iter()
+            .map(|supertype| crate::kotlin::ty::ty_from_kotlin(db, supertype))
+            .collect();
+    }
     let tree = hir::java_item_tree(db, source.file);
     let Some(data) = item_data(&tree, source.item) else {
         return Vec::new();
@@ -309,6 +327,8 @@ pub(crate) fn enum_constants(
 ) -> Option<Vec<Name>> {
     let (name, _) = ty.as_reference(db)?;
     match resolve_name(db, scope, name)? {
+        // A Kotlin file's facade is no enum.
+        hir::Resolved::KotlinFacade { .. } => None,
         hir::Resolved::Library(library) => {
             let record = hir::class_record(db, &library)?;
             let syntax::stub::ClassOrModuleStub::Class(class) = record.as_ref() else {
@@ -359,6 +379,8 @@ pub(crate) fn class_like_and_final(
     let (name, _) = ty.as_reference(db)?;
     let resolved = resolve_name(db, scope, name)?;
     match resolved {
+        // A Kotlin file's facade is a final class.
+        hir::Resolved::KotlinFacade { .. } => Some((true, true)),
         hir::Resolved::Library(library) => {
             let record = hir::class_record(db, &library)?;
             let syntax::stub::ClassOrModuleStub::Class(class) = record.as_ref() else {

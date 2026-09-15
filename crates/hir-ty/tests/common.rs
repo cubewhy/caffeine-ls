@@ -448,6 +448,106 @@ fn release_ct_sym_entries() -> Vec<(String, Vec<u8>)> {
     entries
 }
 
+/// A minimal Kotlin standard library: the classifiers the default imports are
+/// claimed to provide, with the shapes kotlinc compiles them to (`kotlin.Int`
+/// is a class, `kotlin.collections.List` an interface with one type parameter).
+pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
+    let class = |fqn: &'static str,
+                 super_class: Option<&'static str>,
+                 interfaces: &'static [&'static str],
+                 access: u16| ClassSpec {
+        fqn,
+        super_class,
+        interfaces,
+        access,
+        fields: &[],
+        field_access: &[],
+        methods: &[],
+        method_sigs: &[],
+        method_access: &[],
+        sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
+        method_defaults: &[],
+    };
+    vec![
+        class("kotlin/Any", None, &[], 0x0021),
+        class("kotlin/String", Some("kotlin/Any"), &[], 0x0031),
+        class("kotlin/Int", Some("kotlin/Number"), &[], 0x0031),
+        class("kotlin/Number", Some("kotlin/Any"), &[], 0x0421),
+        class("kotlin/Boolean", Some("kotlin/Any"), &[], 0x0031),
+        class("kotlin/Unit", Some("kotlin/Any"), &[], 0x0031),
+        class("kotlin/Nothing", Some("kotlin/Any"), &[], 0x0031),
+        // `interface List<out E>` — an interface, hence `ACC_INTERFACE |
+        // ACC_ABSTRACT`.
+        class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601),
+        // `interface Function1<in P1, out R>`.
+        class("kotlin/Function1", Some("kotlin/Any"), &[], 0x0601),
+        // `abstract class Enum<E>`, the implicit supertype of an `enum class`.
+        class("kotlin/Enum", Some("kotlin/Any"), &[], 0x0421),
+        // `interface Iterable<out T>` with `iterator()`.
+        ClassSpec {
+            methods: &[("iterator", "()Ljava/util/Iterator;")],
+            ..class(
+                "kotlin/collections/Iterable",
+                Some("kotlin/Any"),
+                &[],
+                0x0601,
+            )
+        },
+    ]
+}
+
+/// A library holding `specs`, plus its id.
+pub fn fixture_library(
+    dir: &TempDir,
+    name: &str,
+    specs: &[ClassSpec<'static>],
+) -> (hir::LibraryId, AbsPathBuf) {
+    let path = camino::Utf8PathBuf::from_path_buf(dir.path().join(name)).unwrap();
+    build_jar(&path, specs);
+    let abs = AbsPathBuf::assert_utf8(path.as_std_path().to_owned());
+    (
+        hir::LibraryId::from_file_path(path.as_std_path()).unwrap(),
+        abs,
+    )
+}
+
+/// The Java class the interop tests need and the hand-encoded JDK fixture does
+/// not carry: a Swing-shaped class whose members are the shapes kotlinc's
+/// interop rules distinguish — a `getDragEnabled()`/`setDragEnabled` pair (the
+/// property `dragEnabled`), a `getLayout()`/`setLayout` pair next to a
+/// *method* named `layout()` (which is why `container.layout` is the property
+/// and `container.layout()` the method), and a `protected` method for the
+/// subclass case.
+pub fn interop_classes() -> Vec<ClassSpec<'static>> {
+    vec![ClassSpec {
+        fqn: "javax/swing/JList",
+        super_class: Some("java/lang/Object"),
+        interfaces: &[],
+        access: 0x0021,
+        fields: &[],
+        field_access: &[],
+        methods: &[
+            ("<init>", "()V"),
+            ("getDragEnabled", "()Z"),
+            ("setDragEnabled", "(Z)V"),
+            ("getLayout", "()Ljava/lang/Object;"),
+            ("setLayout", "(Ljava/lang/Object;)V"),
+            ("layout", "()V"),
+            ("guarded", "()Ljava/lang/String;"),
+        ],
+        method_sigs: &["", "", "", "", "", "", ""],
+        method_access: &[0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0004],
+        sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
+        method_defaults: &[],
+    }]
+}
+
 /// Registers a source set owning a single source root with `files` (path →
 /// text), the JDK fixture as a classpath library. Returns the source set id.
 /// The root becomes `SourceRootId(0)` (the first root applied). The source
@@ -2579,7 +2679,7 @@ fn source_set_with_libs(
     (db, extra)
 }
 
-fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
+pub fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     let mut lines = files
         .iter()
         .map(|(path, text)| format!("FILE {path}:\n{text}"))
@@ -2976,7 +3076,7 @@ pub fn check_body_diagnostic_spans(files: &[(&str, &str)]) -> String {
     render_body_diagnostic_spans(&db, files)
 }
 
-fn render_body_diagnostic_spans(db: &TestDatabase, files: &[(&str, &str)]) -> String {
+pub fn render_body_diagnostic_spans(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     let mut lines = files
         .iter()
         .map(|(path, text)| format!("FILE {path}:\n{text}"))

@@ -997,6 +997,15 @@ fn resolve_reference_name(
             return canonical;
         }
     }
+    // A Kotlin file's synthesized facade class is not in the source symbol
+    // index — it has no declaration — but its name *is* a class name, and a
+    // Java caller writes it
+    // (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+    for candidate in candidate_fqns(resolver, name) {
+        if hir::file_facade_source(db, scope, candidate.as_str()).is_some() {
+            return candidate;
+        }
+    }
     // Nothing resolved (pre-workspace silence): degrade to the most
     // qualified *non-member* candidate — an enclosing-member prefix would
     // invent a nested type that was never declared.
@@ -1030,7 +1039,10 @@ fn canonical_type_name(
             let interner = &db.hir_state().interner;
             Some(Name::new(interner.resolve(&class.entry.fqn)))
         }
+        // A source class keeps its dotted spelling, a facade the name the
+        // compiler gives it.
         hir::Resolved::Source(_) => Some(candidate.clone()),
+        hir::Resolved::KotlinFacade { fqn, .. } => Some(fqn),
     }
 }
 
@@ -1225,6 +1237,8 @@ fn on_demand_candidate_accessible(
         return true;
     }
     match hir::fqn_resolve(db, scope, fqn.as_str()) {
+        // A Kotlin file's facade is a public source class.
+        Some(hir::Resolved::KotlinFacade { .. }) => true,
         Some(hir::Resolved::Library(class)) => class.entry.flags & 0x0001 != 0,
         Some(hir::Resolved::Source(source)) => {
             let tree = hir::java_item_tree(db, source.file);
@@ -1615,6 +1629,14 @@ pub fn resolve_name_checked(
             hidden.get_or_insert(candidate);
         }
     }
+    // A Kotlin file's synthesized facade class has no declaration to resolve:
+    // its name is a class name all the same, and a Java caller writes it
+    // (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+    for candidate in candidate_fqns(resolver, name) {
+        if hir::file_facade_source(db, scope, candidate.as_str()).is_some() {
+            return NameResolution::Resolved(candidate);
+        }
+    }
     match hidden {
         Some(fqn) => NameResolution::NotAccessible(fqn),
         None => NameResolution::Unresolved,
@@ -1690,6 +1712,9 @@ fn resolved_fqn(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Option<Name> {
             let interner = &db.hir_state().interner;
             Some(Name::new(interner.resolve(&class.entry.fqn)))
         }
+        // A facade's name is the one the compiler gives it: it is not a
+        // *declaration*, so it has no binary name of its own either.
+        hir::Resolved::KotlinFacade { fqn, .. } => Some(fqn.clone()),
         hir::Resolved::Source(_) => None,
     }
 }
@@ -1729,6 +1754,8 @@ pub fn type_argument_arity(
 ) -> Option<usize> {
     let resolved = hir::fqn_resolve(db, scope, fqn.as_str())?;
     match &resolved {
+        // A Kotlin file's facade declares none.
+        hir::Resolved::KotlinFacade { .. } => Some(0),
         hir::Resolved::Library(_) => hir::class_generic_info(db, &resolved)
             .map(|info| info.type_params.len())
             // A classfile without a `Signature` attribute declares none.
@@ -1845,11 +1872,17 @@ pub(crate) fn class_is_generic(
         return false;
     };
     match resolved {
+        // A Kotlin file's facade declares none.
+        hir::Resolved::KotlinFacade { .. } => false,
         // A library class is generic when its classfile `Signature` attribute
         // ([JVMS §4.7.9.1]) declares type parameters.
         hir::Resolved::Library(_) => {
             hir::class_generic_info(db, &resolved).is_some_and(|info| !info.type_params.is_empty())
         }
+        // A Kotlin source class declares no *Java* type parameters: its own
+        // live in the item tree the Kotlin layer reads, and a Java reference to
+        // it is not a raw type ([JLS §4.8] is a Java-source question).
+        hir::Resolved::Source(source) if crate::java::method::is_kotlin(db, source) => false,
         // A source class is generic when its declaration carries them.
         hir::Resolved::Source(source) => {
             let tree = hir::java_item_tree(db, source.file);
@@ -1931,6 +1964,8 @@ fn class_param_bounds(
     class_fqn: &Name,
 ) -> Option<Vec<(TypeVarScope, Vec<Ty>)>> {
     match resolved {
+        // A Kotlin file's facade declares none.
+        hir::Resolved::KotlinFacade { .. } => None,
         hir::Resolved::Library(_) => {
             let info = hir::class_generic_info(db, resolved)?;
             let interner = &db.hir_state().interner;
@@ -1961,6 +1996,17 @@ fn class_param_bounds(
             )
         }
         hir::Resolved::Source(source) => {
+            // A Kotlin source class has no Java item tree to read its declared
+            // parameters from. Its type arguments are Kotlin's own, and the
+            // transforms this feeds — capture conversion
+            // ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)),
+            // which exists to turn a wildcard into a fresh variable — have
+            // nothing to capture in a type that carries none. The bounds are
+            // read where they belong, by the Kotlin layer's own subtyping
+            // ([`crate::kotlin::subtyping`]).
+            if crate::java::method::is_kotlin(db, *source) {
+                return None;
+            }
             let tree = hir::java_item_tree(db, source.file);
             let params = match tree.data(source.item) {
                 ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),

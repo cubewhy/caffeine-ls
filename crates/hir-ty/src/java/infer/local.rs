@@ -150,6 +150,8 @@ impl InferCtx<'_> {
         };
         let resolved = hir::fqn_resolve(self.db, &self.scope, name.as_str())?;
         match resolved {
+            // A Kotlin file's facade declares no record.
+            hir::Resolved::KotlinFacade { .. } => None,
             hir::Resolved::Source(source) => {
                 let tree = hir::java_item_tree(self.db, source.file);
                 match tree.data(source.item) {
