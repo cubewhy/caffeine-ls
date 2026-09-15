@@ -18,17 +18,18 @@ use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
 use syntax::kotlin::{Lang, SyntaxKind as K};
 use syntax::stub::{TypeBound, TypeRef};
 
-use hir_expand::{ast_id_map::FileAstId, name::Name};
+use hir_expand::{ast_id_map::FileAstId, body::ExprData, name::Name};
 
 use super::LowerCtx;
-use super::body;
+use super::body::{self, is_expression};
 use crate::kotlin::item_tree::{
-    AccessorData, AnonymousInitializerNode, ClassData, ClassDeclNode, ConstructorData,
-    ConstructorDeclNode, EnumEntryData, EnumEntryNode, FileAnnotationNode, FunctionData,
-    FunctionDeclNode, ImportHeaderNode, InitData, ItemAnnotationArg, ItemAnnotationRef,
-    ItemAnnotationValue, ItemId, ItemTypeRef, KotlinClassKind, KotlinImportItem, KotlinItemData,
-    KotlinParam, KotlinTypeParam, PackageHeaderNode, Param, PropertyData, PropertyNode,
-    TypeAliasData, TypeAliasNode, ast_id_of, ast_id_or_placeholder,
+    AccessorData, AnnotationNode, AnonymousInitializerNode, ClassData, ClassDeclNode,
+    ConstructorData, ConstructorDeclNode, ConstructorDelegation, EnumEntryData, EnumEntryNode,
+    FunctionData, FunctionDeclNode, ImportHeaderNode, InitData, ItemAnnotationArg,
+    ItemAnnotationRef, ItemAnnotationValue, ItemId, ItemTypeRef, KotlinAnnotationRef,
+    KotlinClassKind, KotlinImportItem, KotlinItemData, KotlinParam, KotlinSuperType,
+    KotlinTypeParam, PackageHeaderNode, Param, PropertyData, PropertyNode, TypeAliasData,
+    TypeAliasNode, ast_id_of, ast_id_or_placeholder,
 };
 use crate::kotlin::modifiers::{KotlinModifiers, KotlinVariance};
 
@@ -38,7 +39,7 @@ pub(super) fn lower_file(ctx: &mut LowerCtx<'_>, file: &kotlin_syntax::SourceFil
             K::FILE_ANNOTATION => ctx
                 .tree
                 .file_annotations
-                .push(ast_id_of::<FileAnnotationNode, _>(ctx.map, &child)),
+                .extend(lower_annotation(ctx, &child)),
             K::PACKAGE_HEADER => lower_package(ctx, &child),
             K::IMPORT_LIST => {
                 for import in child.children() {
@@ -136,7 +137,7 @@ fn lower_import(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) {
 /// primary constructor and the properties its `val`/`var` class parameters
 /// declare are lowered *before* the class-body members, in source order.
 fn lower_class(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
-    let (mut modifiers, annotations) = modifiers_of(ctx, node);
+    let mut modifiers = modifiers_of(node);
     if node
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
@@ -155,13 +156,20 @@ fn lower_class(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         name,
         kind,
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         type_params: lower_type_params(ctx, node),
-        super_types: lower_super_types(ctx, node),
+        super_types: Vec::new(),
         primary_constructor: None,
         body: Vec::new(),
         ast: ast_id_of::<ClassDeclNode, _>(ctx.map, node),
     }));
+
+    // The annotations and the supertypes carry expressions — an element value,
+    // a superclass's constructor arguments, a delegate — and an expression is
+    // anchored to the declaration it belongs to, so both are lowered once the
+    // item exists.
+    let annotations = annotations_of(ctx, node);
+    let super_types = lower_super_types(ctx, id, node);
 
     let mut body = Vec::new();
     let mut primary_constructor = None;
@@ -183,6 +191,8 @@ fn lower_class(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let KotlinItemData::Class(data) = ctx.tree.items.get_mut(id.0) else {
         unreachable!("just allocated a class");
     };
+    data.annotations = annotations;
+    data.super_types = super_types;
     data.primary_constructor = primary_constructor;
     data.body = body;
     id
@@ -271,7 +281,7 @@ fn lower_primary_constructor(
     ctx: &mut LowerCtx<'_>,
     node: &SyntaxNode<Lang>,
 ) -> (ItemId, Vec<ItemId>) {
-    let (modifiers, annotations) = modifiers_of(ctx, node);
+    let modifiers = modifiers_of(node);
     let parameters: Vec<SyntaxNode<Lang>> = node
         .children()
         .find(|child| is(child, K::CLASS_PARAMETERS))
@@ -288,12 +298,20 @@ fn lower_primary_constructor(
             .iter()
             .map(|parameter| lower_param(ctx, parameter))
             .collect(),
+        defaults: Vec::new(),
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         delegation: None,
         body: None,
         ast: ast_id_of::<ConstructorDeclNode, _>(ctx.map, node),
     }));
+    let annotations = annotations_of(ctx, node);
+    let defaults = body::lower_defaults(ctx, id, node);
+    let KotlinItemData::Constructor(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("just allocated a primary constructor");
+    };
+    data.annotations = annotations;
+    data.defaults = defaults;
 
     let mut properties = Vec::new();
     for parameter in &parameters {
@@ -309,25 +327,54 @@ fn lower_primary_constructor(
 ///                         [':' constructorDelegationCall] [block]
 /// [spec: grammar-rule-secondaryConstructor] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-secondaryConstructor
 fn lower_secondary_constructor(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
-    let (modifiers, annotations) = modifiers_of(ctx, node);
+    let modifiers = modifiers_of(node);
     let id = ctx.alloc(KotlinItemData::Constructor(ConstructorData {
         params: lower_params(ctx, node),
+        defaults: Vec::new(),
         modifiers,
-        annotations,
-        delegation: node
-            .children()
-            .find(|child| is(child, K::CONSTRUCTOR_DELEGATION_CALL))
-            .map(|child| ast_id_of(ctx.map, &child)),
+        annotations: Vec::new(),
+        delegation: None,
         body: None,
         ast: ast_id_of::<ConstructorDeclNode, _>(ctx.map, node),
     }));
-    if let Some(body) = body::lower_constructor_body(ctx, id, node) {
-        let KotlinItemData::Constructor(data) = ctx.tree.items.get_mut(id.0) else {
-            unreachable!("just allocated a constructor");
-        };
-        data.body = Some(body);
-    }
+    let annotations = annotations_of(ctx, node);
+    let defaults = body::lower_defaults(ctx, id, node);
+    let delegation = lower_constructor_delegation(ctx, id, node);
+    let body = body::lower_constructor_body(ctx, id, node);
+    let KotlinItemData::Constructor(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("just allocated a constructor");
+    };
+    data.annotations = annotations;
+    data.defaults = defaults;
+    data.delegation = delegation;
+    data.body = body;
     id
+}
+
+/// The `: this(…)` / `: super(…)` call of a secondary constructor ([spec:
+/// grammar-rule-constructorDelegationCall]), with its arguments lowered in the
+/// constructor's own context.
+fn lower_constructor_delegation(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    node: &SyntaxNode<Lang>,
+) -> Option<ConstructorDelegation> {
+    let call = node
+        .children()
+        .find(|child| is(child, K::CONSTRUCTOR_DELEGATION_CALL))?;
+    let is_super = call
+        .children_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .any(|token| is_token(&token, K::SUPER_KW));
+    Some(ConstructorDelegation {
+        is_super,
+        args: call
+            .children()
+            .find(|child| is(child, K::VALUE_ARGUMENTS))
+            .map(|arguments| body::lower_value_arguments(ctx, owner, &arguments))
+            .unwrap_or_default(),
+        ast: ast_id_of(ctx.map, &call),
+    })
 }
 
 /// `anonymousInitializer`: 'init' {NL} block
@@ -351,25 +398,28 @@ fn lower_init(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
 ///                        [typeConstraints] [functionBody]
 /// [spec: grammar-rule-functionDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionDeclaration
 fn lower_function(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
-    let (modifiers, annotations) = modifiers_of(ctx, node);
+    let modifiers = modifiers_of(node);
     let id = ctx.alloc(KotlinItemData::Function(FunctionData {
         name: function_name(node).unwrap_or_else(missing_name),
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         type_params: lower_type_params(ctx, node),
         receiver: receiver_type(ctx, node),
-        defaults: trailing_defaults(node),
         params: lower_params(ctx, node),
+        defaults: Vec::new(),
         ret: declared_type(ctx, node),
         body: None,
         ast: ast_id_of::<FunctionDeclNode, _>(ctx.map, node),
     }));
-    if let Some(body) = body::lower_function_body(ctx, id, node) {
-        let KotlinItemData::Function(data) = ctx.tree.items.get_mut(id.0) else {
-            unreachable!("just allocated a function");
-        };
-        data.body = Some(body);
-    }
+    let annotations = annotations_of(ctx, node);
+    let defaults = body::lower_defaults(ctx, id, node);
+    let body = body::lower_function_body(ctx, id, node);
+    let KotlinItemData::Function(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("just allocated a function");
+    };
+    data.annotations = annotations;
+    data.defaults = defaults;
+    data.body = body;
     id
 }
 
@@ -385,7 +435,7 @@ fn lower_function(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
 /// accessors (which a destructuring declaration cannot have) are attached to
 /// the first.
 fn lower_property(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemId> {
-    let (modifiers, annotations) = modifiers_of(ctx, node);
+    let modifiers = modifiers_of(node);
     let is_var = node
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
@@ -408,6 +458,7 @@ fn lower_property(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemId
             .collect(),
     };
 
+    let annotations = annotations_of(ctx, node);
     let mut ids = Vec::new();
     let mut declared = Vec::new();
     for declaration in &declarations {
@@ -476,11 +527,11 @@ fn lower_property(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemId
 /// writes no type takes it ([KLS
 /// `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)).
 fn lower_accessor(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>, is_setter: bool) -> ItemId {
-    let (modifiers, annotations) = modifiers_of(ctx, node);
+    let modifiers = modifiers_of(node);
     let id = ctx.alloc(KotlinItemData::Accessor(AccessorData {
         is_setter,
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         params: node
             .children()
             .filter(|child| is(child, K::VALUE_PARAMETER))
@@ -489,19 +540,19 @@ fn lower_accessor(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>, is_setter: bo
         body: None,
         ast: ast_id_of(ctx.map, node),
     }));
-    if let Some(body) = body::lower_accessor_body(ctx, id, node) {
-        let KotlinItemData::Accessor(data) = ctx.tree.items.get_mut(id.0) else {
-            unreachable!("just allocated an accessor");
-        };
-        data.body = Some(body);
-    }
+    let annotations = annotations_of(ctx, node);
+    let body = body::lower_accessor_body(ctx, id, node);
+    let KotlinItemData::Accessor(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("just allocated an accessor");
+    };
+    data.annotations = annotations;
+    data.body = body;
     id
 }
 
 /// `enumEntry`: [modifiers] simpleIdentifier [valueArguments] [classBody]
 /// [spec: grammar-rule-enumEntry] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-enumEntry
 fn lower_enum_entry(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
-    let (_, annotations) = modifiers_of(ctx, node);
     let name = node
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
@@ -515,15 +566,17 @@ fn lower_enum_entry(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         .unwrap_or_default();
     let id = ctx.alloc(KotlinItemData::EnumEntry(EnumEntryData {
         name,
-        annotations,
+        annotations: Vec::new(),
         argument_exprs: Vec::new(),
         body,
         ast: ast_id_of::<EnumEntryNode, _>(ctx.map, node),
     }));
+    let annotations = annotations_of(ctx, node);
     let arguments = body::lower_enum_entry_arguments(ctx, id, node);
     let KotlinItemData::EnumEntry(data) = ctx.tree.items.get_mut(id.0) else {
         unreachable!("just allocated an enum entry");
     };
+    data.annotations = annotations;
     data.argument_exprs = arguments;
     id
 }
@@ -532,15 +585,21 @@ fn lower_enum_entry(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
 ///              {NL} '=' {NL} type
 /// [spec: grammar-rule-typeAlias] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-typeAlias
 fn lower_type_alias(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
-    let (modifiers, annotations) = modifiers_of(ctx, node);
-    ctx.alloc(KotlinItemData::TypeAlias(TypeAliasData {
+    let modifiers = modifiers_of(node);
+    let id = ctx.alloc(KotlinItemData::TypeAlias(TypeAliasData {
         name: first_identifier(node).unwrap_or_else(missing_name),
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         type_params: lower_type_params(ctx, node),
         target: declared_type(ctx, node).unwrap_or_else(|| ItemTypeRef::synthetic(TypeRef::Error)),
         ast: ast_id_of::<TypeAliasNode, _>(ctx.map, node),
-    }))
+    }));
+    let annotations = annotations_of(ctx, node);
+    let KotlinItemData::TypeAlias(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("just allocated a type alias");
+    };
+    data.annotations = annotations;
+    id
 }
 
 /// Lowers a *local* declaration the body walker found in a block or in an
@@ -610,11 +669,11 @@ fn lower_class_parameter_property(
     if !is_property {
         return None;
     }
-    let (modifiers, annotations) = modifiers_of(ctx, node);
-    Some(ctx.alloc(KotlinItemData::Property(PropertyData {
+    let modifiers = modifiers_of(node);
+    let id = ctx.alloc(KotlinItemData::Property(PropertyData {
         name: first_identifier(node).unwrap_or_else(missing_name),
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         type_params: Vec::new(),
         receiver: None,
         ty: declared_type(ctx, node),
@@ -623,7 +682,13 @@ fn lower_class_parameter_property(
         delegate_expr: None,
         accessors: Vec::new(),
         ast: ast_id_of(ctx.map, node),
-    })))
+    }));
+    let annotations = annotations_of(ctx, node);
+    let KotlinItemData::Property(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("just allocated a class property");
+    };
+    data.annotations = annotations;
+    Some(id)
 }
 
 /// `classParameters` / `functionValueParameters`: the declared parameters of a
@@ -658,6 +723,8 @@ fn lower_params(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<KotlinParam>
 /// it records the error type, which the type layer replaces — a parameter with
 /// no type anywhere is an erroneous declaration.
 fn lower_param(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> KotlinParam {
+    // A parameter writes no use-site target ([`KotlinAnnotationRef`]), so its
+    // annotations are the shared ones ([`Param::annotations`]).
     let mut annotations = Vec::new();
     let mut modifiers = (false, false, false);
     if let Some(list) = node.children().find(|child| is(child, K::MODIFIER_LIST)) {
@@ -665,7 +732,11 @@ fn lower_param(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> KotlinParam {
             if let NodeOrToken::Node(annotation) = element
                 && is(&annotation, K::ANNOTATION)
             {
-                annotations.extend(lower_annotation(ctx, &annotation));
+                annotations.extend(
+                    lower_annotation(ctx, &annotation)
+                        .into_iter()
+                        .map(|application| application.annotation),
+                );
             }
         }
         // A class parameter writes its modifiers in a list (`class C(private
@@ -675,7 +746,11 @@ fn lower_param(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> KotlinParam {
         modifiers = parameter_modifiers(&list);
     }
     for child in node.children().filter(|child| is(child, K::ANNOTATION)) {
-        annotations.extend(lower_annotation(ctx, &child));
+        annotations.extend(
+            lower_annotation(ctx, &child)
+                .into_iter()
+                .map(|application| application.annotation),
+        );
     }
     let (vararg, noinline, crossinline) = {
         let (v, n, c) = parameter_modifiers(node);
@@ -782,10 +857,19 @@ fn lower_type_param(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> KotlinTypePa
 }
 
 /// `delegationSpecifiers` ([spec: grammar-rule-delegationSpecifiers]) — the
-/// supertypes of a classifier, in source order. The constructor arguments of a
-/// supertype *call* (`class C : Base(1)`) and the delegate expression of
-/// `interface I by delegate` are body content and are not part of the type.
-fn lower_super_types(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemTypeRef> {
+/// supertypes of a classifier, in source order: each the type it names, plus
+/// the constructor arguments of a supertype *call* (`class C : Base(1)`) or the
+/// delegate expression of `interface I by delegate`
+/// ([`KotlinSuperType`]).
+///
+/// Both are body content — the parser keeps them as children of the specifier
+/// ([`Skeleton::plan`](hir_expand::ast_id_map)) — so `owner`, the classifier's
+/// item, is what they lower against.
+fn lower_super_types(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    node: &SyntaxNode<Lang>,
+) -> Vec<KotlinSuperType> {
     let Some(specifiers) = node
         .children()
         .find(|child| is(child, K::DELEGATION_SPECIFIERS))
@@ -795,21 +879,57 @@ fn lower_super_types(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemTyp
     specifiers
         .children()
         .filter(|child| is(child, K::DELEGATION_SPECIFIER))
-        .filter_map(|specifier| {
-            let ty = child_type(&specifier).or_else(|| {
-                specifier
-                    .children()
-                    .find(|child| {
-                        matches!(
-                            child.kind(),
-                            K::CONSTRUCTOR_INVOCATION | K::EXPLICIT_DELEGATION
-                        )
-                    })
-                    .and_then(|wrapper| child_type(&wrapper))
-            })?;
-            Some(item_type_ref(ctx, &ty))
-        })
+        .filter_map(|specifier| lower_super_type(ctx, owner, &specifier))
         .collect()
+}
+
+/// One delegation specifier: `Base`, `Base(1)` or `I by impl`
+/// ([spec: grammar-rule-delegationSpecifier]).
+fn lower_super_type(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    node: &SyntaxNode<Lang>,
+) -> Option<KotlinSuperType> {
+    // A called supertype (`CONSTRUCTOR_INVOCATION`) and a delegated one
+    // (`EXPLICIT_DELEGATION`) wrap the type; the arguments and the delegate
+    // expression sit beside the wrapper, in the specifier itself.
+    let wrapper = node.children().find(|child| {
+        matches!(
+            child.kind(),
+            K::CONSTRUCTOR_INVOCATION | K::EXPLICIT_DELEGATION
+        )
+    });
+    let ty = match &wrapper {
+        Some(wrapper) => child_type(wrapper)?,
+        None => child_type(node)?,
+    };
+    let Some(wrapper) = wrapper else {
+        return Some(KotlinSuperType {
+            ty: item_type_ref(ctx, &ty),
+            args: Vec::new(),
+            delegate: None,
+        });
+    };
+    let args = node
+        .children()
+        .find(|child| is(child, K::VALUE_ARGUMENTS))
+        .map(|arguments| body::lower_value_arguments(ctx, owner, &arguments))
+        .unwrap_or_default();
+    // The delegate expression is the specifier's expression child that is not
+    // the delegated type (`I by impl`), and `by` is a plain identifier token.
+    let delegate = is(&wrapper, K::EXPLICIT_DELEGATION)
+        .then(|| {
+            node.children()
+                .filter(|child| is_expression(child.kind()))
+                .last()
+        })
+        .flatten()
+        .map(|value| body::lower_expr(ctx, owner, &value));
+    Some(KotlinSuperType {
+        ty: item_type_ref(ctx, &ty),
+        args,
+        delegate,
+    })
 }
 
 /// The declared type of a declaration: its direct type-node child (`: type`
@@ -939,9 +1059,12 @@ fn type_modifier_annotations(
     ctx: &LowerCtx<'_>,
     node: &SyntaxNode<Lang>,
 ) -> Vec<ItemAnnotationRef> {
+    // A type-use annotation writes no use-site target ([`KotlinAnnotationRef`]),
+    // so the shared reference is what a type carries.
     node.children()
         .filter(|child| is(child, K::ANNOTATION))
         .flat_map(|child| lower_annotation(ctx, &child))
+        .map(|application| application.annotation)
         .collect()
 }
 
@@ -1001,7 +1124,11 @@ fn lower_projection(
     for element in node.children_with_tokens() {
         match element {
             NodeOrToken::Node(child) if is(&child, K::ANNOTATION) => {
-                annotations.extend(lower_annotation(ctx, &child));
+                annotations.extend(
+                    lower_annotation(ctx, &child)
+                        .into_iter()
+                        .map(|application| application.annotation),
+                );
             }
             NodeOrToken::Token(token) => match token.kind() {
                 K::STAR => return (TypeRef::Wildcard { bound: None }, Vec::new(), annotations),
@@ -1112,126 +1239,311 @@ fn lower_function_type(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> LoweredTy
 
 /// `annotation`: (singleAnnotation | multiAnnotation) {NL}
 /// [spec: grammar-rule-annotation] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-annotation
+/// `fileAnnotation`: '@' 'file' ':' (multiAnnotation | unescapedAnnotation)
+/// [spec: grammar-rule-fileAnnotation] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-fileAnnotation
 ///
 /// A multi-annotation (`@[A B]`) is sugar for several annotations that share
 /// one syntax node — and therefore one range, one
-/// [`ItemAnnotationRef::node`] — so it yields one item per annotation body.
+/// [`ItemAnnotationRef::node`] — so it yields one item per annotation body, all
+/// with the one use-site target the node writes.
 ///
-/// The element values are kept as their source text
-/// ([`ItemAnnotationValue::Unresolved`]) until the body lowering can anchor
-/// them to expressions; the *names* are authoritative either way.
-fn lower_annotation(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemAnnotationRef> {
+/// Element values ([KLS
+/// `annotations.html`](https://kotlinlang.org/spec/annotations.html)) are
+/// lowered to the constant forms a classfile can carry
+/// ([`lower_annotation_value`]).
+fn lower_annotation(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<KotlinAnnotationRef> {
     let id = ast_id_or_placeholder(ctx.map, node);
-    let mut out: Vec<ItemAnnotationRef> = Vec::new();
+    let target = annotation_use_site_target(node);
+    let mut out: Vec<KotlinAnnotationRef> = Vec::new();
     let mut pending: Option<Name> = None;
     for child in node.children() {
         match child.kind() {
             K::USER_TYPE => {
                 if let Some(name) = pending.take() {
-                    out.push(ItemAnnotationRef {
-                        name,
-                        args: Vec::new(),
-                        node: id,
-                    });
+                    out.push(application(target.clone(), name, Vec::new(), id));
                 }
                 pending = lower_user_type(ctx, &child).ty.as_reference_name().cloned();
             }
             K::VALUE_ARGUMENTS => {
                 if let Some(name) = pending.take() {
-                    out.push(ItemAnnotationRef {
+                    out.push(application(
+                        target.clone(),
                         name,
-                        args: lower_annotation_args(&child),
-                        node: id,
-                    });
+                        lower_annotation_args(ctx, &child),
+                        id,
+                    ));
                 }
             }
             _ => {}
         }
     }
     if let Some(name) = pending {
-        out.push(ItemAnnotationRef {
-            name,
-            args: Vec::new(),
-            node: id,
-        });
+        out.push(application(target, name, Vec::new(), id));
     }
     out
+}
+
+/// One annotation application with its use-site target.
+fn application(
+    target: Option<Name>,
+    name: Name,
+    args: Vec<ItemAnnotationArg>,
+    node: FileAstId<AnnotationNode>,
+) -> KotlinAnnotationRef {
+    KotlinAnnotationRef {
+        target,
+        annotation: ItemAnnotationRef { name, args, node },
+    }
+}
+
+/// The use-site target of an annotation ([KLS
+/// `annotations.html#annotation-use-site-targets`](https://kotlinlang.org/spec/annotations.html#annotation-use-site-targets)):
+/// the `get` of `@get:JvmName`, the `file` of `@file:JvmName`. `None` for an
+/// annotation that writes none, and for a *multi*-annotation of several types
+/// (`@[A B]`), which carries no target.
+fn annotation_use_site_target(node: &SyntaxNode<Lang>) -> Option<Name> {
+    let target = node
+        .children()
+        .find(|child| is(child, K::ANNOTATION_USE_SITE_TARGET))?;
+    target
+        .children_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .find(|token| is_token(token, K::IDENTIFIER))
+        .map(|token| Name::new(token.text()))
 }
 
 /// `valueArgument`: [annotation] {NL} [simpleIdentifier {NL} '=' {NL}] ['*']
 ///                  {NL} expression
 /// [spec: grammar-rule-valueArgument] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-valueArgument
-fn lower_annotation_args(node: &SyntaxNode<Lang>) -> Vec<ItemAnnotationArg> {
+///
+/// The name is the argument's own (`@Ann(name = 1)`), the implicit `value`
+/// otherwise — the element name kotlinc resolves a single unnamed argument to.
+fn lower_annotation_args(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemAnnotationArg> {
     node.children()
         .filter(|child| is(child, K::VALUE_ARGUMENT))
         .map(|argument| {
+            // The implicit `value` is the name of an argument written without
+            // one: the element it binds is the annotation's own parameter,
+            // whose name only its declaration knows
+            // ([KLS `annotations.html`](https://kotlinlang.org/spec/annotations.html)).
             let name = argument
                 .children_with_tokens()
                 .filter_map(NodeOrToken::into_token)
                 .find(|token| is_token(token, K::IDENTIFIER))
                 .map(|token| Name::new(token.text()))
                 .unwrap_or_else(|| Name::new("value"));
-            let text = argument
-                .children()
-                .find(|child| !is(child, K::ANNOTATION))
-                .map(|expression| expression.text().to_string().trim().to_owned())
-                .unwrap_or_default();
+            let value = argument.children().find(|child| !is(child, K::ANNOTATION));
             ItemAnnotationArg {
                 name,
-                value: ItemAnnotationValue::Unresolved { text },
+                value: value
+                    .map(|value| lower_annotation_value(ctx, &value))
+                    .unwrap_or(ItemAnnotationValue::Unresolved {
+                        text: argument.text().to_string(),
+                    }),
             }
         })
         .collect()
 }
 
-/// The source modifiers and the annotations of a declaration, from its
-/// `MODIFIER_LIST` ([spec: grammar-rule-modifiers]). Annotations are
-/// declaration attributes, not modifiers, and are returned separately.
-fn modifiers_of(
-    ctx: &LowerCtx<'_>,
-    node: &SyntaxNode<Lang>,
-) -> (KotlinModifiers, Vec<ItemAnnotationRef>) {
-    let mut modifiers = KotlinModifiers::none();
-    let mut annotations = Vec::new();
-    let Some(list) = node.children().find(|child| is(child, K::MODIFIER_LIST)) else {
-        return (modifiers, annotations);
-    };
-    for element in list.children_with_tokens() {
-        match element {
-            NodeOrToken::Node(child) if is(&child, K::ANNOTATION) => {
-                annotations.extend(lower_annotation(ctx, &child));
+/// The value of an annotation argument ([KLS
+/// `annotations.html`](https://kotlinlang.org/spec/annotations.html)).
+///
+/// The forms are the ones a classfile annotation can carry — a literal, an enum
+/// constant, a class literal, a nested annotation and an array of those — and
+/// the shapes are the parser's: a nested annotation is written *without* an
+/// `@` (kotlinc 2.4.20 rejects `@Outer(@Inner("x"))` with "annotations cannot
+/// be used as annotation arguments", and accepts `@Outer(Inner("x"))`), so it
+/// parses as a call of a bare name, and an enum constant is a postfix access on
+/// a name.
+///
+/// A value that is none of these — an arbitrary expression, which the JVM
+/// cannot carry — keeps its source text ([`ItemAnnotationValue::Unresolved`]):
+/// the annotation is lowered with the declaration's *signature*, before the
+/// item it belongs to exists, so there is no owner to anchor an expression to.
+fn lower_annotation_value(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemAnnotationValue {
+    match node.kind() {
+        // A string literal is a node of its own (its *content* is the token
+        // that carries the text).
+        K::STRING_LITERAL => literal_value(ctx, node),
+        // A bare name: an enum constant whose declaring type is the element's
+        // ([`ItemAnnotationValue::EnumConstant`] with no qualifier), or a
+        // literal — an integer, float, character or boolean one is the single
+        // token of the `PRIMARY_EXPRESSION` the expression grammar wraps it in.
+        K::PRIMARY_EXPRESSION => match node
+            .children_with_tokens()
+            .find_map(NodeOrToken::into_token)
+        {
+            Some(token) if is_literal_token(&token) => literal_value(ctx, node),
+            Some(token) if is_token(&token, K::IDENTIFIER) => ItemAnnotationValue::EnumConstant {
+                qualifier: None,
+                member: Name::new(token.text()),
+            },
+            _ => unresolved(node),
+        },
+        // `Type.CONSTANT` is a postfix access on a name and `Inner("x")` a postfix
+        // *call* of one — the nested-annotation form Kotlin writes without an
+        // `@` (see the doc above).
+        K::POSTFIX_UNARY_EXPRESSION => {
+            if let Some((qualifier, member)) = enum_constant(node) {
+                ItemAnnotationValue::EnumConstant { qualifier, member }
+            } else if let Some(annotation) = nested_annotation(ctx, node) {
+                ItemAnnotationValue::Annotation(Box::new(annotation))
+            } else {
+                unresolved(node)
             }
-            NodeOrToken::Token(token) if is_token(&token, K::IDENTIFIER) => {
-                modifiers.push_keyword(token.text());
-            }
-            _ => {}
         }
+        // A class literal `Foo::class` ([KLS
+        // `reflection.html#class-references`](https://kotlinlang.org/spec/reflection.html#class-references)).
+        K::CALLABLE_REFERENCE => match node.children().find(|child| is_type_node(child.kind())) {
+            Some(ty) => ItemAnnotationValue::ClassLit(Box::new(item_type_ref(ctx, &ty))),
+            None => unresolved(node),
+        },
+        // An array initializer `[v1, v2]` ([spec:
+        // grammar-rule-collectionLiteral]).
+        K::COLLECTION_LITERAL => ItemAnnotationValue::Array(
+            node.children()
+                .filter(|child| is_expression(child.kind()))
+                .map(|element| lower_annotation_value(ctx, &element))
+                .collect(),
+        ),
+        _ => unresolved(node),
     }
-    (modifiers, annotations)
 }
 
-/// How many trailing parameters of a declaration's parameter list declare a
-/// default value (`fun f(a: Int, b: Int = 0, c: Int = 1)`) — the arity a call
-/// may omit ([KLS
-/// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
-fn trailing_defaults(node: &SyntaxNode<Lang>) -> usize {
-    let Some(parameters) = node.children().find(|child| is(child, K::VALUE_PARAMETERS)) else {
-        return 0;
-    };
-    let parameters: Vec<SyntaxNode<Lang>> = parameters
+/// The nested annotation `Inner("x")` an argument holds: the called name is the
+/// annotation's and the call's arguments are its element values, lowered
+/// recursively. `None` for a postfix expression that calls nothing.
+fn nested_annotation(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemAnnotationRef> {
+    let call = node
         .children()
-        .filter(|child| is(child, K::VALUE_PARAMETER))
-        .collect();
-    parameters
-        .iter()
-        .rev()
-        .take_while(|parameter| {
-            parameter
+        .find(|child| is(child, K::CALL_EXPRESSION))?;
+    let name = base_identifier(node)?;
+    let args = call
+        .children()
+        .find(|child| is(child, K::VALUE_ARGUMENTS))
+        .map(|arguments| lower_annotation_args(ctx, &arguments))
+        .unwrap_or_default();
+    Some(ItemAnnotationRef {
+        name,
+        args,
+        node: ast_id_or_placeholder(ctx.map, node),
+    })
+}
+
+/// The `(qualifier, member)` of an enum constant `Type.CONSTANT` — a postfix
+/// access on a bare name, whose qualifier is the type it is declared in. `None`
+/// for any other postfix expression (`Foo.bar()`, `Foo.BAR.baz`), which is not
+/// a constant.
+fn enum_constant(node: &SyntaxNode<Lang>) -> Option<(Option<Name>, Name)> {
+    if node.children().any(|child| is(&child, K::CALL_EXPRESSION)) {
+        return None;
+    }
+    let member = node
+        .children()
+        .filter(|child| is(child, K::NAVIGATION_SUFFIX))
+        .find_map(|suffix| {
+            suffix
                 .children_with_tokens()
                 .filter_map(NodeOrToken::into_token)
-                .any(|token| is_token(&token, K::EQUAL))
+                .find(|token| is_token(token, K::IDENTIFIER))
         })
+        .map(|token| Name::new(token.text()))?;
+    // Exactly one access: `Foo.BAR` and not `Foo.BAR.baz`.
+    if node
+        .children()
+        .filter(|child| is(child, K::NAVIGATION_SUFFIX))
         .count()
+        != 1
+    {
+        return None;
+    }
+    Some((base_identifier(node), member))
+}
+
+/// The identifier of a `PRIMARY_EXPRESSION` base — a name written as a token.
+fn base_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
+    node.children()
+        .find(|child| is(child, K::PRIMARY_EXPRESSION))
+        .and_then(|base| {
+            base.children_with_tokens()
+                .filter_map(NodeOrToken::into_token)
+                .find(|token| is_token(token, K::IDENTIFIER))
+        })
+        .map(|token| Name::new(token.text()))
+}
+
+/// Whether a token is one of the literal tokens an annotation element value may
+/// hold ([KLS
+/// `expressions.html#constant-literals`](https://kotlinlang.org/spec/expressions.html#constant-literals)).
+fn is_literal_token(token: &SyntaxToken<Lang>) -> bool {
+    matches!(
+        token.kind(),
+        K::INTEGER_LITERAL
+            | K::FLOAT_LITERAL
+            | K::CHAR_LITERAL
+            | K::STRING_CONTENT
+            | K::TRUE_KW
+            | K::FALSE_KW
+    )
+}
+
+/// The literal value of a node that holds a literal token — the token, decoded
+/// exactly as the body lowering decodes it.
+fn literal_value(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemAnnotationValue {
+    let Some(token) = node
+        .children_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .find(is_literal_token)
+    else {
+        return unresolved(node);
+    };
+    match body::literal(ctx, &token) {
+        ExprData::Literal(literal) => ItemAnnotationValue::Literal(literal),
+        _ => unresolved(node),
+    }
+}
+
+/// A value the constant forms above do not name, kept as its source text.
+fn unresolved(node: &SyntaxNode<Lang>) -> ItemAnnotationValue {
+    ItemAnnotationValue::Unresolved {
+        text: node.text().to_string(),
+    }
+}
+
+/// The source modifiers of a declaration, from its `MODIFIER_LIST`
+/// ([spec: grammar-rule-modifiers]). Annotations are declaration attributes,
+/// not modifiers, and are lowered separately ([`annotations_of`]) because an
+/// annotation carries element values.
+fn modifiers_of(node: &SyntaxNode<Lang>) -> KotlinModifiers {
+    let mut modifiers = KotlinModifiers::none();
+    let Some(list) = node.children().find(|child| is(child, K::MODIFIER_LIST)) else {
+        return modifiers;
+    };
+    for element in list.children_with_tokens() {
+        if let NodeOrToken::Token(token) = element
+            && is_token(&token, K::IDENTIFIER)
+        {
+            modifiers.push_keyword(token.text());
+        }
+    }
+    modifiers
+}
+
+/// The annotations of a declaration, in source order: the `ANNOTATION` children
+/// of its `MODIFIER_LIST` and the ones written directly beside it.
+fn annotations_of(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<KotlinAnnotationRef> {
+    let list = node
+        .children()
+        .find(|child| is(child, K::MODIFIER_LIST))
+        .into_iter()
+        .flat_map(|list| {
+            list.children()
+                .filter(|child| is(child, K::ANNOTATION))
+                .collect::<Vec<_>>()
+        })
+        .chain(node.children().filter(|child| is(child, K::ANNOTATION)));
+    list.flat_map(|annotation| lower_annotation(ctx, &annotation))
+        .collect()
 }
 
 /// The name of a `functionDeclaration`: the identifier between the optional

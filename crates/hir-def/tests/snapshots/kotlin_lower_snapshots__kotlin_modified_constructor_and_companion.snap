@@ -25,4 +25,4 @@ class C @1..148
     fun f() @50..61
   init @73..104
   constructor(x: Int) @110..147
-    @Deprecated(value = "d")
+    @Deprecated(value = Str("d"))

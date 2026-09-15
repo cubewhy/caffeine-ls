@@ -113,6 +113,56 @@ pub(super) fn lower_property_delegate(
     Some(expr(ctx, owner, &value))
 }
 
+/// The default value of every parameter of a declaration, in parameter order
+/// ([KLS
+/// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)):
+/// the `= expr` a `VALUE_PARAMETER`/`CLASS_PARAMETER` writes, lowered in the
+/// declaring item's context, or `None` for a parameter that writes none.
+pub(super) fn lower_defaults(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    node: &SyntaxNode<Lang>,
+) -> Vec<Option<ExprId>> {
+    let Some(parameters) = node
+        .children()
+        .find(|child| matches!(child.kind(), K::VALUE_PARAMETERS | K::CLASS_PARAMETERS))
+    else {
+        return Vec::new();
+    };
+    parameters
+        .children()
+        .filter(|child| matches!(child.kind(), K::VALUE_PARAMETER | K::CLASS_PARAMETER))
+        .map(|parameter| {
+            // The parameter's one expression child is its default: the type is
+            // a type node and the modifiers are annotations, so nothing else
+            // in the parameter is an expression ([spec:
+            // grammar-rule-functionValueParameter]).
+            parameter
+                .children()
+                .find(|child| is_expression(child.kind()))
+                .map(|value| expr(ctx, owner, &value))
+        })
+        .collect()
+}
+
+/// The lowered form of one expression node, in the context of the declaration
+/// `owner` that carries it — the entry point the declaration walker uses for
+/// the expressions *it* owns: a parameter default, a supertype's constructor
+/// arguments, a delegate.
+pub(super) fn lower_expr(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprId {
+    expr(ctx, owner, node)
+}
+
+/// The lowered arguments of a `VALUE_ARGUMENTS` node, in the context of the
+/// declaration that carries them.
+pub(super) fn lower_value_arguments(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    node: &SyntaxNode<Lang>,
+) -> Vec<ExprId> {
+    value_arguments(ctx, owner, node)
+}
+
 /// Lowers the constructor arguments of an enum entry ([KLS
 /// `declarations.html#enum-class-declaration`](https://kotlinlang.org/spec/declarations.html#enum-class-declaration)).
 pub(super) fn lower_enum_entry_arguments(
@@ -164,7 +214,7 @@ fn expression_body(node: &SyntaxNode<Lang>) -> Option<SyntaxNode<Lang>> {
 
 /// Whether a node kind is an expression, in the shapes the expression grammar
 /// produces ([spec: grammar-rule-expression]).
-fn is_expression(kind: K) -> bool {
+pub(super) fn is_expression(kind: K) -> bool {
     matches!(
         kind,
         K::PRIMARY_EXPRESSION
@@ -768,7 +818,7 @@ fn primary(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
 /// pattern the compiler gives that value. The unsigned *type* the compiler
 /// gives such a literal is not modelled — a recorded deviation, since the
 /// model has no `kotlin.UInt` classifier to name.
-fn literal(_ctx: &LowerCtx<'_>, token: &SyntaxToken<Lang>) -> ExprData {
+pub(super) fn literal(_ctx: &LowerCtx<'_>, token: &SyntaxToken<Lang>) -> ExprData {
     let text = token.text();
     match token.kind() {
         K::INTEGER_LITERAL => {

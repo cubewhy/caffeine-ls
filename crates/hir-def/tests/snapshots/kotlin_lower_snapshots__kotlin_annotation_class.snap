@@ -11,6 +11,6 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (kotlin)
 annotation class Ann @1..60
-  primary constructor(name: String, level: Int) @21..59
+  primary constructor(name: String, level: Int = e0) @21..59
   val name: String @22..38
   val level: Int @40..58

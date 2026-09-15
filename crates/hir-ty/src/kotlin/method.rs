@@ -187,7 +187,15 @@ fn members_of(
                         .params
                         .last()
                         .is_some_and(|param| param.param.varargs),
-                    defaults: function.defaults,
+                    // A call may omit the trailing arguments whose parameter
+                    // declares a default ([KLS
+                    // `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+                    defaults: function
+                        .defaults
+                        .iter()
+                        .rev()
+                        .take_while(|default| default.is_some())
+                        .count(),
                 });
             }
             KotlinItemData::Property(property) if member_name == Some(name) => {

@@ -11,6 +11,6 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (kotlin)
 class Point @1..56
-  primary constructor(x: Int, y: Int, label: String) @12..55
+  primary constructor(x: Int, y: Int = e0, label: String) @12..55
   val x: Int @13..23
   var y: Int @25..39

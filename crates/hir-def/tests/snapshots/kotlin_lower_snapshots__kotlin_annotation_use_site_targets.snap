@@ -1,0 +1,23 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+@get:JvmName("renamed")
+val z = 1
+
+class Holder {
+    @get:JvmName("value")
+    val item = 2
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+val z @1..36
+  @get:JvmName(value = Str("renamed"))
+class Holder @36..95
+  val item @55..94
+    @get:JvmName(value = Str("value"))

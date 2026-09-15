@@ -1,0 +1,26 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+interface I
+
+class Impl : I
+
+open class Base(val n: Int)
+
+class C : Base(1), I by Impl()
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+interface I @1..14
+class Impl @14..30
+  : I
+class Base open @30..59
+  primary constructor(n: Int) @45..57
+  val n: Int @46..56
+class C @59..90
+  : Base(e0), I

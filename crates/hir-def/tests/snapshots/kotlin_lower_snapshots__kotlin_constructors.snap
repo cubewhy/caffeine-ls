@@ -22,6 +22,6 @@ file (kotlin)
 class Server @1..206
   primary constructor(port: Int) private @14..48
   val port: Int @34..47
-  constructor(host: String) delegation @120..134 @55..164
-    @Deprecated(value = "use the other one")
+  constructor(host: String) : this(e0) delegation @120..134 @55..164
+    @Deprecated(value = Str("use the other one"))
   init @170..204

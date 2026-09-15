@@ -331,7 +331,7 @@ impl<'a> KotlinResolver<'a> {
         class
             .super_types
             .iter()
-            .map(|super_type| crate::kotlin::ty::ty_from_type_ref(self.db, self, &super_type.ty))
+            .map(|super_type| crate::kotlin::ty::ty_from_type_ref(self.db, self, &super_type.ty.ty))
             .collect()
     }
 

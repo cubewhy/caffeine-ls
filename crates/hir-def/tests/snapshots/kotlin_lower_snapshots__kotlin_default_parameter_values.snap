@@ -1,0 +1,33 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun greet(name: String = "world", count: Int = 1, loud: Boolean = false): String = name
+
+class Point(val x: Int = 0, val y: Int = 0)
+
+class Box {
+    val size: Int
+
+    constructor(size: Int = 1) {
+        this.size = size
+    }
+
+    constructor() : this(2)
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun greet(name: String = e0, count: Int = e1, loud: Boolean = e2): String @1..88
+class Point @90..135
+  primary constructor(x: Int = e4, y: Int = e5) @101..133
+  val x: Int @102..116
+  val y: Int @118..132
+class Box @135..260
+  val size: Int @151..166
+  constructor(size: Int = e6) @170..229
+  constructor() : this(e11) delegation @251..258 @235..259

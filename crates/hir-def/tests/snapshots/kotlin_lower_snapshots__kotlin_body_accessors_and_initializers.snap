@@ -43,7 +43,7 @@ class Holder @1..298
     set(value: <error>) @93..142
   val delegated: String by @148..187
   init @191..229
-  constructor(seed: Int) delegation @260..266 @235..296
+  constructor(seed: Int) : this() delegation @260..266 @235..296
 enum class Level @300..422
   entry LOW @323..379
     fun label(): String override @337..373

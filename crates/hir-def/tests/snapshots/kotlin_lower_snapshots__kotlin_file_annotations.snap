@@ -13,5 +13,5 @@ PARSE_ERRORS:
 <none>
 ITEM_TREE:
 file (kotlin) package com.example
-file annotation @1..24
-file annotation @24..50
+file annotation @file:JvmName(value = Str("FooKt")) @1..24
+file annotation @file:Suppress(value = Str("UNUSED")) @24..50

@@ -44,8 +44,9 @@ SYNTAX_TREE:
 ROOT@0..79
   FILE_ANNOTATION@0..25
     AT@0..1 "@"
-    IDENTIFIER@1..5 "file"
-    COLON@5..6 ":"
+    ANNOTATION_USE_SITE_TARGET@1..6
+      IDENTIFIER@1..5 "file"
+      COLON@5..6 ":"
     USER_TYPE@6..14
       IDENTIFIER@6..14 "Suppress"
     VALUE_ARGUMENTS@14..24
@@ -59,8 +60,9 @@ ROOT@0..79
     NEWLINE@24..25 "\n"
   FILE_ANNOTATION@25..59
     AT@25..26 "@"
-    IDENTIFIER@26..30 "file"
-    COLON@30..31 ":"
+    ANNOTATION_USE_SITE_TARGET@26..31
+      IDENTIFIER@26..30 "file"
+      COLON@30..31 ":"
     L_BRACKET@31..32 "["
     USER_TYPE@32..49
       IDENTIFIER@32..49 "JvmMultifileClass"

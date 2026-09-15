@@ -668,3 +668,114 @@ inline fun hoist(noinline body: () -> Unit, crossinline view: () -> Unit) {
 fun spread(vararg values: String) {}
 "#,
 }
+
+// -- default values, delegation arguments and annotation payloads ------------
+//
+// Every fixture below compiles clean with kotlinc 2.4.20 (JRE 21.0.11) under
+// the JDK at /home/cubewhy/.jdks/temurin-21.0.11:
+//
+//     JAVA_HOME=/home/cubewhy/.jdks/temurin-21.0.11 kotlinc -d out *.kt
+//
+// — exit status 0, no diagnostics — so the shapes the snapshots pin are the
+// ones the compiler accepts.
+
+lower_snapshot_lang! {
+    kotlin_default_parameter_values,
+    LanguageKind::Kotlin,
+    r#"
+fun greet(name: String = "world", count: Int = 1, loud: Boolean = false): String = name
+
+class Point(val x: Int = 0, val y: Int = 0)
+
+class Box {
+    val size: Int
+
+    constructor(size: Int = 1) {
+        this.size = size
+    }
+
+    constructor() : this(2)
+}
+"#,
+}
+
+lower_snapshot_lang! {
+    kotlin_supertype_calls_and_delegation,
+    LanguageKind::Kotlin,
+    r#"
+interface I
+
+class Impl : I
+
+open class Base(val n: Int)
+
+class C : Base(1), I by Impl()
+"#,
+}
+
+lower_snapshot_lang! {
+    kotlin_constructor_delegation_arguments,
+    LanguageKind::Kotlin,
+    r#"
+open class Base2(val n: Int)
+
+class Derived2 : Base2 {
+    constructor(n: Int) : super(n)
+
+    constructor() : this(0)
+}
+"#,
+}
+
+lower_snapshot_lang! {
+    kotlin_file_annotation_payloads,
+    LanguageKind::Kotlin,
+    r#"
+@file:JvmName("Renamed")
+@file:Suppress("UNUSED")
+
+package a.b
+
+class Uses
+"#,
+}
+
+lower_snapshot_lang! {
+    kotlin_annotation_use_site_targets,
+    LanguageKind::Kotlin,
+    r#"
+@get:JvmName("renamed")
+val z = 1
+
+class Holder {
+    @get:JvmName("value")
+    val item = 2
+}
+"#,
+}
+
+lower_snapshot_lang! {
+    kotlin_annotation_element_values,
+    LanguageKind::Kotlin,
+    r#"
+enum class EventPriority { FIRST, THIRD }
+
+annotation class EventTarget(val priority: EventPriority)
+
+annotation class Inner(val s: String)
+
+annotation class Full(
+    val klass: kotlin.reflect.KClass<*>,
+    val array: IntArray,
+    val nested: Inner,
+    val constant: EventPriority,
+    val named: String,
+)
+
+class Foo
+
+@EventTarget(EventPriority.THIRD)
+@Full(Foo::class, [1, 2], Inner("x"), EventPriority.FIRST, named = "n")
+class Annotated
+"#,
+}

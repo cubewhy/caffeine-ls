@@ -1,0 +1,20 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+@file:JvmName("Renamed")
+@file:Suppress("UNUSED")
+
+package a.b
+
+class Uses
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin) package a.b
+file annotation @file:JvmName(value = Str("Renamed")) @1..26
+file annotation @file:Suppress(value = Str("UNUSED")) @26..52
+class Uses @65..76

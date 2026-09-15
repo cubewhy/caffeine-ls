@@ -13,13 +13,14 @@ use syntax::stub::{TypeBound, TypeRef};
 
 use hir_expand::{
     ast_id_map::AstIdMap,
-    body::{BodyTree, ExprData, LocalId, StmtData, StmtId, WhenCondition},
+    body::{BodyTree, ExprData, ExprId, LocalId, StmtData, StmtId, WhenCondition},
     name::Name,
 };
 
 use super::item_tree::{
     ConstructorData, ItemAnnotationArg, ItemAnnotationRef, ItemAnnotationValue, ItemId,
-    ItemTypeRef, KotlinItemData, KotlinItemTree, KotlinParam, KotlinTypeParam, TypeAliasData,
+    ItemTypeRef, KotlinAnnotationRef, KotlinItemData, KotlinItemTree, KotlinParam, KotlinSuperType,
+    KotlinTypeParam, TypeAliasData,
 };
 use crate::item_tree::language_name;
 use crate::kotlin::modifiers::KotlinModifiers;
@@ -36,10 +37,13 @@ pub fn pretty_print(tree: &KotlinItemTree, map: &AstIdMap, source: &SourceFile) 
     }
     out.push('\n');
 
-    for &annotation in &tree.file_annotations {
+    for annotation in &tree.file_annotations {
         out.push_str(&format!(
             "file annotation {}\n",
-            fmt_range(node_range(map, source, annotation))
+            render_annotation(
+                annotation,
+                node_range(map, source, annotation.annotation.node)
+            )
         ));
     }
 
@@ -159,7 +163,7 @@ fn render_item(
             if !data.super_types.is_empty() {
                 out.push_str(&format!(
                     "{indent}  : {}\n",
-                    render_join(data.super_types.iter().map(render_item_type))
+                    render_join(data.super_types.iter().map(render_super_type))
                 ));
             }
             if let Some(constructor) = data.primary_constructor {
@@ -172,7 +176,7 @@ fn render_item(
                 };
                 out.push_str(&format!(
                     "{indent}  primary constructor{}{}\n",
-                    render_params(&data.params),
+                    render_params_with_defaults(&data.params, Some(&data.defaults)),
                     suffix(
                         data.modifiers.names(),
                         item_range(tree, map, source, constructor)
@@ -192,7 +196,7 @@ fn render_item(
                 "{indent}fun {}{}{}{}{}\n",
                 render_type_params_spaced(&data.type_params),
                 render_receiver(&data.receiver, &data.name),
-                render_params(&data.params),
+                render_params_with_defaults(&data.params, Some(&data.defaults)),
                 render_ret(&data.ret),
                 suffix(data.modifiers.names(), range),
             ));
@@ -262,16 +266,23 @@ fn render_constructor(
     data: &ConstructorData,
     range: Option<TextRange>,
 ) {
-    let delegation = match data.delegation {
+    let delegation = match &data.delegation {
         Some(delegation) => format!(
-            " delegation {}",
-            fmt_range(node_range(map, source, delegation))
+            " : {}({}) delegation {}",
+            if delegation.is_super { "super" } else { "this" },
+            delegation
+                .args
+                .iter()
+                .map(|arg| arg.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            fmt_range(node_range(map, source, delegation.ast))
         ),
         None => String::new(),
     };
     out.push_str(&format!(
         "{indent}constructor{}{delegation}{}\n",
-        render_params(&data.params),
+        render_params_with_defaults(&data.params, Some(&data.defaults)),
         suffix(data.modifiers.names(), range),
     ));
     render_annotations(out, indent, &data.annotations);
@@ -293,14 +304,56 @@ fn render_type_alias(
     render_annotations(out, indent, &data.annotations);
 }
 
-fn render_annotations(out: &mut String, indent: &str, annotations: &[ItemAnnotationRef]) {
+fn render_annotations(out: &mut String, indent: &str, annotations: &[KotlinAnnotationRef]) {
     for annotation in annotations {
         out.push_str(&format!(
-            "{indent}  @{}{}\n",
-            annotation.name,
-            render_args(&annotation.args)
+            "{indent}  {}\n",
+            render_annotation(annotation, None)
         ));
     }
+}
+
+/// One annotation application: its use-site target (`@get:`, `@file:`), the
+/// annotation's name, its element values and — where the caller resolves one —
+/// its source range.
+fn render_annotation(annotation: &KotlinAnnotationRef, range: Option<TextRange>) -> String {
+    let mut out = format!(
+        "@{}{}{}",
+        annotation
+            .target
+            .as_ref()
+            .map(|target| format!("{target}:"))
+            .unwrap_or_default(),
+        annotation.annotation.name,
+        render_args(&annotation.annotation.args)
+    );
+    if let Some(range) = range {
+        out.push(' ');
+        out.push_str(&fmt_range(Some(range)));
+    }
+    out
+}
+
+/// One supertype specifier: the type, the constructor arguments of
+/// `class C : Base(1)` when it writes a call, and the delegate of
+/// `interface I by impl` when it writes one.
+fn render_super_type(super_type: &KotlinSuperType) -> String {
+    let mut out = render_item_type(&super_type.ty);
+    if !super_type.args.is_empty() {
+        out.push_str(&format!(
+            "({})",
+            super_type
+                .args
+                .iter()
+                .map(|arg| arg.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(delegate) = super_type.delegate {
+        out.push_str(&format!(" by {delegate}"));
+    }
+    out
 }
 
 fn render_args(args: &[ItemAnnotationArg]) -> String {
@@ -354,12 +407,26 @@ fn render_ret(ret: &Option<ItemTypeRef>) -> String {
 }
 
 fn render_params(params: &[KotlinParam]) -> String {
+    render_params_with_defaults(params, None)
+}
+
+/// The parameters of a declaration with the `= n` of every default it declares
+/// ([KLS
+/// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)):
+/// `defaults` is aligned with `params`, one entry per parameter.
+fn render_params_with_defaults(
+    params: &[KotlinParam],
+    defaults: Option<&[Option<ExprId>]>,
+) -> String {
+    let defaults = defaults
+        .map(|defaults| defaults.to_vec())
+        .unwrap_or_else(|| vec![None; params.len()]);
     format!(
         "({})",
-        render_join(params.iter().map(|parameter| {
+        render_join(params.iter().zip(defaults).map(|(parameter, default)| {
             let param = &parameter.param;
             format!(
-                "{}{}{}{}{}: {}",
+                "{}{}{}{}{}: {}{}",
                 if param.varargs { "vararg " } else { "" },
                 if parameter.noinline { "noinline " } else { "" },
                 if parameter.crossinline {
@@ -369,7 +436,10 @@ fn render_params(params: &[KotlinParam]) -> String {
                 },
                 render_prefix_annotations(&param.annotations),
                 param.name,
-                render_item_type(&param.ty)
+                render_item_type(&param.ty),
+                default
+                    .map(|default| format!(" = {default}"))
+                    .unwrap_or_default()
             )
         }))
     )
@@ -406,7 +476,13 @@ fn render_type_params(params: &[KotlinTypeParam]) -> String {
             if param.reified {
                 text.push_str("reified ");
             }
-            text.push_str(&render_prefix_annotations(&param.annotations));
+            text.push_str(&render_prefix_annotations(
+                &param
+                    .annotations
+                    .iter()
+                    .map(|annotation| annotation.annotation.clone())
+                    .collect::<Vec<_>>(),
+            ));
             text.push_str(param.name.as_str());
             for bound in &param.bounds {
                 text.push_str(&format!(" : {}", render_item_type(bound)));

@@ -21,13 +21,13 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (kotlin)
 class Annotated @1..221
-  @Deprecated(value = "use Other")
-  @Suppress(value = "UNUSED", value = "UNCHECKED_CAST")
+  @Deprecated(value = Str("use Other"))
+  @Suppress(value = Str("UNUSED"), value = Str("UNCHECKED_CAST"))
   primary constructor(name: String) @80..131
-    @Deprecated(value = "inject")
+    @Deprecated(value = Str("inject"))
   val name: String @114..130
   fun f() @138..171
-    @Deprecated(value = "old")
+    @Deprecated(value = Str("old"))
   val x: Int @177..220
-    @JvmName(value = "renamed")
+    @get:JvmName(value = Str("renamed"))
 annotation class Marker @223..247

@@ -1,0 +1,25 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+open class Base2(val n: Int)
+
+class Derived2 : Base2 {
+    constructor(n: Int) : super(n)
+
+    constructor() : this(0)
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Base2 open @1..31
+  primary constructor(n: Int) @17..29
+  val n: Int @18..28
+class Derived2 @31..121
+  : Base2
+  constructor(n: Int) : super(e0) delegation @82..90 @60..92
+  constructor() : this(e1) delegation @112..119 @96..120

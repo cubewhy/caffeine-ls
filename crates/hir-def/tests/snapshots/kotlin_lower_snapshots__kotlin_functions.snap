@@ -18,5 +18,5 @@ ITEM_TREE:
 file (kotlin)
 fun top(): Int @1..19
 fun <T> List<T>.firstOrNull(predicate: Function1<T, Boolean>): T? internal suspend @21..103
-fun varargFunction(vararg names: String, count: Int): String @105..184
+fun varargFunction(vararg names: String, count: Int = e2): String @105..184
 fun Int.shift(amount: Int): Int infix @186..239

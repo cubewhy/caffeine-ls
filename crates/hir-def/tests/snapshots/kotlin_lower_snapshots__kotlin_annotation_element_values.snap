@@ -1,0 +1,50 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+enum class EventPriority { FIRST, THIRD }
+
+annotation class EventTarget(val priority: EventPriority)
+
+annotation class Inner(val s: String)
+
+annotation class Full(
+    val klass: kotlin.reflect.KClass<*>,
+    val array: IntArray,
+    val nested: Inner,
+    val constant: EventPriority,
+    val named: String,
+)
+
+class Foo
+
+@EventTarget(EventPriority.THIRD)
+@Full(Foo::class, [1, 2], Inner("x"), EventPriority.FIRST, named = "n")
+class Annotated
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+enum class EventPriority @1..42
+  entry FIRST @28..33
+  entry THIRD @35..40
+annotation class EventTarget @44..103
+  primary constructor(priority: EventPriority) @72..101
+  val priority: EventPriority @73..100
+annotation class Inner @103..142
+  primary constructor(s: String) @125..140
+  val s: String @126..139
+annotation class Full @142..313
+  primary constructor(klass: kotlin.reflect.KClass<*>, array: IntArray, nested: Inner, constant: EventPriority, named: String) @163..311
+  val klass: kotlin.reflect.KClass<*> @169..204
+  val array: IntArray @210..229
+  val nested: Inner @235..252
+  val constant: EventPriority @258..285
+  val named: String @291..308
+class Foo @313..324
+class Annotated @324..446
+  @EventTarget(value = EventPriority.THIRD)
+  @Full(value = Foo::class, value = [Int(1), Int(2)], value = @Inner(value = Str("x")), value = EventPriority.FIRST, named = Str("n"))

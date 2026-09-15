@@ -25,8 +25,9 @@ SYNTAX_TREE:
 ROOT@0..23
   FILE_ANNOTATION@0..23
     AT@0..1 "@"
-    IDENTIFIER@1..5 "file"
-    COLON@5..6 ":"
+    ANNOTATION_USE_SITE_TARGET@1..6
+      IDENTIFIER@1..5 "file"
+      COLON@5..6 ":"
     USER_TYPE@6..13
       IDENTIFIER@6..13 "JvmName"
     VALUE_ARGUMENTS@13..22

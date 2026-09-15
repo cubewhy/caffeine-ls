@@ -69,12 +69,19 @@ fn at_file_annotation(p: &Parser) -> bool {
 /// `fileAnnotation`: ('@' 'file' ':' {NL} (('[' unescapedAnnotation
 ///                    {unescapedAnnotation} ']') | unescapedAnnotation)) {NL}
 /// [spec: grammar-rule-fileAnnotation] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-fileAnnotation
+///
+/// The `file` target is wrapped in an `ANNOTATION_USE_SITE_TARGET` exactly as
+/// the target of a declaration annotation is ([`annotations::annotation`]), so
+/// the two carry the same shape — the lowering reads the target from one place
+/// ([`crate::kotlin::lower::walk`]).
 fn file_annotation(p: &mut Parser) {
     let m = p.start();
     p.expect(AT);
+    let target = p.start();
     p.expect_contextual_kw(ContextualKeyword::File);
     p.expect(COLON);
     eat_nl(p);
+    target.complete(p, ANNOTATION_USE_SITE_TARGET);
 
     if p.at(L_BRACKET) {
         p.bump();

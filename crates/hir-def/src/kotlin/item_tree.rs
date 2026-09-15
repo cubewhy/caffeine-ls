@@ -69,6 +69,48 @@ pub struct KotlinParam {
     pub crossinline: bool,
 }
 
+/// An annotation application of a Kotlin declaration ([KLS
+/// `annotations.html#annotation-use-site-targets`](https://kotlinlang.org/spec/annotations.html#annotation-use-site-targets)):
+/// the shared, language-neutral [`ItemAnnotationRef`] — name, element values,
+/// syntax node — plus the *use-site target* Kotlin alone writes, the `get` of
+/// `@get:JvmName`, the `field` of `@field:JvmField`, the `file` of
+/// `@file:JvmName`.
+///
+/// A parameter's and a type-use annotation never write a target, so those two
+/// keep the shared shape ([`Param::annotations`],
+/// [`ItemTypeRef::type_use_annotations`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct KotlinAnnotationRef {
+    /// The target of `@get:JvmName("x")`, if the application writes one.
+    pub target: Option<Name>,
+    pub annotation: ItemAnnotationRef,
+}
+
+/// A supertype specifier ([KLS
+/// `declarations.html#supertype-specifiers`](https://kotlinlang.org/spec/declarations.html#supertype-specifiers)):
+/// the supertype, plus the two things its syntax node carries besides the type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KotlinSuperType {
+    pub ty: ItemTypeRef,
+    /// The constructor arguments of `class C : Base(1, 2)`, in source order.
+    /// Empty for a specifier without a call.
+    pub args: Vec<ExprId>,
+    /// The delegate expression of `interface I by impl`, if written.
+    pub delegate: Option<ExprId>,
+}
+
+/// The `: this(…)` / `: super(…)` call of a secondary constructor ([KLS
+/// `declarations.html#secondary-constructor`](https://kotlinlang.org/spec/declarations.html#secondary-constructor)).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstructorDelegation {
+    /// Whether the call delegates to the superclass (`super(…)`) rather than
+    /// to another constructor of the same class (`this(…)`).
+    pub is_super: bool,
+    /// The argument expressions, in source order.
+    pub args: Vec<ExprId>,
+    pub ast: FileAstId<ConstructorDelegationCallNode>,
+}
+
 use crate::kotlin::modifiers::{KotlinModifiers, KotlinVariance};
 
 /// The syntax-node markers of the [`FileAstId`]s stored in the Kotlin item
@@ -122,8 +164,9 @@ pub struct KotlinItemTree {
     pub package: Option<Name>,
     /// The `PACKAGE_HEADER` syntax node, when the file declares a package.
     pub package_header: Option<FileAstId<PackageHeaderNode>>,
-    /// The file-level annotations (`@file:JvmName("…")`), in source order.
-    pub file_annotations: Vec<FileAstId<FileAnnotationNode>>,
+    /// The file-level annotations (`@file:JvmName("…")`), in source order,
+    /// each with its `file` use-site target and its lowered element values.
+    pub file_annotations: Vec<KotlinAnnotationRef>,
     pub imports: Vec<KotlinImportItem>,
     pub top: Vec<ItemId>,
     /// The local declarations of the file — a local class or local function
@@ -311,16 +354,16 @@ pub struct ClassData {
     pub name: Name,
     pub kind: KotlinClassKind,
     pub modifiers: KotlinModifiers,
-    pub annotations: Vec<ItemAnnotationRef>,
+    pub annotations: Vec<KotlinAnnotationRef>,
     /// The declared type parameters, with their variance ([KLS
     /// `declarations.html#type-parameter-variance`](https://kotlinlang.org/spec/declarations.html#type-parameter-variance)).
     pub type_params: Vec<KotlinTypeParam>,
     /// The supertypes of the delegation specifier list ([KLS
     /// `declarations.html#supertype-specifiers`](https://kotlinlang.org/spec/declarations.html#supertype-specifiers)),
-    /// in source order. A classifier with none is a subtype of
-    /// `kotlin.Any`; that implicit supertype is *not* recorded here (the type
-    /// layer adds it).
-    pub super_types: Vec<ItemTypeRef>,
+    /// in source order, each with its constructor arguments and its delegate
+    /// expression. A classifier with none is a subtype of `kotlin.Any`; that
+    /// implicit supertype is *not* recorded here (the type layer adds it).
+    pub super_types: Vec<KotlinSuperType>,
     /// The declared primary constructor ([KLS
     /// `declarations.html#primary-constructor`](https://kotlinlang.org/spec/declarations.html#primary-constructor)),
     /// if the classifier header has a parameter list. A classifier that
@@ -343,11 +386,15 @@ pub struct ClassData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstructorData {
     pub params: Vec<KotlinParam>,
+    /// One entry per parameter, in parameter order: the lowered `= expr` a
+    /// parameter declares, or `None` ([KLS
+    /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+    pub defaults: Vec<Option<ExprId>>,
     pub modifiers: KotlinModifiers,
-    pub annotations: Vec<ItemAnnotationRef>,
+    pub annotations: Vec<KotlinAnnotationRef>,
     /// The `CONSTRUCTOR_DELEGATION_CALL` of a secondary constructor
-    /// (`: this(…)` / `: super(…)`), if it declares one.
-    pub delegation: Option<FileAstId<ConstructorDelegationCallNode>>,
+    /// (`: this(…)` / `: super(…)`), if it declares one, with its arguments.
+    pub delegation: Option<ConstructorDelegation>,
     /// The lowered body of a secondary constructor ([KLS
     /// `declarations.html#secondary-constructor`](https://kotlinlang.org/spec/declarations.html#secondary-constructor)):
     /// a `BLOCK`, an expression body, or nothing. Always `None` for a primary
@@ -364,17 +411,17 @@ pub struct ConstructorData {
 pub struct FunctionData {
     pub name: Name,
     pub modifiers: KotlinModifiers,
-    pub annotations: Vec<ItemAnnotationRef>,
+    pub annotations: Vec<KotlinAnnotationRef>,
     pub type_params: Vec<KotlinTypeParam>,
     /// The extension receiver type (`fun String.toURI(): URI`), if the
     /// declaration is an extension.
     pub receiver: Option<ItemTypeRef>,
     pub params: Vec<KotlinParam>,
-    /// The number of parameters, counted from the end of [`Self::params`],
-    /// that declare a default value ([KLS
-    /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)):
-    /// a call may omit that many trailing arguments.
-    pub defaults: usize,
+    /// One entry per parameter, in parameter order: the lowered `= expr` a
+    /// parameter declares, or `None` ([KLS
+    /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+    /// A call may omit every argument whose parameter has a default.
+    pub defaults: Vec<Option<ExprId>>,
     /// The declared return type, if the declaration writes one (`fun f(): Int`
     /// or `fun f() = expr`). A block-bodied function without one returns
     /// `Unit` ([KLS
@@ -398,7 +445,7 @@ pub struct AccessorData {
     /// parameter, which the type layer synthesizes.
     pub is_setter: bool,
     pub modifiers: KotlinModifiers,
-    pub annotations: Vec<ItemAnnotationRef>,
+    pub annotations: Vec<KotlinAnnotationRef>,
     pub params: Vec<KotlinParam>,
     /// The lowered body: the block, the expression body (`get() = …`), or
     /// nothing for a declaration without one.
@@ -415,7 +462,7 @@ pub struct AccessorData {
 pub struct PropertyData {
     pub name: Name,
     pub modifiers: KotlinModifiers,
-    pub annotations: Vec<ItemAnnotationRef>,
+    pub annotations: Vec<KotlinAnnotationRef>,
     pub type_params: Vec<KotlinTypeParam>,
     /// The extension receiver type (`val Response.string: String`), if the
     /// declaration is an extension property.
@@ -457,7 +504,7 @@ pub struct InitData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumEntryData {
     pub name: Name,
-    pub annotations: Vec<ItemAnnotationRef>,
+    pub annotations: Vec<KotlinAnnotationRef>,
     /// The lowered constructor arguments, in source order. Empty for an entry
     /// without an argument list.
     pub argument_exprs: Vec<ExprId>,
@@ -475,7 +522,7 @@ pub struct EnumEntryData {
 pub struct TypeAliasData {
     pub name: Name,
     pub modifiers: KotlinModifiers,
-    pub annotations: Vec<ItemAnnotationRef>,
+    pub annotations: Vec<KotlinAnnotationRef>,
     pub type_params: Vec<KotlinTypeParam>,
     /// The aliased type.
     pub target: ItemTypeRef,
@@ -504,7 +551,7 @@ pub struct KotlinTypeParam {
     /// and several with `where`; a type parameter with none is bounded by
     /// `kotlin.Any?`, which the type layer adds.
     pub bounds: Vec<ItemTypeRef>,
-    pub annotations: Vec<ItemAnnotationRef>,
+    pub annotations: Vec<KotlinAnnotationRef>,
 }
 
 /// The kind of a lowered item, as the classifier kinds name it.
