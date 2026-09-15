@@ -911,3 +911,28 @@ fun loop(xs: List<Int>) {
         "`c`, the second `e`, the parameter `p` and the loop variable `x` are the writes a `val` refuses: {rendered}"
     );
 }
+
+/// A parameter-less lambda takes its parameter from the *expected* function
+/// type, and `it` is that parameter ([KLS
+/// `type-inference.html#function-literals`](https://kotlinlang.org/spec/type-inference.html#function-literals)):
+/// `runWith { it + 1 }` for a `runWith(f: (Int) -> Int)` infers `it` as `Int` —
+/// kotlinc 2.4.20 compiles this fixture clean (exit status 0, no diagnostics),
+/// including the *nested* lambda whose `it` shadows the outer one.
+#[test]
+fn a_lambda_parameter_comes_from_the_expected_function_type() {
+    let source = r#"
+fun runWith(f: (Int) -> Int): Int = f(1)
+
+fun twice(f: (Int) -> Int): Int = f(f(1))
+
+fun use(): Int = runWith { it + 1 }
+
+fun nested(): Int = runWith { twice { it + 1 } + it }
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Use.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        !rendered.contains("kotlin.unresolved-reference"),
+        "`it` is bound to the function type's parameter: {rendered}"
+    );
+}

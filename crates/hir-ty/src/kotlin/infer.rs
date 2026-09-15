@@ -142,6 +142,7 @@ pub fn infer_item(
         // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)).
         narrowed: FxHashMap::default(),
         assigned: rustc_hash::FxHashSet::default(),
+        implicit_its: Vec::new(),
     };
     for &param in &bodies.body(body).params {
         // A parameter always carries a value: it is a `val`, and the only
@@ -180,6 +181,10 @@ struct InferCtx<'a> {
     /// ([KLS
     /// `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)).
     assigned: rustc_hash::FxHashSet<LocalId>,
+    /// The `it` of the parameter-less lambdas whose bodies are being inferred,
+    /// innermost last ([KLS
+    /// `expressions.html#lambda-literals`](https://kotlinlang.org/spec/expressions.html#lambda-literals)).
+    implicit_its: Vec<Ty>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -423,6 +428,20 @@ impl<'a> InferCtx<'a> {
                 args,
                 ..
             } => {
+                // A lambda literal that declares no parameters takes them from
+                // the *expected* function type ([KLS
+                // `type-inference.html#function-literals`](https://kotlinlang.org/spec/type-inference.html#function-literals),
+                // and its `it` is that type's single parameter). The candidate
+                // is therefore selected *before* the lambda is inferred — the
+                // lambda's own type is unknown until then — and the lambda's
+                // body is inferred against the parameter type the candidate
+                // declares.
+                if let Some(index) = args
+                    .iter()
+                    .position(|arg| matches!(self.bodies.expr(*arg), ExprData::Lambda { params, .. } if params.is_empty()))
+                {
+                    return self.call_with_expected_lambda(expr, receiver.as_ref(), &name, &args, index);
+                }
                 let arg_types: Vec<Ty> = args.iter().map(|arg| self.infer_expr(*arg)).collect();
                 match receiver {
                     Some(receiver) => {
@@ -730,6 +749,15 @@ impl<'a> InferCtx<'a> {
     /// A name: a local (or a parameter), else a member of the implicit
     /// receiver, else an unresolved reference.
     fn infer_name(&mut self, expr: ExprId, name: &Name) -> Ty {
+        // The implicit parameter of a parameter-less lambda
+        // ([KLS `expressions.html#lambda-literals`](https://kotlinlang.org/spec/expressions.html#lambda-literals)):
+        // `it` is the enclosing lambda's single parameter, bound while its body
+        // is inferred.
+        if name.as_str() == "it"
+            && let Some(ty) = self.implicit_its.last().copied()
+        {
+            return ty;
+        }
         if let Some((local, ty)) = self
             .types
             .locals
@@ -872,6 +900,195 @@ impl<'a> InferCtx<'a> {
             }
             None => self.error(),
         }
+    }
+
+    /// A call with a *parameter-less lambda* argument: the candidate is
+    /// selected from the written arguments alone — the lambda's type *is* the
+    /// candidate's parameter at its index, which is why the lambda is inferred
+    /// second — and the lambda's `it` is that function type's first parameter
+    /// type.
+    fn call_with_expected_lambda(
+        &mut self,
+        expr: ExprId,
+        receiver: Option<&ExprId>,
+        name: &Name,
+        args: &[ExprId],
+        index: usize,
+    ) -> Ty {
+        // Every argument but the lambda; the lambda's own type is the error
+        // type here, which is applicable to whatever parameter the candidate
+        // declares ([`crate::kotlin::subtyping`] absorbs it).
+        let arg_types: Vec<Ty> = args
+            .iter()
+            .enumerate()
+            .map(|(position, arg)| {
+                if position == index {
+                    self.error()
+                } else {
+                    self.infer_expr(*arg)
+                }
+            })
+            .collect();
+        let call_args: Vec<CallArg<'_>> = arg_types
+            .iter()
+            .map(|ty| CallArg {
+                name: None,
+                ty: *ty,
+            })
+            .collect();
+        let candidate = match receiver {
+            Some(receiver) => {
+                let receiver_ty = self.infer_expr(*receiver);
+                method::pick_callable(
+                    self.db,
+                    &self.scope,
+                    &receiver_ty,
+                    name,
+                    &call_args,
+                    self.site(),
+                )
+            }
+            // An unqualified call: a member of an enclosing classifier, a
+            // top-level declaration of this file, then the ones an import
+            // names — and only then the *class* the name denotes, whose
+            // candidate set is its constructors (`Foo { … }`), because one name
+            // may declare a function and a class at once.
+            None => {
+                let mut candidate = None;
+                for receiver_ty in self.implicit_receivers() {
+                    if let Some(member) = method::pick_callable(
+                        self.db,
+                        &self.scope,
+                        &receiver_ty,
+                        name,
+                        &call_args,
+                        self.site(),
+                    ) {
+                        candidate = Some(member);
+                        break;
+                    }
+                }
+                candidate
+                    .or_else(|| {
+                        method::top_level_callable(
+                            self.db,
+                            &self.scope,
+                            self.file,
+                            name,
+                            &call_args,
+                        )
+                    })
+                    .or_else(|| {
+                        let class = self.class_receiver(name)?;
+                        method::pick_callable(
+                            self.db,
+                            &self.scope,
+                            &class,
+                            name,
+                            &call_args,
+                            self.site(),
+                        )
+                    })
+                    .or_else(|| {
+                        let (file, item) = self.resolver.source_declaration(name)?;
+                        method::declaration_callable(
+                            self.db,
+                            &self.scope,
+                            file,
+                            item,
+                            name,
+                            &call_args,
+                        )
+                    })
+            }
+        };
+        let it_ty = candidate
+            .as_ref()
+            .and_then(|member| member.params.get(index).copied())
+            .and_then(|param| self.function_parameter_ty(&param, 0));
+        if let Some(it_ty) = it_ty {
+            self.implicit_its.push(it_ty);
+        }
+        self.infer_expr(args[index]);
+        if it_ty.is_some() {
+            self.implicit_its.pop();
+        }
+        match candidate {
+            Some(member) => {
+                let ty = member.ty(self.db);
+                self.record_member(expr, &member);
+                ty
+            }
+            None => self.error(),
+        }
+    }
+
+    /// [`Self::call_with_expected_lambda`] for a *constructor* call: the
+    /// candidate set is the class's constructors.
+    fn constructor_with_lambda(
+        &mut self,
+        expr: ExprId,
+        class: &Ty,
+        name: &Name,
+        args: &[ExprId],
+        index: usize,
+    ) -> Ty {
+        let arg_types: Vec<Ty> = args
+            .iter()
+            .enumerate()
+            .map(|(position, arg)| {
+                if position == index {
+                    self.error()
+                } else {
+                    self.infer_expr(*arg)
+                }
+            })
+            .collect();
+        let call_args: Vec<CallArg<'_>> = arg_types
+            .iter()
+            .map(|ty| CallArg {
+                name: None,
+                ty: *ty,
+            })
+            .collect();
+        let candidate =
+            method::pick_callable(self.db, &self.scope, class, name, &call_args, self.site());
+        let it_ty = candidate
+            .as_ref()
+            .and_then(|member| member.params.get(index).copied())
+            .and_then(|param| self.function_parameter_ty(&param, 0));
+        if let Some(it_ty) = it_ty {
+            self.implicit_its.push(it_ty);
+        }
+        self.infer_expr(args[index]);
+        if it_ty.is_some() {
+            self.implicit_its.pop();
+        }
+        if let Some(member) = candidate {
+            self.record_member(expr, &member);
+        }
+        class.clone()
+    }
+
+    /// The type of the `index`th *parameter* of a function type: the classifier
+    /// `kotlin.FunctionN` carries its parameters followed by its return type
+    /// ([KLS
+    /// `type-system.html#function-types`](https://kotlinlang.org/spec/type-system.html#function-types)).
+    /// A platform type is unwrapped — a Java function type is the Kotlin one.
+    fn function_parameter_ty(&self, ty: &Ty, index: usize) -> Option<Ty> {
+        let ty = match ty.kind(self.db) {
+            TyKind::Flexible { lower, .. } => *lower,
+            _ => *ty,
+        };
+        let TyKind::Reference { name, args, .. } = ty.kind(self.db) else {
+            return None;
+        };
+        let text = name.as_str();
+        let arity = text.strip_prefix("kotlin.Function")?;
+        if arity.parse::<usize>().is_err() {
+            return None;
+        }
+        args.get(index).copied()
     }
 
     /// The type of a call written *without* a receiver ([KLS
