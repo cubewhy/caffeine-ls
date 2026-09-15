@@ -1,0 +1,19 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+inline fun hoist(noinline body: () -> Unit, crossinline view: () -> Unit) {
+    body()
+    view()
+}
+
+fun spread(vararg values: String) {}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun hoist(noinline body: Function0<Unit>, crossinline view: Function0<Unit>) inline @1..100
+fun spread(vararg values: String) @102..138

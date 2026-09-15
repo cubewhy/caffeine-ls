@@ -1,0 +1,37 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun scan(entries: Map<Int, String>) {
+    for ((key, value) in entries) {
+        println(key)
+        println(value)
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun scan(entries: Map<Int, String>) @1..126
+
+BODIES:
+fun scan body b0:
+  param l0: entries: Map<Int, String>
+  s3: for l1 pattern p0 in e6
+    s2: block
+      s0: expr e2
+      s1: expr e5
+  local l0: entries: Map<Int, String>
+  local l1: key
+  local l2: value
+  expr e0: var println 
+  expr e1: var key 
+  expr e2: call println [e1]
+  expr e3: var println 
+  expr e4: var value 
+  expr e5: call println [e4]
+  expr e6: var entries 
+  pattern p0: Destructuring { parts: [LocalId(ArenaId(1)), LocalId(ArenaId(2))] }

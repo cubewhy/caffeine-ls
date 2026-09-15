@@ -47,6 +47,28 @@ pub use crate::java::item_tree::{
     TypeNode,
 };
 
+/// A formal parameter of a Kotlin declaration: the shared, language-neutral
+/// [`Param`] shape plus the two parameter modifiers Kotlin has and Java does
+/// not ([spec: grammar-rule-parameterModifiers], [KLS
+/// `declarations.html#function-declaration`](https://kotlinlang.org/spec/declarations.html#function-declaration)).
+///
+/// `noinline` marks a function-typed parameter of an `inline` function as
+/// never inlined, `crossinline` as inlinable only where it cannot return
+/// non-locally; neither changes the parameter's JVM shape, and neither
+/// participates in overload resolution, so the type layer reads the shared
+/// [`Param`] and ignores them. They are carried because the declaration IR
+/// must not drop what the source wrote — the wrapper exists because [`Param`]
+/// is shared with Java and a Kotlin-only attribute belongs on a Kotlin-only
+/// shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KotlinParam {
+    pub param: Param,
+    /// Whether the parameter carries `noinline`.
+    pub noinline: bool,
+    /// Whether the parameter carries `crossinline`.
+    pub crossinline: bool,
+}
+
 use crate::kotlin::modifiers::{KotlinModifiers, KotlinVariance};
 
 /// The syntax-node markers of the [`FileAstId`]s stored in the Kotlin item
@@ -320,7 +342,7 @@ pub struct ClassData {
 /// or a secondary `constructor(…)` in the class body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstructorData {
-    pub params: Vec<Param>,
+    pub params: Vec<KotlinParam>,
     pub modifiers: KotlinModifiers,
     pub annotations: Vec<ItemAnnotationRef>,
     /// The `CONSTRUCTOR_DELEGATION_CALL` of a secondary constructor
@@ -347,7 +369,7 @@ pub struct FunctionData {
     /// The extension receiver type (`fun String.toURI(): URI`), if the
     /// declaration is an extension.
     pub receiver: Option<ItemTypeRef>,
-    pub params: Vec<Param>,
+    pub params: Vec<KotlinParam>,
     /// The number of parameters, counted from the end of [`Self::params`],
     /// that declare a default value ([KLS
     /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)):
@@ -377,7 +399,7 @@ pub struct AccessorData {
     pub is_setter: bool,
     pub modifiers: KotlinModifiers,
     pub annotations: Vec<ItemAnnotationRef>,
-    pub params: Vec<Param>,
+    pub params: Vec<KotlinParam>,
     /// The lowered body: the block, the expression body (`get() = …`), or
     /// nothing for a declaration without one.
     pub body: Option<BodyId>,

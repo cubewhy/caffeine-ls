@@ -1,0 +1,44 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun anonymous(): Int {
+    val expression = fun(x: Int) = x + 1
+    val block = fun(a: Int) {
+        println(a)
+    }
+    block(1)
+    return expression(1)
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun anonymous(): Int @1..159
+
+BODIES:
+fun anonymous body b0:
+  s0: decl l0 = e3
+  s3: decl l1 = e7
+  s4: expr e10
+  s5: expr e14
+  local l0: expression
+  local l1: block
+  expr e0: var x 
+  expr e1: literal Int(1) 
+  expr e2: binary Add [e0, e1]
+  expr e3: lambda (1 params) [e2]
+  expr e4: var println 
+  expr e5: var a 
+  expr e6: call println [e5]
+  expr e7: lambda (1 params) [s2]
+  expr e8: var block 
+  expr e9: literal Int(1) 
+  expr e10: call block [e9]
+  expr e11: var expression 
+  expr e12: literal Int(1) 
+  expr e13: call expression [e12]
+  expr e14: jump Return [e13]

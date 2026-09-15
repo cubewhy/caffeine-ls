@@ -218,6 +218,7 @@ impl<'a> InferCtx<'a> {
             }
             StmtData::ForEach {
                 var,
+                pattern,
                 iterable,
                 body,
             } => {
@@ -233,9 +234,35 @@ impl<'a> InferCtx<'a> {
                     },
                     _ => None,
                 };
-                self.types
-                    .locals
-                    .insert(var, element.unwrap_or_else(|| self.error()));
+                let element = element.unwrap_or_else(|| self.error());
+                // A destructuring loop variable binds one local per component,
+                // each the component type of the element ([KLS
+                // `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)
+                // resolves them through `componentN()`); without the member
+                // bridge the components are the error type, which is what the
+                // loop variable is bound to.
+                match pattern {
+                    Some(pattern) => {
+                        let parts: Vec<LocalId> = match self.bodies.pattern(pattern).clone() {
+                            hir_expand::body::PatternData::Destructuring { parts } => parts,
+                            _ => Vec::new(),
+                        };
+                        let components = match element.kind(self.db) {
+                            TyKind::Reference { args, .. } => args.clone(),
+                            _ => Vec::new(),
+                        };
+                        for (index, part) in parts.into_iter().enumerate() {
+                            let ty = components
+                                .get(index)
+                                .copied()
+                                .unwrap_or_else(|| self.error());
+                            self.types.locals.insert(part, ty);
+                        }
+                    }
+                    None => {
+                        self.types.locals.insert(var, element);
+                    }
+                }
                 self.infer_stmt(body);
             }
             StmtData::LocalClass { .. } | StmtData::LocalFunction { .. } => {}

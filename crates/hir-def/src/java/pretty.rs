@@ -620,6 +620,13 @@ fn render_stmt(out: &mut String, tree: &ItemTree, bodies: &BodyTree, id: StmtId,
                     .unwrap_or_else(|| "none".to_owned()),
             ));
         }
+        // A Kotlin delegated local property ([KLS
+        // `declarations.html#delegated-property-declaration`]): a Java body
+        // never carries one, and it is rendered in the Kotlin form so the
+        // dump stays total.
+        StmtData::DeclDelegated { local, delegate } => {
+            out.push_str(&format!("{indent}{id}: delegated {local} by {delegate}\n"));
+        }
         StmtData::DeclGroup(stmts) => {
             out.push_str(&format!("{indent}{id}: decl-group\n"));
             for &s in stmts {
@@ -679,6 +686,7 @@ fn render_stmt(out: &mut String, tree: &ItemTree, bodies: &BodyTree, id: StmtId,
             var,
             iterable,
             body,
+            ..
         } => {
             out.push_str(&format!("{indent}{id}: for-each {var} in {iterable}\n"));
             render_stmt(out, tree, bodies, *body, depth + 1);

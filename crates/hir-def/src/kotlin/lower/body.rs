@@ -419,7 +419,7 @@ fn stmt_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
         // `declarations.html#local-function-declaration`](https://kotlinlang.org/spec/declarations.html#local-function-declaration)):
         // the declaration is an item of the file's item tree, lowered by the
         // declaration walker (which sees this statement's block).
-        K::FUNCTION_DECL => match super::walk::lower_local_declaration(ctx, node) {
+        K::FUNCTION_DECL => match super::walk::lower_local_declaration(ctx, owner, node) {
             Some(item) => StmtData::LocalFunction { item },
             None => StmtData::Missing,
         },
@@ -427,7 +427,7 @@ fn stmt_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
         // local types ([KLS
         // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)).
         K::CLASS_DECL | K::OBJECT_DECL | K::TYPE_ALIAS => {
-            match super::walk::lower_local_declaration(ctx, node) {
+            match super::walk::lower_local_declaration(ctx, owner, node) {
                 Some(item) => StmtData::LocalClass { item },
                 None => StmtData::Missing,
             }
@@ -500,6 +500,15 @@ fn local_property(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>
         return StmtData::Missing;
     };
     let local = alloc_local(ctx, name, declared, node.text_range(), name_range(node));
+    // `val x by lazy { … }` ([KLS
+    // `declarations.html#delegated-property-declaration`](https://kotlinlang.org/spec/declarations.html#delegated-property-declaration)):
+    // the local is bound to the `by` expression, not to an initializer, and
+    // its value is the delegate's `getValue` result — which the type layer
+    // produces once the member bridge lands, and which is the error type until
+    // then.
+    if let Some(delegate) = lower_property_delegate(ctx, owner, node) {
+        return StmtData::DeclDelegated { local, delegate };
+    }
     StmtData::Decl { local, initializer }
 }
 
@@ -510,24 +519,65 @@ fn alloc_pattern(ctx: &mut LowerCtx<'_>, data: PatternData, range: TextRange) ->
 }
 
 /// A `for (x in xs) body` statement ([spec: grammar-rule-forStatement]).
+///
+/// The loop variable is one name or a destructuring pattern: `for ((k, v) in
+/// xs)` binds one local per component ([KLS
+/// `expressions.html#destructuring-declarations`](https://kotlinlang.org/spec/expressions.html#destructuring-declarations)),
+/// and the pattern — not the first component — is what the type layer
+/// destructures the iterable's element type into. The parser writes the
+/// pattern as a `MULTI_VARIABLE_DECLARATION` where a plain loop writes a
+/// `VARIABLE_DECLARATION` ([spec: grammar-rule-forStatement]).
 fn foreach(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtData {
-    let Some(variable) = node
-        .children()
-        .find(|child| is(child, K::VARIABLE_DECLARATION))
-    else {
+    let Some(variable) = node.children().find(|child| {
+        matches!(
+            child.kind(),
+            K::VARIABLE_DECLARATION | K::MULTI_VARIABLE_DECLARATION
+        )
+    }) else {
         return StmtData::Missing;
     };
     let Some(iterable) = node.children().find(|child| is_expression(child.kind())) else {
         return StmtData::Missing;
     };
-    let name = variable_name(&variable).unwrap_or_else(|| Name::new("<missing>"));
-    let ty = declared_type(ctx, &variable);
-    let var = alloc_local(ctx, name, ty, variable.text_range(), name_range(&variable));
+    let (var, pattern) = if is(&variable, K::MULTI_VARIABLE_DECLARATION) {
+        let mut parts = Vec::new();
+        for component in variable
+            .children()
+            .filter(|child| is(child, K::VARIABLE_DECLARATION))
+        {
+            let name = variable_name(&component).unwrap_or_else(|| Name::new("<missing>"));
+            let ty = declared_type(ctx, &component);
+            parts.push(alloc_local(
+                ctx,
+                name,
+                ty,
+                component.text_range(),
+                name_range(&component),
+            ));
+        }
+        let Some(&first) = parts.first() else {
+            return StmtData::Missing;
+        };
+        let pattern = alloc_pattern(
+            ctx,
+            PatternData::Destructuring { parts },
+            variable.text_range(),
+        );
+        (first, Some(pattern))
+    } else {
+        let name = variable_name(&variable).unwrap_or_else(|| Name::new("<missing>"));
+        let ty = declared_type(ctx, &variable);
+        (
+            alloc_local(ctx, name, ty, variable.text_range(), name_range(&variable)),
+            None,
+        )
+    };
     let Some(body) = control_structure_body(ctx, owner, node) else {
         return StmtData::Missing;
     };
     StmtData::ForEach {
         var,
+        pattern,
         iterable: expr(ctx, owner, &iterable),
         body,
     }
@@ -563,12 +613,20 @@ fn expr(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprI
 fn expr_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
     match node.kind() {
         K::PRIMARY_EXPRESSION => primary(ctx, owner, node),
-        // `this`/`this@label` and `super`/`super<T>` are primary forms the
-        // parser completes as their own node ([KLS
+        // `this`/`this@label` and `super`/`super<T>`/`super@label` are primary
+        // forms the parser completes as their own node ([KLS
         // `expressions.html#this-expressions`](https://kotlinlang.org/spec/expressions.html#this-expressions),
         // [`#super-forms`](https://kotlinlang.org/spec/expressions.html#super-forms)).
-        K::THIS_EXPRESSION => ExprData::This { qualifier: None },
-        K::SUPER_EXPRESSION => ExprData::Super { qualifier: None },
+        // The label of `this@outer` and the supertype of `super<Base>` both
+        // qualify *which* receiver is meant, so both are the qualifier: the
+        // label as a one-segment reference, the supertype as the reference it
+        // names.
+        K::THIS_EXPRESSION => ExprData::This {
+            qualifier: label_qualifier(node),
+        },
+        K::SUPER_EXPRESSION => ExprData::Super {
+            qualifier: super_qualifier(ctx, node),
+        },
         K::PARENTHESIZED_EXPRESSION => match child_expression(node) {
             Some(inner) => ExprData::Paren(expr(ctx, owner, &inner)),
             None => ExprData::Missing,
@@ -653,7 +711,13 @@ fn expr_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
         K::TRY_EXPRESSION => try_expr(ctx, owner, node),
         K::JUMP_EXPRESSION => jump(ctx, owner, node),
         K::LAMBDA_LITERAL => lambda(ctx, owner, node),
-        K::OBJECT_LITERAL => match super::walk::lower_local_declaration(ctx, node) {
+        // An anonymous function `fun(x: Int) = x + 1` ([KLS
+        // `expressions.html#anonymous-functions`](https://kotlinlang.org/spec/expressions.html#anonymous-functions)):
+        // it declares no name, so it is not a `FUNCTION_DECL`, and it lowers
+        // as the lambda literal it is — a parameter list and a body, with
+        // `fun(x) = expr` an expression body and `fun(x) { … }` a block.
+        K::ANONYMOUS_FUNCTION => anonymous_function(ctx, owner, node),
+        K::OBJECT_LITERAL => match super::walk::lower_local_declaration(ctx, owner, node) {
             Some(item) => ExprData::ObjectLiteral { item },
             None => ExprData::Missing,
         },
@@ -690,19 +754,65 @@ fn primary(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
 
 /// A literal token of a `primaryExpression` ([KLS
 /// `expressions.html#constant-literals`](https://kotlinlang.org/spec/expressions.html#constant-literals)).
-/// String literals carry their decoded value — Kotlin escapes are the JVM
-/// ones, without the Unicode-escape pass Java has — and an integer literal is
-/// `Int` unless it has the `L` suffix.
+///
+/// A string literal carries its decoded value — Kotlin escapes are the JVM
+/// ones, without the Unicode-escape pass Java has — and a character literal
+/// the scalar value its escapes decode to: kotlinc 2.4.20 reads `'\n'`,
+/// `'\\'` and `'\u0041'` as the newline, a backslash and `A`.
+///
+/// The numeric suffixes are folded into the value. `L` makes the literal a
+/// `Long`, `f`/`F` a `Float`, and Kotlin's *unsigned* suffix (`u`/`U`,
+/// optionally followed by `L`) is stripped: `1u` is a `kotlin.UInt` *value*
+/// and `1uL` a `kotlin.ULong` one, and this IR carries the signed bit pattern
+/// of the corresponding width — `0xFFFFFFFFu` lowers as `Int(-1)`, the 32-bit
+/// pattern the compiler gives that value. The unsigned *type* the compiler
+/// gives such a literal is not modelled — a recorded deviation, since the
+/// model has no `kotlin.UInt` classifier to name.
 fn literal(_ctx: &LowerCtx<'_>, token: &SyntaxToken<Lang>) -> ExprData {
     let text = token.text();
     match token.kind() {
         K::INTEGER_LITERAL => {
-            let (digits, is_long) = match text.strip_suffix(['L', 'l']) {
-                Some(digits) => (digits, true),
-                None => (text, false),
+            // `0xFF` and `0b1010` are the radix forms
+            // ([spec: grammar-rule-HexLiteral], [spec:
+            // grammar-rule-BinLiteral]); everything else is decimal and is
+            // parsed by the same `from_str_radix` with radix 10.
+            let (radix, digits) = match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X"))
+            {
+                Some(hex) => (16u32, hex),
+                None => match text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+                    Some(binary) => (2, binary),
+                    None => (10, text),
+                },
+            };
+            // The suffix order is the long one *then* the unsigned one
+            // (`1UL` = `1` + `U` + `L`, [spec:
+            // grammar-rule-UnsignedLiteral]), so `L` is stripped from the end
+            // first and `u`/`U` after it; `consume_int_suffixes` folds both
+            // into the token.
+            let (digits, is_long) = match digits.strip_suffix('L') {
+                Some(rest) => (rest, true),
+                None => (digits, false),
+            };
+            let (digits, unsigned) = match digits
+                .strip_suffix('u')
+                .or_else(|| digits.strip_suffix('U'))
+            {
+                Some(rest) => (rest, true),
+                None => (digits, false),
             };
             let digits = digits.replace('_', "");
-            let Ok(value) = digits.parse::<i64>() else {
+            let value = if is_long {
+                unsigned
+                    .then(|| u64::from_str_radix(&digits, radix).ok().map(|v| v as i64))
+                    .unwrap_or_else(|| i64::from_str_radix(&digits, radix).ok())
+            } else if unsigned {
+                u32::from_str_radix(&digits, radix)
+                    .ok()
+                    .map(|value| i64::from(value as i32))
+            } else {
+                i64::from_str_radix(&digits, radix).ok()
+            };
+            let Some(value) = value else {
                 return ExprData::Missing;
             };
             ExprData::Literal(if is_long {
@@ -711,13 +821,25 @@ fn literal(_ctx: &LowerCtx<'_>, token: &SyntaxToken<Lang>) -> ExprData {
                 Literal::Int(value)
             })
         }
-        K::FLOAT_LITERAL => ExprData::Literal(Literal::Double),
+        K::FLOAT_LITERAL => {
+            // `1.0f` is a `Float`, `1.0` a `Double` ([KLS
+            // `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)):
+            // the `f`/`F` suffix is the only difference the token carries.
+            ExprData::Literal(if text.ends_with(['f', 'F']) {
+                Literal::Float
+            } else {
+                Literal::Double
+            })
+        }
         K::TRUE_KW | K::FALSE_KW => {
             ExprData::Literal(Literal::Boolean(is_token(token, K::TRUE_KW)))
         }
         K::CHAR_LITERAL => {
-            let decoded = text.trim_matches('\'');
-            match decoded.chars().next() {
+            let content = text
+                .strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+                .unwrap_or(text);
+            match decode_string_content(content).chars().next() {
                 Some(value) => ExprData::Literal(Literal::Char(value)),
                 None => ExprData::Missing,
             }
@@ -1194,14 +1316,42 @@ fn when(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
     let subject = node
         .children()
         .find(|child| is(child, K::WHEN_SUBJECT))
-        .and_then(|subject| child_expression(&subject))
-        .map(|subject| expr(ctx, owner, &subject));
+        .and_then(|subject| when_subject(ctx, owner, &subject));
     let arms = node
         .children()
         .filter(|child| is(child, K::WHEN_ENTRY))
         .map(|entry| when_arm(ctx, owner, &entry, subject))
         .collect();
     ExprData::When { subject, arms }
+}
+
+/// The subject of a `when` ([spec: grammar-rule-whenSubject]): a bare
+/// expression, or the `val x = expr` binding Kotlin 1.7 added, which the
+/// parser writes as a `VARIABLE_DECLARATION` in the subject
+/// ([KLS `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)).
+/// The declaration binds `x`, and the subject the arms test against is the
+/// initializer — `when (val x = f()) { is String -> … }` tests `f()`'s value
+/// and binds it to `x`, so the two are the same expression.
+fn when_subject(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Option<ExprId> {
+    if let Some(declaration) = node
+        .children()
+        .find(|child| is(child, K::VARIABLE_DECLARATION))
+    {
+        let name = variable_name(&declaration).unwrap_or_else(|| Name::new("<missing>"));
+        let ty = declared_type(ctx, &declaration);
+        alloc_local(
+            ctx,
+            name,
+            ty,
+            declaration.text_range(),
+            name_range(&declaration),
+        );
+    }
+    let value = node
+        .children()
+        .filter(|child| is_expression(child.kind()))
+        .last()?;
+    Some(expr(ctx, owner, &value))
 }
 
 /// One `when` entry ([spec: grammar-rule-whenEntry]): its conditions — the
@@ -1355,25 +1505,7 @@ fn jump(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
 /// its parameters and its block. The parameter types are inferred from the
 /// expected function type, so a parameter without one carries none.
 fn lambda(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
-    let mut params = Vec::new();
-    if let Some(parameters) = node
-        .children()
-        .find(|child| is(child, K::LAMBDA_PARAMETERS))
-    {
-        for parameter in parameters
-            .children()
-            .filter(|child| matches!(child.kind(), K::LAMBDA_PARAMETER | K::VARIABLE_DECLARATION))
-        {
-            let name = variable_name(&parameter).unwrap_or_else(|| Name::new("it"));
-            let ty = declared_type(ctx, &parameter);
-            params.push(LambdaParam {
-                name,
-                ty,
-                annotations: Vec::new(),
-                range: name_range(&parameter),
-            });
-        }
-    }
+    let params = lambda_params(ctx, node);
     // A lambda's statements are its own children — the grammar writes
     // `'{' … statements … '}'`, with no block node
     // ([spec: grammar-rule-lambdaLiteral]) — so the body is the same
@@ -1385,6 +1517,99 @@ fn lambda(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Exp
         .collect::<Vec<_>>();
     let body = LambdaBody::Block(alloc_stmt(ctx, StmtData::Block(stmts), node.text_range()));
     ExprData::Lambda { params, body }
+}
+
+/// An anonymous function `fun(x: Int) = x + 1` / `fun() { … }` ([KLS
+/// `expressions.html#anonymous-functions`](https://kotlinlang.org/spec/expressions.html#anonymous-functions)):
+/// the function form of a lambda — a value, not a declaration, so it lowers to
+/// [`ExprData::Lambda`] — with either an expression body (the `= expr` the
+/// grammar spells instead of a block) or a block one.
+fn anonymous_function(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
+    let params = lambda_params(ctx, node);
+    let body = match node.children().find(|child| is(child, K::BLOCK)) {
+        Some(block) => {
+            let stmts = lower_statement_list(ctx, owner, &block);
+            LambdaBody::Block(alloc_stmt(ctx, StmtData::Block(stmts), block.text_range()))
+        }
+        None => match node
+            .children()
+            .filter(|child| is_expression(child.kind()))
+            .last()
+        {
+            Some(value) => LambdaBody::Expr(expr(ctx, owner, &value)),
+            None => return ExprData::Missing,
+        },
+    };
+    ExprData::Lambda { params, body }
+}
+
+/// The declared parameters of a lambda literal or of an anonymous function
+/// ([KLS `expressions.html#lambda-literals`](https://kotlinlang.org/spec/expressions.html#lambda-literals),
+/// [`#anonymous-functions`](https://kotlinlang.org/spec/expressions.html#anonymous-functions)):
+/// a `LAMBDA_PARAMETERS` node (`{ a, b -> … }`) or a `VALUE_PARAMETERS` one
+/// (`fun(a: Int) = …`), each parameter bound with the type it writes — a
+/// lambda's parameters usually write none, since the expected function type
+/// determines them.
+fn lambda_params(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<LambdaParam> {
+    let Some(parameters) = node
+        .children()
+        .find(|child| matches!(child.kind(), K::LAMBDA_PARAMETERS | K::VALUE_PARAMETERS))
+    else {
+        return Vec::new();
+    };
+    parameters
+        .children()
+        .filter(|child| {
+            matches!(
+                child.kind(),
+                K::LAMBDA_PARAMETER | K::VARIABLE_DECLARATION | K::VALUE_PARAMETER
+            )
+        })
+        .map(|parameter| LambdaParam {
+            name: variable_name(&parameter).unwrap_or_else(|| Name::new("it")),
+            ty: declared_type(ctx, &parameter),
+            annotations: Vec::new(),
+            range: name_range(&parameter),
+        })
+        .collect()
+}
+
+/// The label that qualifies a `this` ([KLS
+/// `expressions.html#this-expressions`](https://kotlinlang.org/spec/expressions.html#this-expressions)):
+/// the `outer` of `this@outer`, lowered as a one-segment type reference so the
+/// label's own source range is anchored. `None` for a bare `this`.
+///
+/// The qualifier is a *label*, not a type — `this@outer` names the receiver of
+/// the declaration labeled `outer` — and the shared body IR carries a
+/// [`SpannedTypeRef`] here because Java's `Outer.this` qualifies by type. The
+/// classifier reference is what an unqualified label resolves through, and the
+/// type layer reads only the reference's name — a recorded deviation.
+fn label_qualifier(node: &SyntaxNode<Lang>) -> Option<SpannedTypeRef> {
+    // The label is the identifier after the `@` of `this@outer`.
+    let name = node
+        .children_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .skip_while(|token| !is_token(token, K::AT))
+        .find(|token| is_token(token, K::IDENTIFIER))?;
+    Some(SpannedTypeRef::new(
+        syntax::stub::TypeRef::Reference {
+            name: Name::new(name.text()),
+            generic_args: Vec::new(),
+        },
+        vec![NameRef::new(Name::new(name.text()), name.text_range())],
+    ))
+}
+
+/// The qualifier of a `super<Base>`/`super@label` ([KLS
+/// `expressions.html#super-forms`](https://kotlinlang.org/spec/expressions.html#super-forms)):
+/// the supertype whose member is named, lowered as the type it is, or the
+/// label of `super@label`, lowered as [`label_qualifier`] lowers `this@label`.
+/// `None` for a bare `super`.
+fn super_qualifier(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<SpannedTypeRef> {
+    if let Some(ty) = node.children().find(|child| is_type_node(child.kind())) {
+        return Some(spanned_type(ctx, &ty));
+    }
+    label_qualifier(node)
 }
 
 /// A callable reference `::name` / `receiver::name` ([spec:

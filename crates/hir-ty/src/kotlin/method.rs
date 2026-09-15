@@ -181,9 +181,12 @@ fn members_of(
                     params: function
                         .params
                         .iter()
-                        .map(|param| super::ty::ty_from_type_ref(db, resolver, &param.ty.ty))
+                        .map(|param| super::ty::ty_from_type_ref(db, resolver, &param.param.ty.ty))
                         .collect(),
-                    vararg: function.params.last().is_some_and(|param| param.varargs),
+                    vararg: function
+                        .params
+                        .last()
+                        .is_some_and(|param| param.param.varargs),
                     defaults: function.defaults,
                 });
             }

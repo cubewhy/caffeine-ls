@@ -205,6 +205,10 @@ fn collect_local_decls(bodies: &BodyTree, stmt: StmtId, out: &mut Vec<ItemId>) {
         }
         StmtData::Empty
         | StmtData::Decl { .. }
+        // A Kotlin delegated local property ([KLS
+        // `declarations.html#delegated-property-declaration`]) binds a local,
+        // not a declaration; named here so the walk is total.
+        | StmtData::DeclDelegated { .. }
         | StmtData::Expr(_)
         | StmtData::Return(_)
         | StmtData::Throw(_)

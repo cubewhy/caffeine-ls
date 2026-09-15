@@ -699,7 +699,9 @@ pub(crate) fn local_decl_sites(
                 }
                 // A Kotlin local function is unreachable from a Java body: a
                 // Java body never lowers a Kotlin form.
-                StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
+                StmtData::LocalFunction { .. }
+                | StmtData::Destructuring { .. }
+                | StmtData::DeclDelegated { .. } => {}
                 // Every other statement form contains no block statement
                 // list, so it cannot declare a local class: a local
                 // declaration is a *block statement*

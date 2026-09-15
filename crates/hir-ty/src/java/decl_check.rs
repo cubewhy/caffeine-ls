@@ -2669,7 +2669,9 @@ fn body_has_ctor_call(bodies: &BodyTree, body_id: hir_expand::body::BodyId) -> b
             // the file, not part of this one.
             StmtData::LocalClass { .. } | StmtData::Missing => {}
             // A Kotlin local function — unreachable from a Java body.
-            StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
+            StmtData::LocalFunction { .. }
+            | StmtData::Destructuring { .. }
+            | StmtData::DeclDelegated { .. } => {}
         }
     }
     fn walk_expr(bodies: &BodyTree, expr: hir_expand::body::ExprId, found: &mut bool) {
@@ -3492,7 +3494,9 @@ fn final_field_diagnostics(
                 | StmtData::LocalClass { .. }
                 | StmtData::Missing => {}
                 // A Kotlin local function — unreachable from a Java body.
-                StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
+                StmtData::LocalFunction { .. }
+                | StmtData::Destructuring { .. }
+                | StmtData::DeclDelegated { .. } => {}
                 StmtData::Decl { .. } => {
                     // A declarator's initializer may itself assign.
                     if let StmtData::Decl {

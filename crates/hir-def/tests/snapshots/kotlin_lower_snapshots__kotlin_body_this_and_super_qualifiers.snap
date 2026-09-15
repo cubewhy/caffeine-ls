@@ -1,0 +1,48 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Inner {
+    fun outer(): Inner = this@Inner
+
+    fun qualified(): Inner = this
+}
+
+open class Base {
+    open fun value(): Int = 1
+}
+
+class Derived : Base() {
+    fun call(): Int = super<Base>.value()
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Inner @1..87
+  fun outer(): Inner @19..50
+  fun qualified(): Inner @56..85
+class Base open @89..138
+  fun value(): Int open @111..136
+class Derived @140..208
+  : Base
+  fun call(): Int @169..206
+
+BODIES:
+fun outer body b0:
+  s0: expr e0
+fun qualified body b1:
+  s1: expr e1
+fun value body b2:
+  s2: expr e2
+fun call body b3:
+  s3: expr e5
+  expr e0: this@Inner 
+  expr e1: this 
+  expr e2: literal Int(1) 
+  expr e3: super<Base> 
+  expr e4: field value [e3]
+  expr e5: call value [e3]

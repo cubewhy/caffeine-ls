@@ -279,10 +279,21 @@ trait Skeleton: rowan::Language<Kind: Into<rowan::SyntaxKind>> {
     /// Whether a node of this kind is indexed.
     fn is_indexable(kind: Self::Kind) -> bool;
 
+    /// Whether a node of this kind keeps an anchor even inside body content,
+    /// because the body lowering lowers it as a declaration of its own: a
+    /// Kotlin object literal declares the anonymous class it is, and the item
+    /// the body lowering allocates for it anchors that node
+    /// ([KLS `expressions.html#object-literals`](https://kotlinlang.org/spec/expressions.html#object-literals)).
+    /// A language with no such form leaves this `false`.
+    fn anchors_in_body(_kind: Self::Kind) -> bool {
+        false
+    }
+
     /// The children of `node` to visit, in source order, each with the body
     /// flag it is visited under (`true` = body content: traversed to find the
-    /// declarations it may nest, but with nothing indexed). `in_body` is the
-    /// flag `node` itself was visited under; `parent` is its parent's kind.
+    /// declarations it may nest, but with nothing indexed — bar the ones
+    /// [`Self::anchors_in_body`] names). `in_body` is the flag `node` itself
+    /// was visited under; `parent` is its parent's kind.
     fn plan(
         node: &rowan::SyntaxNode<Self>,
         parent: Option<Self::Kind>,
@@ -295,12 +306,13 @@ trait Skeleton: rowan::Language<Kind: Into<rowan::SyntaxKind>> {
 /// ([`Skeleton`]).
 fn build<L: Skeleton>(root: &rowan::SyntaxNode<L>) -> AstIdMap {
     let mut map = AstIdMap::default();
-    // `body` marks body content: visited to find the blocks that declare local
-    // classes, but with nothing indexed.
+    // `body` marks body content: visited to find the declarations that nest
+    // in it — the blocks that declare local classes, and the forms
+    // `anchors_in_body` names — with the rest unindexed.
     let mut stack = vec![(root.clone(), None, false)];
     while let Some((node, parent, body)) = stack.pop() {
         let kind = node.kind();
-        if !body && L::is_indexable(kind) {
+        if (!body || L::anchors_in_body(kind)) && L::is_indexable(kind) {
             let ptr = node_ptr(&node);
             debug_assert!(
                 !map.index.contains_key(&ptr),
@@ -379,6 +391,10 @@ impl Skeleton for syntax::kotlin::Lang {
         is_indexable_kotlin(kind)
     }
 
+    fn anchors_in_body(kind: K) -> bool {
+        is_local_declaration(kind)
+    }
+
     fn plan(
         node: &rowan::SyntaxNode<Self>,
         _parent: Option<K>,
@@ -390,15 +406,14 @@ impl Skeleton for syntax::kotlin::Lang {
         };
         match node.kind() {
             // A block's *local* declarations — a local class, object or
-            // function, a local type alias, and an object literal's anonymous
-            // class ([KLS
+            // function, a local type alias
+            // ([KLS
             // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration))
             // — are declaration skeleton: each is indexed with its own
             // skeleton. Every other statement and expression in the block
             // stays body content, so naming a local variable, adding a
             // statement or rewriting an expression leaves the indexed sequence
-            // untouched. The expression-bodied members (`fun f() = …`,
-            // `val x = …`) are covered by the `EQUAL` rule below.
+            // untouched.
             K::BLOCK => children
                 .into_iter()
                 .map(|child| {
@@ -406,61 +421,38 @@ impl Skeleton for syntax::kotlin::Lang {
                     (child, in_body)
                 })
                 .collect(),
-            // A function's, accessor's or property's expression body and a
-            // parameter's default value are body content: everything *before*
-            // the `=` belongs to the declaration (its name, receiver, type
-            // parameters, parameters, declared type), everything after it is
-            // re-walked by the body lowering.
-            K::FUNCTION_DECL
-            | K::GETTER
-            | K::SETTER
-            | K::CLASS_PARAMETER
-            | K::VALUE_PARAMETER
-            | K::PROPERTY_DECL => {
-                let mut planned = Vec::with_capacity(children.len());
-                let mut seen_equal = false;
-                for child in children {
-                    match child.kind() {
-                        K::EQUAL => seen_equal = true,
-                        // A property's accessors follow its initializer
-                        // (`var x = 0` / `private set`) but are declarations
-                        // of the property, not body content.
-                        K::GETTER | K::SETTER => {}
-                        // A delegated property's `by <expr>` is body content
-                        // and, unlike an initializer, needs no `=` to follow.
-                        K::PROPERTY_DELEGATE => continue,
-                        _ => {}
-                    }
-                    if seen_equal && !matches!(child.kind(), K::GETTER | K::SETTER) {
-                        continue;
-                    }
-                    planned.push((child, false));
-                }
-                planned
-            }
+            // A declaration's own parts are declaration skeleton wherever the
+            // declaration stands: an object literal a body nests still
+            // anchors its supertypes, members, parameters and declared types,
+            // exactly as a member declaration does.
+            kind if is_local_declaration(kind) => visit(children, false),
             // An enum entry's constructor arguments are body content; its
             // class body (the anonymous class the entry denotes) is a
             // declaration region whose members are lowered
             // ([spec: grammar-rule-enumEntry]).
             K::ENUM_ENTRY => children
                 .into_iter()
-                .filter(|child| child.kind() != K::VALUE_ARGUMENTS)
                 .map(|child| {
                     let in_body = child.kind() != K::CLASS_BODY;
                     (child, in_body)
                 })
                 .collect(),
-            // A delegation specifier's `VALUE_ARGUMENTS` — the superclass
-            // constructor arguments of `class C : Base(1)` — are body content,
-            // as are the arguments of an annotation (`@Ann(1)`) and of a
-            // constructor delegation (`: this(x)`); so is the delegated
-            // *expression* of `interface I by delegate` (only the delegated
-            // type is declaration skeleton).
-            K::VALUE_ARGUMENTS | K::PROPERTY_DELEGATE => Vec::new(),
+            // The expression regions of a declaration are body content: a
+            // supertype's constructor arguments (`class C : Base(1)`), a
+            // delegated property's `by <expr>`, the arguments of an annotation
+            // (`@Ann(1)`) and of a constructor delegation (`: this(x)`). They
+            // are *visited* — a declaration they contain, an object literal,
+            // keeps its anchor ([`Skeleton::anchors_in_body`]) — but index
+            // nothing else.
+            K::VALUE_ARGUMENTS | K::PROPERTY_DELEGATE => visit(children, true),
+            // Of an `interface I by delegate`, only the delegated type is
+            // declaration skeleton.
             K::EXPLICIT_DELEGATION => children
                 .into_iter()
-                .filter(|child| is_type_node(child.kind()))
-                .map(|child| (child, false))
+                .map(|child| {
+                    let in_body = !is_type_node(child.kind());
+                    (child, in_body)
+                })
                 .collect(),
             _ => visit(children, body),
         }

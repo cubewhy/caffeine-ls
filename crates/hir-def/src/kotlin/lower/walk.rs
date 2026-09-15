@@ -27,8 +27,8 @@ use crate::kotlin::item_tree::{
     ConstructorDeclNode, EnumEntryData, EnumEntryNode, FileAnnotationNode, FunctionData,
     FunctionDeclNode, ImportHeaderNode, InitData, ItemAnnotationArg, ItemAnnotationRef,
     ItemAnnotationValue, ItemId, ItemTypeRef, KotlinClassKind, KotlinImportItem, KotlinItemData,
-    KotlinTypeParam, PackageHeaderNode, Param, PropertyData, PropertyNode, TypeAliasData,
-    TypeAliasNode, ast_id_of, ast_id_or_placeholder,
+    KotlinParam, KotlinTypeParam, PackageHeaderNode, Param, PropertyData, PropertyNode,
+    TypeAliasData, TypeAliasNode, ast_id_of, ast_id_or_placeholder,
 };
 use crate::kotlin::modifiers::{KotlinModifiers, KotlinVariance};
 
@@ -546,12 +546,17 @@ fn lower_type_alias(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
 /// Lowers a *local* declaration the body walker found in a block or in an
 /// expression: a local class, object, function, type alias or an object
 /// literal. The item is recorded as a local declaration of the file (the tree's
-/// `local_types`) and given its declaring item as its parent — only the body
-/// knows which declaration declares it — so the workspace symbol index, which
-/// walks `top` and `body()` only, never surfaces it ([KLS
-/// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)).
+/// `local_types`) and given the declaration whose body declares it as its
+/// parent, so the workspace symbol index — which walks `top` and `body()` —
+/// never surfaces it, while the item tree's own ancestry ([KLS
+/// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration))
+/// answers for the type layer.
+///
+/// `owner` is that declaration: the function, accessor, initializer or
+/// property whose body lowering found the node (`owner` of the walker).
 pub(super) fn lower_local_declaration(
     ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
     node: &SyntaxNode<Lang>,
 ) -> Option<ItemId> {
     let item = match node.kind() {
@@ -561,34 +566,29 @@ pub(super) fn lower_local_declaration(
         K::OBJECT_LITERAL => lower_object_literal(ctx, node)?,
         _ => return None,
     };
-    record_local(ctx, item);
+    record_local(ctx, owner, item);
     Some(item)
 }
 
 /// An object literal `object : Base() { … }` ([KLS
 /// `expressions.html#object-literals`](https://kotlinlang.org/spec/expressions.html#object-literals)):
 /// the anonymous class its body declares, lowered as an `object` classifier
-/// with no name of its own.
+/// with no name of its own — `lower_class` reads the classifier's own keyword,
+/// which an object literal has none of, so the item it allocates carries the
+/// missing name and the item is the one the literal *is*, not the declaration
+/// that follows it.
 fn lower_object_literal(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemId> {
-    lower_class(ctx, node);
-    // `lower_class` reads the classifier's own keyword; an object literal has
-    // none, so the item it allocated carries the missing name — the class of
-    // the anonymous type, named the way the compiler names it.
-    Some(
-        *ctx.tree
-            .top
-            .last()
-            .unwrap_or(&ItemId(hir_expand::arena::ArenaId(u32::MAX))),
-    )
+    Some(lower_class(ctx, node))
 }
 
 /// Marks `item` as a local declaration of the file: it joins `local_types`
-/// (in lowering order, which is source order) and takes the declaration whose
-/// body is being lowered as its parent.
-fn record_local(ctx: &mut LowerCtx<'_>, item: ItemId) {
+/// (in lowering order, which is source order) and takes `owner`, the
+/// declaration whose body is being lowered, as its parent.
+fn record_local(ctx: &mut LowerCtx<'_>, owner: ItemId, item: ItemId) {
     if !ctx.tree.local_types.contains(&item) {
         ctx.tree.local_types.push(item);
     }
+    ctx.tree.parent[item.0.0 as usize] = Some(owner);
 }
 
 /// The property a `val`/`var` class parameter declares ([KLS
@@ -633,7 +633,7 @@ fn lower_class_parameter_property(
 ///
 /// `node` is the declaration or the parameter list itself; the parameters are
 /// the `CLASS_PARAMETER`/`VALUE_PARAMETER` children of the list.
-fn lower_params(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Param> {
+fn lower_params(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<KotlinParam> {
     let list = node
         .children()
         .find(|child| matches!(child.kind(), K::VALUE_PARAMETERS | K::CLASS_PARAMETERS))
@@ -652,46 +652,71 @@ fn lower_params(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Param> {
 /// `parameterWithOptionalType`: simpleIdentifier [':' type]
 /// [spec: grammar-rule-parameterWithOptionalType] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-parameterWithOptionalType
 ///
-/// `fallback_ty` is the type of a parameter that writes none — only a setter's
-/// parameter may ([`lower_accessor`]).
-fn lower_param(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Param {
+/// A parameter that writes no type is a *setter*'s, whose type is the
+/// property's ([KLS
+/// `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)):
+/// it records the error type, which the type layer replaces — a parameter with
+/// no type anywhere is an erroneous declaration.
+fn lower_param(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> KotlinParam {
     let mut annotations = Vec::new();
-    let mut varargs = false;
-    if let Some(modifiers) = node.children().find(|child| is(child, K::MODIFIER_LIST)) {
-        for element in modifiers.children_with_tokens() {
-            match element {
-                NodeOrToken::Node(annotation) if is(&annotation, K::ANNOTATION) => {
-                    annotations.extend(lower_annotation(ctx, &annotation));
-                }
-                NodeOrToken::Token(token) if is_token(&token, K::IDENTIFIER) => {
-                    varargs |= token.text() == "vararg";
-                }
-                _ => {}
+    let mut modifiers = (false, false, false);
+    if let Some(list) = node.children().find(|child| is(child, K::MODIFIER_LIST)) {
+        for element in list.children_with_tokens() {
+            if let NodeOrToken::Node(annotation) = element
+                && is(&annotation, K::ANNOTATION)
+            {
+                annotations.extend(lower_annotation(ctx, &annotation));
             }
         }
+        // A class parameter writes its modifiers in a list (`class C(private
+        // val x: Int)`); a function parameter writes them directly in the
+        // parameter node ([spec: grammar-rule-parameterModifiers]), so both
+        // regions are read.
+        modifiers = parameter_modifiers(&list);
     }
     for child in node.children().filter(|child| is(child, K::ANNOTATION)) {
         annotations.extend(lower_annotation(ctx, &child));
     }
-    // `vararg` is a parameter *modifier*, written as a bare identifier token
-    // ([spec: grammar-rule-parameterModifiers]).
-    varargs |= node
-        .children_with_tokens()
-        .filter_map(NodeOrToken::into_token)
-        .any(|token| is_token(&token, K::IDENTIFIER) && token.text() == "vararg");
+    let (vararg, noinline, crossinline) = {
+        let (v, n, c) = parameter_modifiers(node);
+        (modifiers.0 || v, modifiers.1 || n, modifiers.2 || c)
+    };
 
-    Param {
-        name: parameter_name(node).unwrap_or_else(missing_name),
-        // A parameter without a declared type is a *setter*'s, whose type is
-        // the property's ([KLS
-        // `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)):
-        // the parameter records no type, and the type layer takes the
-        // property's — a parameter with no type anywhere is an erroneous
-        // declaration, and its type is the error type.
-        ty: declared_type(ctx, node).unwrap_or_else(|| ItemTypeRef::synthetic(TypeRef::Error)),
-        varargs,
-        annotations,
+    KotlinParam {
+        param: Param {
+            name: parameter_name(node).unwrap_or_else(missing_name),
+            ty: declared_type(ctx, node).unwrap_or_else(|| ItemTypeRef::synthetic(TypeRef::Error)),
+            varargs: vararg,
+            annotations,
+        },
+        noinline,
+        crossinline,
     }
+}
+
+/// The `vararg`/`noinline`/`crossinline` parameter modifiers of a
+/// `parameterModifiers` region or of a parameter node ([spec:
+/// grammar-rule-parameterModifiers]): each is written as a bare identifier
+/// token, not as a modifier keyword.
+fn parameter_modifiers(node: &SyntaxNode<Lang>) -> (bool, bool, bool) {
+    let mut vararg = false;
+    let mut noinline = false;
+    let mut crossinline = false;
+    for element in node.children_with_tokens() {
+        let NodeOrToken::Token(token) = element else {
+            continue;
+        };
+        if !is_token(&token, K::IDENTIFIER) {
+            continue;
+        }
+        match token.text() {
+            "vararg" => vararg = true,
+            "noinline" => noinline = true,
+            "crossinline" => crossinline = true,
+            _ => {}
+        }
+    }
+    (vararg, noinline, crossinline)
 }
 
 /// `typeParameters`: '<' {NL} typeParameter {{NL} ',' {NL} typeParameter}

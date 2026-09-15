@@ -1,0 +1,27 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun classify(value: Any): String = when (val subject = value) {
+    is String -> subject
+    else -> "other"
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun classify(value: Any): String @1..111
+
+BODIES:
+fun classify body b0:
+  param l0: value: Any
+  s0: expr e3
+  local l0: value: Any
+  local l1: subject
+  expr e0: var value 
+  expr e1: var subject 
+  expr e2: literal Str("other") 
+  expr e3: when (2 arms) [e0, e0, e1, e2]

@@ -472,6 +472,7 @@ impl InferCtx<'_> {
                 var,
                 iterable,
                 body,
+                ..
             } => {
                 // JLS §15.2/§14.14.2: the enhanced-for expression is standalone.
                 let iterable_ty = self.with_target(None, |this| this.infer_expr(*iterable));
@@ -1213,7 +1214,9 @@ impl InferCtx<'_> {
             // value, so it has no effect on expression typing.
             StmtData::LocalClass { item } => self.declare_local_type(*item),
             // A Kotlin local function — unreachable from a Java body.
-            StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
+            StmtData::LocalFunction { .. }
+            | StmtData::Destructuring { .. }
+            | StmtData::DeclDelegated { .. } => {}
             StmtData::Missing => {}
         }
     }

@@ -271,13 +271,20 @@ fn render_signature(
 ) -> String {
     use hir::hir_def::kotlin::pretty::display_type;
 
-    fn params(params: &[hir::hir_def::kotlin::item_tree::Param]) -> String {
+    fn params(params: &[hir::hir_def::kotlin::item_tree::KotlinParam]) -> String {
         params
             .iter()
-            .map(|param| {
+            .map(|parameter| {
+                let param = &parameter.param;
                 format!(
-                    "{}{}: {}",
+                    "{}{}{}{}: {}",
                     if param.varargs { "vararg " } else { "" },
+                    if parameter.noinline { "noinline " } else { "" },
+                    if parameter.crossinline {
+                        "crossinline "
+                    } else {
+                        ""
+                    },
                     param.name,
                     display_type(&param.ty)
                 )

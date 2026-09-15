@@ -300,7 +300,7 @@ fn walk_stmt_members(bodies: &BodyTree, id: StmtId, out: &mut FxHashSet<Name>) {
         Empty | Missing | LocalClass { .. } => {}
         // A Kotlin local function is unreachable from a Java body: a Java body
         // never lowers a Kotlin form.
-        LocalFunction { .. } | Destructuring { .. } => {}
+        LocalFunction { .. } | Destructuring { .. } | DeclDelegated { .. } => {}
         Block(stmts) => {
             for &stmt in stmts {
                 walk_stmt_members(bodies, stmt, out);

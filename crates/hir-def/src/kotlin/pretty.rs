@@ -19,7 +19,7 @@ use hir_expand::{
 
 use super::item_tree::{
     ConstructorData, ItemAnnotationArg, ItemAnnotationRef, ItemAnnotationValue, ItemId,
-    ItemTypeRef, KotlinItemData, KotlinItemTree, KotlinTypeParam, Param, TypeAliasData,
+    ItemTypeRef, KotlinItemData, KotlinItemTree, KotlinParam, KotlinTypeParam, TypeAliasData,
 };
 use crate::item_tree::language_name;
 use crate::kotlin::modifiers::KotlinModifiers;
@@ -59,6 +59,29 @@ pub fn pretty_print(tree: &KotlinItemTree, map: &AstIdMap, source: &SourceFile) 
 
     for id in &tree.top {
         render_item(tree, map, source, *id, 0, &mut out);
+    }
+
+    // The local declarations of the file ([KLS
+    // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)):
+    // they are members of no classifier, so they are listed here with the
+    // declaration whose body declares them — the item tree's `parent`, which
+    // is what `local_types_of` walks — and with their own range, which pins
+    // that the item *is* the declaration and not its neighbour.
+    if !tree.local_types.is_empty() {
+        out.push_str("locals:\n");
+        for &item in &tree.local_types {
+            let data = tree.data(item);
+            out.push_str(&format!(
+                "  {} {}{} parent {}\n",
+                data.label(),
+                data.name().map(|name| name.to_string()).unwrap_or_default(),
+                fmt_range(item_range(tree, map, source, item)),
+                match tree.parent_of(item) {
+                    Some(parent) => format!("item{}", parent.0.0),
+                    None => "none".to_owned(),
+                },
+            ));
+        }
     }
 
     out
@@ -330,13 +353,20 @@ fn render_ret(ret: &Option<ItemTypeRef>) -> String {
     }
 }
 
-fn render_params(params: &[Param]) -> String {
+fn render_params(params: &[KotlinParam]) -> String {
     format!(
         "({})",
-        render_join(params.iter().map(|param| {
+        render_join(params.iter().map(|parameter| {
+            let param = &parameter.param;
             format!(
-                "{}{}{}: {}",
+                "{}{}{}{}{}: {}",
                 if param.varargs { "vararg " } else { "" },
+                if parameter.noinline { "noinline " } else { "" },
+                if parameter.crossinline {
+                    "crossinline "
+                } else {
+                    ""
+                },
                 render_prefix_annotations(&param.annotations),
                 param.name,
                 render_item_type(&param.ty)
@@ -636,8 +666,17 @@ fn expr_label(expr: &ExprData) -> String {
         ExprData::Literal(literal) => format!("literal {literal:?}"),
         ExprData::Null => "null".to_owned(),
         ExprData::Var(name) | ExprData::NamePath(name) => format!("var {name}"),
-        ExprData::This { .. } => "this".to_owned(),
-        ExprData::Super { .. } => "super".to_owned(),
+        // A qualified `this@label`/`super<Base>` renders its qualifier — the
+        // label or the supertype. Both carry a one-segment reference, so a
+        // label renders in the same `name` form.
+        ExprData::This { qualifier } => match qualifier {
+            Some(qualifier) => format!("this@{}", render_type(&qualifier.ty)),
+            None => "this".to_owned(),
+        },
+        ExprData::Super { qualifier } => match qualifier {
+            Some(qualifier) => format!("super<{}>", render_type(&qualifier.ty)),
+            None => "super".to_owned(),
+        },
         ExprData::FieldAccess { name, .. } => format!("field {name}"),
         ExprData::MethodCall { name, .. } => format!("call {name}"),
         ExprData::InfixCall { name, .. } => format!("infix {name}"),
@@ -782,6 +821,9 @@ fn render_stmt(bodies: &BodyTree, id: StmtId, depth: usize, out: &mut String) {
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "none".to_owned())
         )),
+        StmtData::DeclDelegated { local, delegate } => {
+            out.push_str(&format!("{indent}{id}: delegated {local} by {delegate}\n"));
+        }
         StmtData::Destructuring {
             pattern,
             initializer,
@@ -810,10 +852,17 @@ fn render_stmt(bodies: &BodyTree, id: StmtId, depth: usize, out: &mut String) {
         }
         StmtData::ForEach {
             var,
+            pattern,
             iterable,
             body,
         } => {
-            out.push_str(&format!("{indent}{id}: for {var} in {iterable}\n"));
+            // The destructuring pattern of `for ((k, v) in xs)`: `var` is its
+            // first component, and the pattern is what the type layer
+            // destructures the element type into.
+            let pattern = pattern
+                .map(|pattern| format!(" pattern {pattern}"))
+                .unwrap_or_default();
+            out.push_str(&format!("{indent}{id}: for {var}{pattern} in {iterable}\n"));
             render_stmt(bodies, *body, depth + 1, out);
         }
         StmtData::Labeled { label, stmt } => {

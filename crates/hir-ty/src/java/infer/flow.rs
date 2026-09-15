@@ -127,6 +127,7 @@ pub(super) fn effective_final_scan(
                     var,
                     iterable,
                     body,
+                    ..
                 } => {
                     self.scopes.push(FxHashMap::default());
                     self.declare(var);
@@ -201,7 +202,9 @@ pub(super) fn effective_final_scan(
                 // value; its members' bodies are bodies of their own.
                 StmtData::LocalClass { .. } => {}
                 // A Kotlin local function — unreachable from a Java body.
-                StmtData::LocalFunction { .. } | StmtData::Destructuring { .. } => {}
+                StmtData::LocalFunction { .. }
+                | StmtData::Destructuring { .. }
+                | StmtData::DeclDelegated { .. } => {}
             }
         }
         fn walk_expr(&mut self, expr: ExprId) {

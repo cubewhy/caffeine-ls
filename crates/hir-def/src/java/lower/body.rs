@@ -413,6 +413,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
             let body = first_stmt_or_block(ctx, owner, node);
             StmtData::ForEach {
                 var,
+                pattern: None,
                 iterable,
                 body,
             }

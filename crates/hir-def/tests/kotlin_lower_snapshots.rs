@@ -496,3 +496,175 @@ enum class Level {
 }
 "#,
 }
+
+// -- the forms the body IR dropped -------------------------------------------
+//
+// Every fixture below was compiled with
+//
+//     JAVA_HOME=/home/cubewhy/.jdks/temurin-21.0.11 kotlinc -d out <file>.kt
+//
+// against kotlinc-jvm 2.4.20 (JRE 21.0.11+10-LTS) and compiled clean — the
+// empirical oracle these snapshots pin. The object-literal fixture is the one
+// whose *lowered* shape this milestone fixes; `javap -p` of the compiler's
+// output for it reads
+//
+//     public final class A_object_literalKt {
+//       private static final java.lang.Object x;
+//       public static final java.lang.Object getX();
+//       public static final void use(java.lang.Runnable);
+//       public static final void caller();
+//       static {};
+//     }
+//     public final class A_object_literalKt$x$1 {
+//       A_object_literalKt$x$1();
+//     }
+//     public final class A_object_literalKt$caller$1 implements java.lang.Runnable {
+//       A_object_literalKt$caller$1();
+//       public void run();
+//     }
+//
+// — each literal is its own anonymous class, named after the declaration it
+// stands in, which is why the lowering must anchor the literal and not the
+// declaration that happens to precede it.
+
+body_snapshot_lang! {
+    kotlin_body_object_literal_identity,
+    LanguageKind::Kotlin,
+    r#"
+val x = object : Any() {}
+
+fun use(runnable: Runnable) {}
+
+fun caller() {
+    use(object : Runnable {
+        override fun run() {}
+    })
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_local_declaration_parents,
+    LanguageKind::Kotlin,
+    r#"
+fun local(): Int {
+    class Counter(val start: Int) {
+        fun next(): Int = start + 1
+    }
+
+    fun twice(value: Int): Int = value * 2
+
+    val anonymous = object : Runnable {
+        override fun run() {}
+    }
+
+    return twice(Counter(1).next())
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_literals,
+    LanguageKind::Kotlin,
+    r#"
+fun literals(): Long {
+    val hex = 0xFF
+    val binary = 0b1010
+    val unsigned = 1u
+    val unsignedLong = 1UL
+    val max = 0xFFFFFFFFu
+    val grouped = 1_000L
+    val single = 1.5f
+    val exponent = 1e3
+    val floatExponent = 3.0e-2F
+    val newline = '\n'
+    val backslash = '\\'
+    val letter = '\u0041'
+    return grouped
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_when_subject_binding,
+    LanguageKind::Kotlin,
+    r#"
+fun classify(value: Any): String = when (val subject = value) {
+    is String -> subject
+    else -> "other"
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_for_destructuring,
+    LanguageKind::Kotlin,
+    r#"
+fun scan(entries: Map<Int, String>) {
+    for ((key, value) in entries) {
+        println(key)
+        println(value)
+    }
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_local_delegated_property,
+    LanguageKind::Kotlin,
+    r#"
+fun delegated(): Int {
+    val lazy by lazy { 1 }
+    val mapped: Int by mapOf("a" to 1)
+    return lazy + mapped
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_this_and_super_qualifiers,
+    LanguageKind::Kotlin,
+    r#"
+class Inner {
+    fun outer(): Inner = this@Inner
+
+    fun qualified(): Inner = this
+}
+
+open class Base {
+    open fun value(): Int = 1
+}
+
+class Derived : Base() {
+    fun call(): Int = super<Base>.value()
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_anonymous_functions,
+    LanguageKind::Kotlin,
+    r#"
+fun anonymous(): Int {
+    val expression = fun(x: Int) = x + 1
+    val block = fun(a: Int) {
+        println(a)
+    }
+    block(1)
+    return expression(1)
+}
+"#,
+}
+
+lower_snapshot_lang! {
+    kotlin_function_parameter_modifiers,
+    LanguageKind::Kotlin,
+    r#"
+inline fun hoist(noinline body: () -> Unit, crossinline view: () -> Unit) {
+    body()
+    view()
+}
+
+fun spread(vararg values: String) {}
+"#,
+}

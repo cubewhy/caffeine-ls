@@ -557,7 +557,8 @@ fn kotlin_display_name(tree: &KotlinItemTree, item: ItemId, simple: &str) -> Str
             let params = data
                 .params
                 .iter()
-                .map(|param| {
+                .map(|parameter| {
+                    let param = &parameter.param;
                     format!(
                         "{}: {}",
                         param.name,

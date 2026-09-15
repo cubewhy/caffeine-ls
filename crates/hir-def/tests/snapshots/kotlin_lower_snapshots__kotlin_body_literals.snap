@@ -1,0 +1,69 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun literals(): Long {
+    val hex = 0xFF
+    val binary = 0b1010
+    val unsigned = 1u
+    val unsignedLong = 1UL
+    val max = 0xFFFFFFFFu
+    val grouped = 1_000L
+    val single = 1.5f
+    val exponent = 1e3
+    val floatExponent = 3.0e-2F
+    val newline = '\n'
+    val backslash = '\\'
+    val letter = '\u0041'
+    return grouped
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun literals(): Long @1..338
+
+BODIES:
+fun literals body b0:
+  s0: decl l0 = e0
+  s1: decl l1 = e1
+  s2: decl l2 = e2
+  s3: decl l3 = e3
+  s4: decl l4 = e4
+  s5: decl l5 = e5
+  s6: decl l6 = e6
+  s7: decl l7 = e7
+  s8: decl l8 = e8
+  s9: decl l9 = e9
+  s10: decl l10 = e10
+  s11: decl l11 = e11
+  s12: expr e13
+  local l0: hex
+  local l1: binary
+  local l2: unsigned
+  local l3: unsignedLong
+  local l4: max
+  local l5: grouped
+  local l6: single
+  local l7: exponent
+  local l8: floatExponent
+  local l9: newline
+  local l10: backslash
+  local l11: letter
+  expr e0: literal Int(255) 
+  expr e1: literal Int(10) 
+  expr e2: literal Int(1) 
+  expr e3: literal Long(1) 
+  expr e4: literal Int(-1) 
+  expr e5: literal Long(1000) 
+  expr e6: literal Float 
+  expr e7: literal Double 
+  expr e8: literal Float 
+  expr e9: literal Char('\n') 
+  expr e10: literal Char('\\') 
+  expr e11: literal Char('A') 
+  expr e12: var grouped 
+  expr e13: jump Return [e12]

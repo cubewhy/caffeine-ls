@@ -1,0 +1,37 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+val x = object : Any() {}
+
+fun use(runnable: Runnable) {}
+
+fun caller() {
+    use(object : Runnable {
+        override fun run() {}
+    })
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+val x @1..28
+fun use(runnable: Runnable) @28..58
+fun caller() @60..141
+locals:
+  class <missing>@9..26 parent item0
+  class <missing>@83..138 parent item3
+
+BODIES:
+fun use body b0:
+  param l0: runnable: Runnable
+fun caller body b1:
+  s0: expr e3
+  local l0: runnable: Runnable
+  expr e0: object-literal item1 
+  expr e1: var use 
+  expr e2: object-literal item4 
+  expr e3: call use [e2]

@@ -1090,6 +1090,7 @@ fn walk_stmt(
             var,
             iterable,
             body,
+            ..
         } => {
             record_local(bodies, *var, scope, f);
             walk_expr(bodies, *iterable, scope, f);
@@ -1130,7 +1131,7 @@ fn walk_stmt(
             }
         }
         // A Kotlin local function — unreachable from a Java body.
-        LocalFunction { .. } | Destructuring { .. } => {}
+        LocalFunction { .. } | Destructuring { .. } | DeclDelegated { .. } => {}
     }
 }
 

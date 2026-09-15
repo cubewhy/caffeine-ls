@@ -890,6 +890,7 @@ impl BodyAnnotations<'_> {
                 var,
                 iterable,
                 body,
+                ..
             } => {
                 // §14.14.2: the loop variable is a local variable declaration
                 // ([§9.6.4.1]: element type `LOCAL_VARIABLE`).
@@ -972,7 +973,7 @@ impl BodyAnnotations<'_> {
             }
             // A Kotlin local function is unreachable from a Java body: a Java
             // body never lowers a Kotlin form.
-            S::LocalFunction { .. } | S::Destructuring { .. } => {}
+            S::LocalFunction { .. } | S::Destructuring { .. } | S::DeclDelegated { .. } => {}
             // [JLS §14.3]: a local declaration's own annotations are checked with
             // its declaration item, and its members' bodies are bodies of their own.
             S::Empty | S::Break(_) | S::Continue(_) | S::LocalClass { .. } | S::Missing => {}

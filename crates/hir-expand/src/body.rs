@@ -287,6 +287,12 @@ pub enum StmtData {
         local: LocalId,
         initializer: Option<ExprId>,
     },
+    /// A Kotlin local property declaration bound to a delegate — `val x by
+    /// lazy { … }` ([KLS
+    /// `declarations.html#delegated-property-declaration`](https://kotlinlang.org/spec/declarations.html#delegated-property-declaration)):
+    /// the local is bound to the `by` expression, whose `getValue` result is
+    /// its value. The Java statement forms never produce this variant.
+    DeclDelegated { local: LocalId, delegate: ExprId },
     /// A multi-declarator local declaration `int a = 1, b = 2;` ([§14.4]):
     /// the declarators of one declaration statement, lowered in order. Unlike
     /// a [`StmtData::Block`], this is *not* a lexical scope — every declarator
@@ -318,6 +324,12 @@ pub enum StmtData {
     /// An enhanced `for` statement ([§14.14.2]).
     ForEach {
         var: LocalId,
+        /// The destructuring pattern of a Kotlin `for ((k, v) in xs)` ([KLS
+        /// `expressions.html#destructuring-declarations`](https://kotlinlang.org/spec/expressions.html#destructuring-declarations)):
+        /// one bound local per component, of which `var` is the first. `None`
+        /// for a loop that binds one name ([§14.14.2]) and for a Java
+        /// enhanced `for`, which never writes one.
+        pattern: Option<PatternId>,
         iterable: ExprId,
         body: StmtId,
     },

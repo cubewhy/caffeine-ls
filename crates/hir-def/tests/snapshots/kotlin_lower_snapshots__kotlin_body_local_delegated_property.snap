@@ -1,0 +1,38 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun delegated(): Int {
+    val lazy by lazy { 1 }
+    val mapped: Int by mapOf("a" to 1)
+    return lazy + mapped
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun delegated(): Int @1..116
+
+BODIES:
+fun delegated body b0:
+  s2: delegated l0 by e3
+  s3: delegated l1 by e8
+  s4: expr e12
+  local l0: lazy
+  local l1: mapped: Int
+  expr e0: var lazy 
+  expr e1: literal Int(1) 
+  expr e2: lambda (0 params) [s1]
+  expr e3: call lazy [e2]
+  expr e4: var mapOf 
+  expr e5: literal Str("a") 
+  expr e6: literal Int(1) 
+  expr e7: infix to [e5, e6]
+  expr e8: call mapOf [e7]
+  expr e9: var lazy 
+  expr e10: var mapped 
+  expr e11: binary Add [e9, e10]
+  expr e12: jump Return [e11]
