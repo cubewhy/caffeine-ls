@@ -60,6 +60,31 @@ pub struct KotlinBodyTypes {
     pub locals: FxHashMap<LocalId, Ty>,
     /// The type errors the walk found, in report order.
     pub diagnostics: Vec<KotlinTypeError>,
+    /// The declaration every *name* of the body resolved to, keyed by the
+    /// expression it was inferred at — the Kotlin twin of the Java layer's
+    /// `ResolvedMember`, which the navigation layer reads to answer a
+    /// go-to-definition inside a body.
+    pub resolved: FxHashMap<ExprId, KotlinResolvedMember>,
+}
+
+/// The declaration a name of a Kotlin body resolved to
+/// ([`KotlinBodyTypes::resolved`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum KotlinResolvedMember {
+    /// A local binding: a parameter, a declared local, a loop variable, a
+    /// pattern binding or a catch parameter, identified by its binding in the
+    /// body.
+    Local(LocalId),
+    /// A Kotlin source declaration, possibly of another file than the body.
+    Kotlin {
+        file: FileId,
+        item: hir_expand::ids::ItemId,
+    },
+    /// A Java source or classfile method — the instantiated JVM view a Kotlin
+    /// receiver resolved through ([`crate::kotlin::jvm_view`]).
+    Java(Box<crate::java::method::MethodData>),
+    /// A Java source or classfile field.
+    JavaField(Box<crate::java::method::FieldData>),
 }
 
 impl KotlinBodyTypes {
@@ -375,7 +400,7 @@ impl<'a> InferCtx<'a> {
                         return Ty::reference(self.db, fqn, Vec::new());
                     }
                     let receiver = self.infer_expr(target);
-                    self.member_ty(&receiver, &name)
+                    self.member_ty(expr, &receiver, &name)
                 }
                 None => self.infer_name(expr, &name),
             },
@@ -411,12 +436,12 @@ impl<'a> InferCtx<'a> {
                             && let Some(fqn) = self.resolver.class_fqn(&format!("{path}.{name}"))
                         {
                             let class = Ty::reference(self.db, fqn, Vec::new());
-                            return self.constructor_ty(&class, &name, &arg_types);
+                            return self.constructor_ty(expr, &class, &name, &arg_types);
                         }
                         let receiver_ty = self.infer_expr(receiver);
-                        self.call_ty(&receiver_ty, &name, &arg_types)
+                        self.call_ty(expr, &receiver_ty, &name, &arg_types)
                     }
-                    None => self.call_without_receiver(&name, &arg_types),
+                    None => self.call_without_receiver(expr, &name, &arg_types),
                 }
             }
             ExprData::InfixCall {
@@ -426,7 +451,7 @@ impl<'a> InferCtx<'a> {
             } => {
                 let receiver_ty = self.infer_expr(receiver);
                 let arg_ty = self.infer_expr(arg);
-                self.call_ty(&receiver_ty, &name, &[arg_ty])
+                self.call_ty(expr, &receiver_ty, &name, &[arg_ty])
             }
             ExprData::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.infer_expr(lhs);
@@ -566,9 +591,19 @@ impl<'a> InferCtx<'a> {
             ExprData::CallableReference { receiver, name } => {
                 let receiver_ty = match receiver {
                     Some(receiver) => self.infer_expr(receiver),
-                    None => self.builtin("Any"),
+                    // A top-level callable reference (`::helper`): the name is
+                    // a declaration of this file or of an import.
+                    None => {
+                        if let Some((file, item)) = self.resolver.source_declaration(&name) {
+                            self.types
+                                .resolved
+                                .insert(expr, KotlinResolvedMember::Kotlin { file, item });
+                            return super::db::item_ty(self.db, file, item);
+                        }
+                        self.builtin("Any")
+                    }
                 };
-                self.member_ty(&receiver_ty, &name)
+                self.member_ty(expr, &receiver_ty, &name)
             }
             ExprData::Range { lhs, rhs, .. } => {
                 let lhs_ty = self.infer_expr(lhs);
@@ -695,13 +730,17 @@ impl<'a> InferCtx<'a> {
     /// A name: a local (or a parameter), else a member of the implicit
     /// receiver, else an unresolved reference.
     fn infer_name(&mut self, expr: ExprId, name: &Name) -> Ty {
-        if let Some((_, ty)) = self
+        if let Some((local, ty)) = self
             .types
             .locals
             .iter()
-            .find(|(local, _)| self.bodies.local(**local).name == *name)
+            .map(|(local, ty)| (*local, *ty))
+            .find(|(local, _)| self.bodies.local(*local).name == *name)
         {
-            return *ty;
+            self.types
+                .resolved
+                .insert(expr, KotlinResolvedMember::Local(local));
+            return ty;
         }
         if let Some((_, narrowed)) = self
             .narrowed
@@ -717,7 +756,9 @@ impl<'a> InferCtx<'a> {
         for receiver in self.implicit_receivers() {
             let members = method::member_set(self.db, &self.scope, &receiver, name, self.site());
             if let Some(member) = members.first() {
-                return member.ty(self.db);
+                let ty = member.ty(self.db);
+                self.record_member(expr, member);
+                return ty;
             }
         }
         // A top-level declaration of this file: a property or a function's
@@ -728,12 +769,22 @@ impl<'a> InferCtx<'a> {
                 KotlinItemData::Property(_) | KotlinItemData::Function(_)
             ) && self.tree.data(id).name() == Some(name)
         }) {
+            self.types.resolved.insert(
+                expr,
+                KotlinResolvedMember::Kotlin {
+                    file: self.file,
+                    item: top,
+                },
+            );
             return super::db::item_ty(self.db, self.file, top);
         }
         // A *top-level* declaration another file declares: the file's own
         // package, an explicit import, or a star import ([KLS
         // `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)).
         if let Some((file, item)) = self.resolver.source_declaration(name) {
+            self.types
+                .resolved
+                .insert(expr, KotlinResolvedMember::Kotlin { file, item });
             return super::db::item_ty(self.db, file, item);
         }
         // A classifier used as a *receiver*: `Foo.bar()` types its `Foo` as
@@ -753,6 +804,24 @@ impl<'a> InferCtx<'a> {
         self.error()
     }
 
+    /// Records the declaration a resolved *member* expression names
+    /// ([`KotlinBodyTypes::resolved`]).
+    fn record_member(&mut self, expr: ExprId, member: &method::Member) {
+        let resolved = match &member.target {
+            method::MemberTarget::Kotlin { file, item } => KotlinResolvedMember::Kotlin {
+                file: *file,
+                item: *item,
+            },
+            method::MemberTarget::Java(method) => {
+                KotlinResolvedMember::Java(Box::new(method.as_ref().clone()))
+            }
+            method::MemberTarget::JavaField(field) => {
+                KotlinResolvedMember::JavaField(Box::new(field.as_ref().clone()))
+            }
+        };
+        self.types.resolved.insert(expr, resolved);
+    }
+
     /// The call site every member lookup is attributed to.
     fn site(&self) -> method::CallSite {
         method::CallSite {
@@ -765,10 +834,14 @@ impl<'a> InferCtx<'a> {
     /// return type of a function the member set resolves, the field's type of a
     /// Java field — each in its *Kotlin* form, so a classfile member's type is
     /// the platform type it denotes ([`method::Member::ty`]).
-    fn member_ty(&mut self, receiver: &Ty, name: &Name) -> Ty {
+    fn member_ty(&mut self, expr: ExprId, receiver: &Ty, name: &Name) -> Ty {
         let members = method::member_set(self.db, &self.scope, receiver, name, self.site());
         match members.first() {
-            Some(member) => member.ty(self.db),
+            Some(member) => {
+                let ty = member.ty(self.db);
+                self.record_member(expr, member);
+                ty
+            }
             None => self.error(),
         }
     }
@@ -776,7 +849,7 @@ impl<'a> InferCtx<'a> {
     /// The type of a call: the return type of the candidate the arguments
     /// select, or the error type when the receiver's members declare no such
     /// callable — a call kotlinc reports as `unresolved reference`.
-    fn call_ty(&mut self, receiver: &Ty, name: &Name, arg_tys: &[Ty]) -> Ty {
+    fn call_ty(&mut self, expr: ExprId, receiver: &Ty, name: &Name, arg_tys: &[Ty]) -> Ty {
         let args: Vec<CallArg<'_>> = arg_tys
             .iter()
             .map(|ty| CallArg {
@@ -785,11 +858,18 @@ impl<'a> InferCtx<'a> {
             })
             .collect();
         match method::pick_callable(self.db, &self.scope, receiver, name, &args, self.site()) {
-            // A constructor call's type is the class it constructs — the
-            // receiver, with the arguments the call wrote — not the
-            // constructor's own `void` return.
-            Some(member) if member.kind == method::MemberKind::Constructor => receiver.clone(),
-            Some(member) => member.ty(self.db),
+            Some(member) => {
+                let ty = member.ty(self.db);
+                self.record_member(expr, &member);
+                // A constructor call's type is the class it constructs — the
+                // receiver, with the arguments the call wrote — not the
+                // constructor's own `void` return.
+                if member.kind == method::MemberKind::Constructor {
+                    receiver.clone()
+                } else {
+                    ty
+                }
+            }
             None => self.error(),
         }
     }
@@ -801,7 +881,7 @@ impl<'a> InferCtx<'a> {
     ///   whose candidate set is the class's constructors;
     /// * otherwise the callee is a member of an enclosing classifier (innermost
     ///   first) or a top-level declaration of the file.
-    fn call_without_receiver(&mut self, name: &Name, arg_tys: &[Ty]) -> Ty {
+    fn call_without_receiver(&mut self, expr: ExprId, name: &Name, arg_tys: &[Ty]) -> Ty {
         let args: Vec<CallArg<'_>> = arg_tys
             .iter()
             .map(|ty| CallArg {
@@ -810,19 +890,23 @@ impl<'a> InferCtx<'a> {
             })
             .collect();
         if let Some(class) = self.class_receiver(name) {
-            return self.constructor_ty(&class, name, &arg_tys);
+            return self.constructor_ty(expr, &class, name, &arg_tys);
         }
         for receiver in self.implicit_receivers() {
             if let Some(member) =
                 method::pick_callable(self.db, &self.scope, &receiver, name, &args, self.site())
             {
-                return member.ty(self.db);
+                let ty = member.ty(self.db);
+                self.record_member(expr, &member);
+                return ty;
             }
         }
         if let Some(member) =
             method::top_level_callable(self.db, &self.scope, self.file, name, &args)
         {
-            return member.ty(self.db);
+            let ty = member.ty(self.db);
+            self.record_member(expr, &member);
+            return ty;
         }
         // An *imported* top-level function: the declaration is in another file,
         // and it is what the name resolves to.
@@ -830,7 +914,9 @@ impl<'a> InferCtx<'a> {
             && let Some(member) =
                 method::declaration_callable(self.db, &self.scope, file, item, name, &args)
         {
-            return member.ty(self.db);
+            let ty = member.ty(self.db);
+            self.record_member(expr, &member);
+            return ty;
         }
         self.error()
     }
@@ -858,7 +944,7 @@ impl<'a> InferCtx<'a> {
     /// The type of a *constructor* call on the classifier type `class` under
     /// the class's own name: the member set of a class type under that name is
     /// its constructors, and the call's type is the class it constructs.
-    fn constructor_ty(&mut self, class: &Ty, name: &Name, arg_tys: &[Ty]) -> Ty {
+    fn constructor_ty(&mut self, expr: ExprId, class: &Ty, name: &Name, arg_tys: &[Ty]) -> Ty {
         let args: Vec<CallArg<'_>> = arg_tys
             .iter()
             .map(|ty| CallArg {
@@ -867,7 +953,10 @@ impl<'a> InferCtx<'a> {
             })
             .collect();
         match method::pick_callable(self.db, &self.scope, class, name, &args, self.site()) {
-            Some(_) => class.clone(),
+            Some(member) => {
+                self.record_member(expr, &member);
+                class.clone()
+            }
             None => self.error(),
         }
     }

@@ -2462,6 +2462,67 @@ class Shape(val origin: Point) {
     ),
 ];
 
+/// The fixture of a definition *inside a body*: a name the inference resolved
+/// — a local, a member of the enclosing class, a top-level declaration of
+/// another file, and a Java member through the JVM view.
+const KOTLIN_BODY_NAV_FILES: &[(&str, &str)] = &[
+    (
+        "/src/com/example/Decls.kt",
+        r#"package com.example
+
+fun helper(seed: Int): Int = seed
+"#,
+    ),
+    (
+        "/src/com/example/use/Use.kt",
+        r#"package com.example.use
+
+import com.example.helper
+
+class Use(val start: Int) {
+    val field: Int = 0
+
+    fun run(): Int {
+        val local = helper(start)
+        field
+        return local
+    }
+}
+"#,
+    ),
+];
+
+/// A definition on a name inside a Kotlin *body* answers the declaration the
+/// name resolved to — the body inference's own record
+/// (`hir_ty::KotlinBodyTypes::resolved`), which the navigation layer reads back
+/// instead of re-resolving the name.
+#[test]
+fn kotlin_body_navigation() {
+    let lsp = create_lsp();
+    for (path, text) in KOTLIN_BODY_NAV_FILES {
+        lsp.write_file(path, text);
+        lsp.open_document(path);
+    }
+    lsp.wait_until_workspace_is_loaded();
+    let user = KOTLIN_BODY_NAV_FILES[1].0;
+    let use_text = KOTLIN_BODY_NAV_FILES[1].1;
+
+    // A local: `local` resolves to its own declaration in the body.
+    let (line, character) = position_inside(use_text, "val local = helper(start)", 4);
+    let response = definition_at(&lsp, user, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_local", response);
+
+    // A top-level declaration of another file.
+    let (line, character) = position_inside(use_text, "helper(start)", 0);
+    let response = definition_at(&lsp, user, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_imported_function", response);
+
+    // A member of the enclosing class, without a written receiver.
+    let (line, character) = position_inside(use_text, "field\n", 0);
+    let response = definition_at(&lsp, user, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_implicit_member", response);
+}
+
 /// Kotlin navigation end to end: a definition on a type reference in another
 /// file, a definition on an import path, a hover with the declaration's
 /// signature and its KDoc, and the file's document symbols.

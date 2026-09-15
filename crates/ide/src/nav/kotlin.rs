@@ -410,9 +410,152 @@ fn resolutions(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolut
                 .into_iter()
                 .collect()
         }
-        // A declaration's own name is not a reference; `self_target` answers it.
-        Site::Declaration | Site::Other => Vec::new(),
+        // A declaration's own name is not a reference; `self_target` answers
+        // it. Anything else inside the declaration is a *body* name, which the
+        // inference's own record answers — `site_of` cannot tell the two apart,
+        // since the first declaration ancestor of both is the declaration.
+        Site::Declaration => match declaration_item_at(&ctx, offset) {
+            Some(_) => Vec::new(),
+            None => recorded_reference(db, file, offset),
+        },
+        // A name inside a body: the declaration the inference resolved it to
+        // ([`hir_ty::KotlinBodyTypes::resolved`]).
+        Site::Other => recorded_reference(db, file, offset),
     }
+}
+
+/// The declaration the name at `offset` resolved to, from the body inference's
+/// own record ([`hir_ty::KotlinBodyTypes::resolved`]).
+///
+/// The navigation layer asked `infer` for the name instead of re-resolving it:
+/// the member bridge ([`hir_ty::kotlin::method`]) decides what a name means —
+/// a local, an enclosing classifier's member, a top-level declaration of
+/// another file, a Java or classfile member through its JVM view — and this
+/// reads that decision back.
+fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
+    let Some(ctx) = Ctx::new(db, file) else {
+        return Vec::new();
+    };
+    let bodies = hir::file_body_tree(db, file);
+    for (id, _) in ctx.tree.items.iter() {
+        let item = hir_expand::ids::ItemId(id);
+        if ctx.tree.data(item).body_id().is_none() {
+            continue;
+        }
+        // A *local* binding's own name is a declaration of the body — it is no
+        // item of the file, so `self_target` cannot answer it.
+        if let Some((local, range)) = bodies
+            .locals
+            .iter()
+            .filter_map(|(id, _)| {
+                let local = hir_expand::body::LocalId(id);
+                let range = bodies.local_name_ranges.get(id.0 as usize).copied()?;
+                Some((local, range))
+            })
+            .find(|(_, range)| range.contains(offset))
+        {
+            return vec![Resolution::Decl {
+                file,
+                range,
+                name: bodies.local(local).name.to_string(),
+            }];
+        }
+        // The innermost expression that *has* a resolution: a call's callee
+        // name and a receiver are expressions of their own, and the name at
+        // the offset may be one of them, so the search walks outwards to the
+        // expression the inference recorded a target for — the call itself, or
+        // the access.
+        let mut candidates: Vec<(TextSize, hir_expand::body::ExprId)> = bodies
+            .exprs
+            .iter()
+            .filter_map(|(id, _)| {
+                let expr = hir_expand::body::ExprId(id);
+                let range = bodies.expr_range(expr)?;
+                range.contains(offset).then_some((range.len(), expr))
+            })
+            .collect();
+        candidates.sort_by_key(|(len, _)| *len);
+        let types = hir_ty::kotlin_body_types(db, file, item);
+        let Some(resolved) = candidates
+            .into_iter()
+            .find_map(|(_, expr)| types.resolved.get(&expr))
+        else {
+            continue;
+        };
+        return match resolved {
+            hir_ty::KotlinResolvedMember::Local(local) => {
+                let Some(range) = bodies.local_name_ranges.get(local.0.0 as usize).copied() else {
+                    return Vec::new();
+                };
+                vec![Resolution::Decl {
+                    file,
+                    range,
+                    name: bodies.local(*local).name.to_string(),
+                }]
+            }
+            hir_ty::KotlinResolvedMember::Kotlin { file, item } => {
+                match declaration_name_range(db, *file, *item) {
+                    Some(range) => vec![Resolution::Decl {
+                        file: *file,
+                        range,
+                        name: ctx
+                            .tree
+                            .data(*item)
+                            .name()
+                            .map(|name| name.to_string())
+                            .unwrap_or_default(),
+                    }],
+                    None => Vec::new(),
+                }
+            }
+            // A Java or classfile member: the declaration the JVM view points
+            // at, in the file that declares it.
+            hir_ty::KotlinResolvedMember::Java(method) => {
+                java_member_resolution(db, method.owner_file, method.decl_item)
+            }
+            hir_ty::KotlinResolvedMember::JavaField(field) => {
+                java_member_resolution(db, field.owner_file, field.decl_item)
+            }
+        };
+    }
+    Vec::new()
+}
+
+/// The resolution of a *Java* member's declaration, from the `(file, item)` the
+/// JVM view carries.
+fn java_member_resolution(
+    db: &RootDatabase,
+    file: Option<FileId>,
+    item: Option<hir::hir_def::java::item_tree::ItemId>,
+) -> Vec<Resolution> {
+    let (Some(file), Some(item)) = (file, item) else {
+        return Vec::new();
+    };
+    if hir::file_item_tree(db, file).as_kotlin().is_some() {
+        return declaration_name_range(db, file, item)
+            .map(|range| {
+                vec![Resolution::Decl {
+                    file,
+                    range,
+                    name: String::new(),
+                }]
+            })
+            .unwrap_or_default();
+    }
+    let tree = hir::java_item_tree(db, file);
+    let language = hir::file_item_tree(db, file).language();
+    let parse = parse(db, file, language);
+    let source = parse.syntax_node(language);
+    let map = hir::hir_def::db::ast_id_map(db, file, language);
+    hir::hir_def::java::ranges::item_name_range(map, &source, &tree, item)
+        .map(|range| {
+            vec![Resolution::Decl {
+                file,
+                range,
+                name: String::new(),
+            }]
+        })
+        .unwrap_or_default()
 }
 
 /// The declarations `resolution` names, for a caller that has already filtered

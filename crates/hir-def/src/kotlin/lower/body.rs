@@ -575,14 +575,14 @@ fn local_property(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>
     else {
         return StmtData::Missing;
     };
-    let local = alloc_local_mutability(
-        ctx,
-        name,
-        declared,
-        node.text_range(),
-        name_range(node),
-        is_var,
-    );
+    // The name's own range is the *variable declaration's* identifier — the
+    // property node's first direct token is its `val`/`var` keyword, so the
+    // declaration child is what carries it.
+    let name_range = declaration
+        .as_ref()
+        .map(|declaration| name_range(declaration))
+        .unwrap_or_else(|| name_range(node));
+    let local = alloc_local_mutability(ctx, name, declared, node.text_range(), name_range, is_var);
     // `val x by lazy { … }` ([KLS
     // `declarations.html#delegated-property-declaration`](https://kotlinlang.org/spec/declarations.html#delegated-property-declaration)):
     // the local is bound to the `by` expression, not to an initializer, and
