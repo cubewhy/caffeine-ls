@@ -116,8 +116,12 @@ pub fn infer_item(
         // the local — a smart cast ([KLS
         // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)).
         narrowed: FxHashMap::default(),
+        assigned: rustc_hash::FxHashSet::default(),
     };
     for &param in &bodies.body(body).params {
+        // A parameter always carries a value: it is a `val`, and the only
+        // writes it accepts are none.
+        ctx.assigned.insert(param);
         let ty = bodies
             .local(param)
             .ty
@@ -145,6 +149,12 @@ struct InferCtx<'a> {
     resolver: KotlinResolver<'a>,
     types: KotlinBodyTypes,
     narrowed: FxHashMap<LocalId, Ty>,
+    /// The locals that already carry a value — a declared initializer, or a
+    /// deferred initialization a `val` received — so that the *first* write to
+    /// a `val` is its initialization and a second one a reassignment
+    /// ([KLS
+    /// `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)).
+    assigned: rustc_hash::FxHashSet<LocalId>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -163,6 +173,11 @@ impl<'a> InferCtx<'a> {
     fn infer_stmt(&mut self, stmt: StmtId) {
         match self.bodies.stmt(stmt).clone() {
             StmtData::Decl { local, initializer } => {
+                // A declared initializer means the local already carries a
+                // value, so a later write to a `val` is a reassignment.
+                if initializer.is_some() {
+                    self.assigned.insert(local);
+                }
                 let declared = self
                     .bodies
                     .local(local)
@@ -206,6 +221,7 @@ impl<'a> InferCtx<'a> {
                         .copied()
                         .unwrap_or_else(|| self.error());
                     self.types.locals.insert(part, ty);
+                    self.assigned.insert(part);
                 }
             }
             StmtData::Expr(expr) => {
@@ -245,6 +261,7 @@ impl<'a> InferCtx<'a> {
                 // resolves them through `componentN()`); without the member
                 // bridge the components are the error type, which is what the
                 // loop variable is bound to.
+                self.assigned.insert(var);
                 match pattern {
                     Some(pattern) => {
                         let parts: Vec<LocalId> = match self.bodies.pattern(pattern).clone() {
@@ -261,6 +278,7 @@ impl<'a> InferCtx<'a> {
                                 .copied()
                                 .unwrap_or_else(|| self.error());
                             self.types.locals.insert(part, ty);
+                            self.assigned.insert(part);
                         }
                     }
                     None => {
@@ -437,10 +455,10 @@ impl<'a> InferCtx<'a> {
                 }
             }
             ExprData::Postfix { expr: inner, .. } => self.infer_expr(inner),
-            ExprData::Assign { lhs, rhs, .. } => {
+            ExprData::Assign { op, lhs, rhs } => {
                 let rhs_ty = self.infer_expr(rhs);
                 let range = self.bodies.expr_range(rhs);
-                self.infer_assignment(lhs, rhs_ty, range);
+                self.infer_assignment(op, lhs, rhs_ty, range);
                 self.builtin("Unit")
             }
             ExprData::Elvis { lhs, rhs } => {
@@ -712,6 +730,12 @@ impl<'a> InferCtx<'a> {
         }) {
             return super::db::item_ty(self.db, self.file, top);
         }
+        // A *top-level* declaration another file declares: the file's own
+        // package, an explicit import, or a star import ([KLS
+        // `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)).
+        if let Some((file, item)) = self.resolver.source_declaration(name) {
+            return super::db::item_ty(self.db, file, item);
+        }
         // A classifier used as a *receiver*: `Foo.bar()` types its `Foo` as
         // the class.
         if let Some(class) = self.class_receiver(name) {
@@ -795,10 +819,20 @@ impl<'a> InferCtx<'a> {
                 return member.ty(self.db);
             }
         }
-        match method::top_level_callable(self.db, &self.scope, self.file, name, &args) {
-            Some(member) => member.ty(self.db),
-            None => self.error(),
+        if let Some(member) =
+            method::top_level_callable(self.db, &self.scope, self.file, name, &args)
+        {
+            return member.ty(self.db);
         }
+        // An *imported* top-level function: the declaration is in another file,
+        // and it is what the name resolves to.
+        if let Some((file, item)) = self.resolver.source_declaration(name)
+            && let Some(member) =
+                method::declaration_callable(self.db, &self.scope, file, item, name, &args)
+        {
+            return member.ty(self.db);
+        }
+        self.error()
     }
 
     /// The dotted name an expression writes, when it is a *name path*: a
@@ -864,35 +898,62 @@ impl<'a> InferCtx<'a> {
 
     /// An assignment: the destination must be a `var`, and the value
     /// assignable to its type.
-    fn infer_assignment(&mut self, lhs: ExprId, rhs_ty: Ty, range: Option<rowan::TextRange>) {
+    fn infer_assignment(
+        &mut self,
+        op: hir_expand::body::AssignOp,
+        lhs: ExprId,
+        rhs_ty: Ty,
+        range: Option<rowan::TextRange>,
+    ) {
         let lhs_ty = self.infer_expr(lhs);
+        // A *compound* assignment (`x += y`) is the `plusAssign` convention
+        // ([KLS
+        // `operator-overloading.html#augmented-assignments`](https://kotlinlang.org/spec/operator-overloading.html#augmented-assignments)):
+        // `val list = mutableListOf(); list += x` calls `list.plusAssign(x)`,
+        // so it is not a reassignment at all. Whether the operator exists is
+        // the operator-lookup's question and is not checked yet — a recorded
+        // gap, which kotlinc reports as `unresolved reference: plusAssign`.
+        if op != hir_expand::body::AssignOp::Assign {
+            return;
+        }
         let name = match self.bodies.expr(lhs).clone() {
             ExprData::Var(name) => name,
             _ => return,
         };
-        // A `val` — a read-only local or property — cannot be reassigned
-        // ([KLS `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)).
-        let is_val = self
+        // A `val` — a read-only local — cannot be reassigned
+        // ([KLS
+        // `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)):
+        // the binding's own mutability decides, which the lowering records for
+        // every local ([`hir_expand::body::Local::is_mutable`]) — a parameter,
+        // a loop variable and a pattern binding are `val`s too.
+        if let Some(&local) = self
             .types
             .locals
             .keys()
-            .any(|local| self.bodies.local(*local).name == name)
-            && self
-                .tree
-                .items
-                .iter()
-                .all(|(_, data)| data.name() != Some(&name));
-        if is_val {
-            let range = self.bodies.expr_range(lhs);
-            self.types
-                .diagnostics
-                .push(KotlinTypeError::ValReassignment {
-                    expr: lhs,
-                    name,
-                    range,
-                });
+            .find(|local| self.bodies.local(**local).name == name)
+        {
+            // A `val` declared without an initializer is *deferred
+            // initialization*: `val x: T` followed by a single `x = …` is how
+            // Kotlin gives a `val` its value on every path, and kotlinc accepts
+            // it — only a *second* write is a reassignment.
+            if !self.bodies.local(local).is_mutable && self.assigned.contains(&local) {
+                let range = self.bodies.expr_range(lhs);
+                self.types
+                    .diagnostics
+                    .push(KotlinTypeError::ValReassignment {
+                        expr: lhs,
+                        name,
+                        range,
+                    });
+                return;
+            }
+            self.assigned.insert(local);
+            self.check_binding(MismatchTarget::Assignment, lhs_ty, rhs_ty, range);
             return;
         }
+        // A *property* write: `x = v` or `x.y = v` on an enclosing receiver.
+        // Whether the property has a setter is what the member set answers
+        // ([`crate::kotlin::method::MemberKind::Setter`]).
         self.check_binding(MismatchTarget::Assignment, lhs_ty, rhs_ty, range);
     }
 }

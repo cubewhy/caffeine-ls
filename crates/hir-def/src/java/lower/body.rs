@@ -153,6 +153,7 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                     // same declaration).
                     annotations: Vec::new(),
                     is_final: param_is_final(&child),
+                    is_mutable: false,
                 },
                 child.text_range(),
                 first_identifier_range(&child),
@@ -403,6 +404,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                             ty: if is_var { None } else { Some(ty) },
                             annotations,
                             is_final,
+                            is_mutable: false,
                         },
                         range,
                         name_token.map(|token| token.text_range()),
@@ -536,6 +538,7 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
                 },
                 annotations: annotations.clone(),
                 is_final,
+                is_mutable: false,
             },
             declarator.text_range(),
             first_identifier_range(declarator),
@@ -601,6 +604,7 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                             ty: Some(ty),
                             annotations,
                             is_final: false,
+                            is_mutable: false,
                         },
                         p.text_range(),
                         first_identifier_range(&p),
@@ -694,6 +698,7 @@ fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -
                     // §14.20.3: a resource variable is implicitly `final` —
                     // it is never assigned after initialization.
                     is_final: true,
+                    is_mutable: false,
                 },
                 declarator.text_range(),
                 first_identifier_range(&declarator),
@@ -1763,6 +1768,7 @@ fn pattern(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Patter
                             ty: Some(ty.clone()),
                             annotations: annotations.clone(),
                             is_final: false,
+                            is_mutable: false,
                         },
                         t.text_range(),
                         // The binding *is* the identifier: both ranges are it.
@@ -2080,6 +2086,7 @@ fn alloc_local_missing(ctx: &mut LowerCtx) -> LocalId {
             ty: None,
             annotations: Vec::new(),
             is_final: false,
+            is_mutable: false,
         },
         TextRange::default(),
         None,

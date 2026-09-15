@@ -223,6 +223,15 @@ pub struct Local {
     /// *constant variable*, and reads of it are constant expressions
     /// ([§15.28]).
     pub is_final: bool,
+    /// Whether the binding is Kotlin's `var` — the one binding form that may be
+    /// reassigned ([KLS
+    /// `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)).
+    ///
+    /// The opposite polarity of [`Self::is_final`], which is Java's: a Java
+    /// local is neither, so the Java lowering leaves this `false` and ignores
+    /// it — Java's definite-assignment and final-field rules are what refuse a
+    /// reassignment there ([JLS §16]), and they are checked elsewhere.
+    pub is_mutable: bool,
 }
 
 /// A type pattern `Foo f` ([JLS §14.30.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.1)):

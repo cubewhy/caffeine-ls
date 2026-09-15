@@ -211,3 +211,40 @@ fn the_java_layer_answers_for_a_kotlin_class() {
         "the JVM accessors are what a Java caller names: {accessors:?}"
     );
 }
+
+/// A top-level declaration of *another* Kotlin file is resolvable: a property
+/// or a function the file's own package or an import names is the one the
+/// workspace's symbol index holds under that fully qualified name ([KLS
+/// `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)).
+///
+/// kotlinc compiles the pair clean (the two files are one module).
+#[test]
+fn a_kotlin_file_uses_another_files_top_level_declaration() {
+    let files = [
+        (
+            "/src/main/kotlin/a/Decls.kt",
+            "package a\n\nval LIMIT: Int = 3\n\nfun doubled(seed: Int): Int = seed * 2\n",
+        ),
+        (
+            "/src/main/kotlin/b/Use.kt",
+            "package b\n\nimport a.LIMIT\nimport a.doubled\n\nfun use(): Int = doubled(LIMIT)\n\nval local: Int = doubled(1)\n",
+        ),
+    ];
+    let (db, _) = interop_fixture(&files);
+    let file = FileId::from_raw(2);
+    let tree = hir::file_item_tree(&db, file);
+    let tree = tree.as_kotlin().clone().expect("a Kotlin file");
+    for (id, data) in tree.items.iter() {
+        if data.body_id().is_none() {
+            continue;
+        }
+        let types = hir_ty::kotlin_body_types(&db, file, hir_expand::ids::ItemId(id));
+        for diagnostic in &types.diagnostics {
+            panic!(
+                "an imported declaration resolves: {} {}",
+                diagnostic.code().as_str(),
+                diagnostic.message(&db)
+            );
+        }
+    }
+}

@@ -668,30 +668,49 @@ pub fn top_level_callable(
     };
     let mut candidates = Vec::new();
     for &top in &tree.top {
-        let KotlinItemData::Function(function) = tree.data(top) else {
-            continue;
-        };
-        if function.name != *name {
-            continue;
+        if let Some(member) = declaration_callable(db, scope, file, top, name, args) {
+            candidates.push(member);
         }
-        let resolver = KotlinResolver::for_item(db, file, tree, top);
-        candidates.push(Member {
-            target: MemberTarget::Kotlin { file, item: top },
-            name: name.clone(),
-            kind: MemberKind::Function,
-            params: function
-                .params
-                .iter()
-                .map(|param| super::ty::ty_from_type_ref(db, &resolver, &param.param.ty.ty))
-                .collect(),
-            vararg: function
-                .params
-                .last()
-                .is_some_and(|param| param.param.varargs),
-            defaults: trailing_defaults(&function.defaults),
-        });
     }
     select(db, scope, candidates, args)
+}
+
+/// The callable a *top-level* declaration is, when its name is `name` and the
+/// arguments apply — [`top_level_callable`]'s twin for a declaration a caller
+/// has already found, which is what an *imported* name resolves to.
+pub fn declaration_callable(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    file: FileId,
+    item: hir_expand::ids::ItemId,
+    name: &Name,
+    args: &[CallArg<'_>],
+) -> Option<Member> {
+    let tree = hir::file_item_tree(db, file);
+    let tree = tree.as_kotlin()?;
+    let KotlinItemData::Function(function) = tree.data(item) else {
+        return None;
+    };
+    if function.name != *name {
+        return None;
+    }
+    let resolver = KotlinResolver::for_item(db, file, tree, item);
+    let member = Member {
+        target: MemberTarget::Kotlin { file, item },
+        name: name.clone(),
+        kind: MemberKind::Function,
+        params: function
+            .params
+            .iter()
+            .map(|param| super::ty::ty_from_type_ref(db, &resolver, &param.param.ty.ty))
+            .collect(),
+        vararg: function
+            .params
+            .last()
+            .is_some_and(|param| param.param.varargs),
+        defaults: trailing_defaults(&function.defaults),
+    };
+    applies(db, scope, &member, args).then_some(member)
 }
 
 /// The most specific of the applicable candidates ([KLS

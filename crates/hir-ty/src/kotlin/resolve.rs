@@ -48,6 +48,20 @@ use vfs::FileId;
 use crate::java::db::TyDatabase;
 use crate::ty::{Ty, TypeVarScope};
 
+/// The `.`-prefixes of a fully qualified name, most specific first: a
+/// declaration whose FQN is `fqn` lives in a file whose package is one of
+/// these.
+fn package_prefixes(fqn: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut end = fqn.len();
+    while let Some(dot) = fqn[..end].rfind('.') {
+        out.push(fqn[..dot].to_owned());
+        end = dot;
+    }
+    out.push(String::new());
+    out
+}
+
 /// The packages every Kotlin file imports implicitly
 /// (<https://kotlinlang.org/docs/packages.html#default-imports>).
 pub const DEFAULT_IMPORTS: &[&str] = &[
@@ -306,13 +320,65 @@ impl<'a> KotlinResolver<'a> {
     pub fn class_fqn(&self, name: &str) -> Option<Name> {
         let segments: Vec<&str> = name.split('.').collect();
         let simple = segments[0];
+        if segments.len() == 1
+            && let Some(_) = self.local_declaration(simple)
+        {
+            return self.local_fqn(simple);
+        }
+        for candidate in self.candidates(name) {
+            if let Some(fqn) = self.fqn_resolve(&candidate) {
+                return Some(fqn);
+            }
+        }
+        None
+    }
+
+    /// The *top-level* declaration a written name denotes in this file's scope:
+    /// a function, a property or a type alias of the file's own package, of an
+    /// explicit import, or of a star import ([KLS
+    /// `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)).
+    ///
+    /// The workspace's symbol index is keyed by fully qualified name, so the
+    /// candidates are the ones a classifier lookup uses; a *library*'s
+    /// top-level declarations live in the `*Kt` facade classes of the
+    /// classpath, which this does not consult — a recorded gap, and the reason
+    /// a standard-library function such as `listOf` is not yet a candidate.
+    pub fn source_declaration(&self, name: &Name) -> Option<(FileId, hir_expand::ids::ItemId)> {
+        let hir::ResolutionScope::SourceSet(source_set) = &self.scope else {
+            return None;
+        };
+        for candidate in self.candidates(name.as_str()) {
+            for package in package_prefixes(&candidate) {
+                let symbols = hir::source_set_fqn_symbols(
+                    self.db,
+                    source_set.clone(),
+                    &Name::new(&package),
+                    &Name::new(&candidate),
+                );
+                for reference in symbols.iter() {
+                    if matches!(
+                        reference.symbol.kind,
+                        hir::SourceSymbolKind::Function
+                            | hir::SourceSymbolKind::Property
+                            | hir::SourceSymbolKind::TypeAlias
+                    ) {
+                        return Some((reference.file, reference.symbol.item));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The candidate fully qualified names a written name may denote, in scope
+    /// order: a dotted name as written, an import binding, the file's own
+    /// package, the star imports, then the default imports.
+    fn candidates(&self, name: &str) -> Vec<String> {
+        let segments: Vec<&str> = name.split('.').collect();
+        let simple = segments[0];
         let mut candidates: Vec<String> = Vec::new();
 
         if segments.len() == 1 {
-            // A `typealias` or a top-level/nested declaration of this file.
-            if self.local_declaration(simple).is_some() {
-                return self.local_fqn(simple);
-            }
             // An explicit import (by alias or by its last segment).
             for import in &self.tree.imports {
                 if import.is_asterisk {
@@ -357,12 +423,7 @@ impl<'a> KotlinResolver<'a> {
             candidates.push(format!("{package}.{name}"));
         }
 
-        for candidate in candidates {
-            if let Some(fqn) = self.fqn_resolve(&candidate) {
-                return Some(fqn);
-            }
-        }
-        None
+        candidates
     }
 
     /// The canonical name of `fqn`, by classpath order: the project's source

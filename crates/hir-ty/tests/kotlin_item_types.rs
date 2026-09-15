@@ -863,3 +863,51 @@ mod interop_types {
         panic!("no item named {name} in the fixture");
     }
 }
+
+/// The `val`/`var` rules of an assignment, each checked with kotlinc 2.4.20:
+/// `var v = 1; v = 2` compiles, `val c = 1; c = 2` is
+/// `'val' cannot be reassigned.`, a `val` *declared* without an initializer may
+/// be assigned once (`val d: Int` then `d = 1` compiles, a second write does
+/// not), and `val list = mutableListOf<Int>(); list += 1` compiles because a
+/// compound assignment is the `plusAssign` convention, not a write.
+#[test]
+fn the_val_and_var_assignment_rules_match_the_compiler() {
+    let source = r#"
+fun rules() {
+    var v = 1
+    v = 2
+    val c = 1
+    c = 2
+    val d: Int
+    d = 1
+    val e: Int
+    e = 1
+    e = 2
+}
+
+fun compound() {
+    val list = mutableListOf<Int>()
+    list += 1
+}
+
+fun parameter(p: Int) {
+    p = 1
+}
+
+fun loop(xs: List<Int>) {
+    for (x in xs) {
+        x = 1
+    }
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Use.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    let reassignments = rendered
+        .lines()
+        .filter(|line| line.contains("'val' cannot be reassigned."))
+        .count();
+    assert_eq!(
+        reassignments, 4,
+        "`c`, the second `e`, the parameter `p` and the loop variable `x` are the writes a `val` refuses: {rendered}"
+    );
+}

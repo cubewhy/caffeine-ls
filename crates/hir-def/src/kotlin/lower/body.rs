@@ -309,13 +309,19 @@ fn lower_params(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<LocalId>
 }
 
 /// Binds one declared parameter as a [`Local`], with its declared type when it
-/// writes one.
+/// writes one. A parameter is a `val`: it cannot be reassigned
+/// ([KLS `declarations.html#function-declaration`](https://kotlinlang.org/spec/declarations.html#function-declaration)).
 fn lower_param(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> LocalId {
     let name = parameter_name(node).unwrap_or_else(|| Name::new("<missing>"));
     let ty = declared_type(ctx, node);
     alloc_local(ctx, name, ty, node.text_range(), name_range(node))
 }
 
+/// Binds a local with its declared type, `is_mutable` being Kotlin's `var`
+/// ([KLS
+/// `declarations.html#local-property-declaration`](https://kotlinlang.org/spec/declarations.html#local-property-declaration)):
+/// only a `var` binding may be reassigned, and the type layer reports a write
+/// to anything else.
 fn alloc_local(
     ctx: &mut LowerCtx<'_>,
     name: Name,
@@ -323,12 +329,26 @@ fn alloc_local(
     range: TextRange,
     name_range: TextRange,
 ) -> LocalId {
+    alloc_local_mutability(ctx, name, ty, range, name_range, false)
+}
+
+/// [`alloc_local`] with the binding's mutability: a `var` local is mutable, a
+/// `val` local, a parameter, a loop variable and a pattern binding are not.
+fn alloc_local_mutability(
+    ctx: &mut LowerCtx<'_>,
+    name: Name,
+    ty: Option<SpannedTypeRef>,
+    range: TextRange,
+    name_range: TextRange,
+    is_mutable: bool,
+) -> LocalId {
     let range_idx = ctx.bodies.locals.len();
     let id = ctx.bodies.locals.alloc(Local {
         name,
         ty,
         annotations: Vec::new(),
         is_final: false,
+        is_mutable,
     });
     debug_assert_eq!(ctx.bodies.local_ranges.len(), range_idx);
     ctx.bodies.local_ranges.push(range);
@@ -492,6 +512,12 @@ fn stmt_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
 /// A local property declaration: one `Decl` statement per bound name, each
 /// carrying the declared or initializer expression.
 fn local_property(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtData {
+    // `var x = …` may be reassigned, `val x = …` may not
+    // ([KLS `declarations.html#local-property-declaration`](https://kotlinlang.org/spec/declarations.html#local-property-declaration)).
+    let is_var = node
+        .children_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .any(|token| is_token(&token, K::VAR_KW));
     let initializer = lower_property_initializer(ctx, owner, node);
     // The declared type of `val x: T` sits on the *variable declaration* child
     // ([spec: grammar-rule-variableDeclaration]), not on the property node.
@@ -549,7 +575,14 @@ fn local_property(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>
     else {
         return StmtData::Missing;
     };
-    let local = alloc_local(ctx, name, declared, node.text_range(), name_range(node));
+    let local = alloc_local_mutability(
+        ctx,
+        name,
+        declared,
+        node.text_range(),
+        name_range(node),
+        is_var,
+    );
     // `val x by lazy { … }` ([KLS
     // `declarations.html#delegated-property-declaration`](https://kotlinlang.org/spec/declarations.html#delegated-property-declaration)):
     // the local is bound to the `by` expression, not to an initializer, and
