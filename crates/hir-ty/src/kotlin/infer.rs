@@ -113,7 +113,7 @@ pub fn infer_item(
     item: hir_expand::ids::ItemId,
 ) -> KotlinBodyTypes {
     let tree = hir::file_item_tree(db, file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return KotlinBodyTypes::default();
     };
     let Some(body) = tree.data(item).body_id() else {

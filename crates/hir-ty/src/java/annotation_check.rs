@@ -44,9 +44,8 @@
 //! declares no methods declares no elements, so every pair of a normal
 //! annotation of it is an error ([§9.7.1]) and none can be missing.
 
-use hir_def::java::item_tree::{
-    ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId, ItemTree, ItemTypeRef,
-};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::jvm::decl::{ItemAnnotationRef, ItemAnnotationValue, ItemTypeRef};
 use hir_expand::{
     body::{BodyTree, ExprId, LocalId, PatternId, StmtId},
     name::Name,
@@ -527,7 +526,7 @@ fn type_context_applicable(
 
 /// The variable-declaration applicability check over an *item* annotation —
 /// a method's or constructor's formal parameter
-/// ([`hir_def::java::item_tree::Param::annotations`]).
+/// ([`hir_def::jvm::decl::Param::annotations`]).
 fn check_variable_annotation(
     cx: &ValueCtx<'_>,
     annotation: &ItemAnnotationRef,
@@ -716,7 +715,7 @@ fn check_annotation_elements_ranged(
 ///
 /// The *method's* own parameters are absent here: their declaration
 /// annotations are lowered with the signature
-/// ([`hir_def::java::item_tree::Param::annotations`]) and their types are
+/// ([`hir_def::jvm::decl::Param::annotations`]) and their types are
 /// declaration type references, so the item walk covers both (checking them
 /// again here would report every one of them twice).
 /// The annotation walk of one body: the state a single pass needs, plus the
@@ -744,7 +743,7 @@ struct BodyAnnotations<'a> {
 ///
 /// The *method's* own parameters are absent here: their declaration
 /// annotations are lowered with the signature
-/// ([`hir_def::java::item_tree::Param::annotations`]) and their types are
+/// ([`hir_def::jvm::decl::Param::annotations`]) and their types are
 /// declaration type references, so the item walk covers both (checking them
 /// again here would report every one of them twice).
 ///
@@ -1343,7 +1342,7 @@ fn check_single_value_commensurate(
     source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
-    use hir_def::java::item_tree::ItemAnnotationValue as V;
+    use hir_def::jvm::decl::ItemAnnotationValue as V;
     let (db, scope) = (cx.db, cx.scope);
     // A nested annotation values the annotation type it names ([§9.7.1]), and
     // its own argument list is checked recursively.
@@ -2004,7 +2003,7 @@ fn is_target_annotation(
 
 /// The `ElementType` constant names of a `@Target` argument list: the enum
 /// constants of the `value` element ([§9.7.1]), single or in an array.
-fn target_value_names(args: &[hir_def::java::item_tree::ItemAnnotationArg]) -> Vec<String> {
+fn target_value_names(args: &[hir_def::jvm::decl::ItemAnnotationArg]) -> Vec<String> {
     let mut out = Vec::new();
     for arg in args {
         if arg.name.as_str() == "value" {

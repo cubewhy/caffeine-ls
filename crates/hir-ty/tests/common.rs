@@ -2838,7 +2838,8 @@ impl AnnotationSource<'_> {
 }
 
 fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
-    use hir_def::java::item_tree::{ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemTypeRef};
+    use hir_def::java::item_tree::ItemData;
+    use hir_def::jvm::decl::{ItemAnnotationRef, ItemAnnotationValue, ItemTypeRef};
     fn render_arg(src: &AnnotationSource<'_>, value: &ItemAnnotationValue) -> String {
         use hir_expand::body::Literal;
         match value {

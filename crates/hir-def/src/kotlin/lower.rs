@@ -22,13 +22,10 @@
 //!   late-initialized properties, delegated properties);
 //! * `packages-and-imports.html` — packages and imports.
 
-use triomphe::Arc;
-
 use base_db::LanguageKind;
 use hir_expand::{ast_id_map::AstIdMap, body::BodyTree};
 use syntax::SourceFile;
 
-use crate::item_tree::{FileItemTree, LoweredFile};
 use crate::kotlin::item_tree::{ItemId, KotlinItemData, KotlinItemTree};
 
 pub(super) mod body;
@@ -61,14 +58,15 @@ impl<'a> LowerCtx<'a> {
     }
 }
 
-/// Lowers a Kotlin file into its item tree plus body IR, anchoring every
-/// declaration to its syntax node through `map`. The language-dispatched entry
-/// point is [`crate::lower::lower_source`]; this one is the Kotlin arm and
-/// parses the text as Kotlin.
+/// Lowers a Kotlin file into its declaration model plus body IR, anchoring
+/// every declaration to its syntax node through `map`. The language-dispatched
+/// entry point is [`crate::lower::lower_source`], which reaches this one
+/// through [`crate::kotlin::plugin::KOTLIN`]; this one parses the text as
+/// Kotlin.
 ///
 /// `.kts` scripts are *not* lowered: a script's top-level statements have no
 /// file item to hang off (see [`crate::lower::lower_source`]).
-pub fn lower_kotlin_source(text: &str, map: &AstIdMap) -> LoweredFile {
+pub fn lower_kotlin_source(text: &str, map: &AstIdMap) -> (KotlinItemTree, BodyTree) {
     let parse = syntax::SourceFile::parse(LanguageKind::Kotlin, text);
     let file = parse.syntax_node(LanguageKind::Kotlin);
     let SourceFile::Kotlin(file) = &file else {
@@ -88,10 +86,7 @@ pub fn lower_kotlin_source(text: &str, map: &AstIdMap) -> LoweredFile {
         mut tree, bodies, ..
     } = ctx;
     record_nesting(&mut tree);
-    LoweredFile {
-        items: FileItemTree::Kotlin(Arc::new(tree)),
-        bodies: Arc::new(bodies),
-    }
+    (tree, bodies)
 }
 
 /// Records, after the walk, the structural relation the item tree does not get

@@ -141,34 +141,35 @@ pub(crate) fn collect_type_diagnostics(
     db: &dyn hir_ty::TyDatabase,
     file_id: FileId,
 ) {
-    match &*hir::file_item_tree(db, file_id) {
-        hir::hir_def::FileItemTree::Kotlin(tree) => {
-            for (id, _) in tree.items.iter() {
-                let types = hir_ty::kotlin_body_types(db, file_id, hir_expand::ids::ItemId(id));
-                for diagnostic in &types.diagnostics {
-                    let Some(range) = diagnostic.range() else {
-                        continue;
-                    };
-                    sink.push(
+    // A Kotlin file's findings are the Kotlin type layer's: it walks the
+    // file's items and reports each with its own severity.
+    if let Some(tree) = hir::hir_def::kotlin::plugin::model(&hir::file_item_tree(db, file_id)) {
+        for (id, _) in tree.items.iter() {
+            let types = hir_ty::kotlin_body_types(db, file_id, hir_expand::ids::ItemId(id));
+            for diagnostic in &types.diagnostics {
+                let Some(range) = diagnostic.range() else {
+                    continue;
+                };
+                sink.push(
+                    file_id,
+                    make_diagnostic(
                         file_id,
-                        make_diagnostic(
-                            file_id,
-                            &diagnostic.message(db),
-                            range,
-                            Some(DiagnosticCode::Kotlin(diagnostic.code())),
-                            Severity::Error,
-                        ),
-                    );
-                }
+                        &diagnostic.message(db),
+                        range,
+                        Some(DiagnosticCode::Kotlin(diagnostic.code())),
+                        Severity::Error,
+                    ),
+                );
             }
         }
-        _ => {
-            let tree = hir::java_item_tree(db, file_id);
-            for (item_id, _) in all_items(&tree) {
-                for diagnostic in item_diagnostics_impl(db, file_id, item_id) {
-                    sink.push(file_id, diagnostic);
-                }
-            }
+        return;
+    }
+    // Every other file — a Java one, and one no language lowered, which declares
+    // no item at all — is walked as Java.
+    let tree = hir::java_item_tree(db, file_id);
+    for (item_id, _) in all_items(&tree) {
+        for diagnostic in item_diagnostics_impl(db, file_id, item_id) {
+            sink.push(file_id, diagnostic);
         }
     }
 }

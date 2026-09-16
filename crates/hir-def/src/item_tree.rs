@@ -1,14 +1,15 @@
 //! The language-neutral file item tree: the facade every language-dispatched
 //! HIR consumer reads.
 //!
-//! Each language lowers its own declaration model — Java's
-//! [`crate::java::item_tree::ItemTree`] today, Kotlin's alongside it — and the
-//! facade hides which one a file produced behind [`FileItemTree`]. Consumers
-//! that must work for *any* file take this type: the language-dispatched entry
-//! points of `ide` ([`crate::db::file_item_tree`]'s callers) and the file-level
-//! queries. Consumers that are inherently Java-only take the language's own
-//! tree through the typed accessor (`hir::java_item_tree`) and must not be
-//! handed a tree of another language.
+//! Each language lowers its own declaration model ([`crate::java::item_tree::ItemTree`],
+//! [`crate::kotlin::item_tree::KotlinItemTree`]) and registers it in
+//! [`crate::lang`]; the facade is the erased handle to whichever model a file
+//! produced ([`crate::lang::Declarations`]). Consumers that must work for *any*
+//! file take this type and obtain the language's own tree through that
+//! language's accessor ([`crate::java::plugin::tree`] /
+//! [`crate::kotlin::plugin::tree`]); consumers that are inherently Java-only
+//! take the language's model directly and must not be handed a tree of another
+//! language.
 //!
 //! [`LoweredFile`] pairs the item tree with the per-file body IR
 //! ([`hir_expand::body::BodyTree`]), which is language-neutral and therefore
@@ -20,48 +21,57 @@ use triomphe::Arc;
 use base_db::LanguageKind;
 use hir_expand::body::BodyTree;
 
-use crate::java;
-use crate::kotlin;
+use crate::lang::{self, Declarations};
 
 /// The lowered item tree of one file, in whichever language the file is.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FileItemTree {
-    /// A file whose declarations were not lowered: an unknown-language file,
-    /// or a language whose lowering has not landed yet. The carried language is
-    /// the *file's*, so language-dispatched consumers still route correctly.
-    Empty(LanguageKind),
-    /// A Java file's declaration model.
-    Java(Arc<java::item_tree::ItemTree>),
-    /// A Kotlin file's declaration model.
-    Kotlin(Arc<kotlin::item_tree::KotlinItemTree>),
+#[derive(Debug, Clone)]
+pub struct FileItemTree {
+    /// The erased model handle (`std::sync::Arc`: `triomphe::Arc` cannot coerce
+    /// to a trait object on stable Rust).
+    declarations: std::sync::Arc<dyn Declarations>,
 }
 
 impl FileItemTree {
+    /// The facade over a language's declaration model, as the lowering of that
+    /// language produced it.
+    pub(crate) fn new(declarations: std::sync::Arc<dyn Declarations>) -> Self {
+        Self { declarations }
+    }
+
+    /// The facade of a file whose declarations were not lowered: an
+    /// unknown-language file, or a language whose lowering has not landed yet.
+    /// The carried language is the *file's*, so language-dispatched consumers
+    /// still route correctly.
+    pub fn empty(language: LanguageKind) -> Self {
+        Self {
+            declarations: lang::empty(language),
+        }
+    }
+
     /// The language of the file the tree was lowered from.
     pub fn language(&self) -> LanguageKind {
-        match self {
-            FileItemTree::Empty(language) => *language,
-            FileItemTree::Java(tree) => tree.language,
-            FileItemTree::Kotlin(tree) => tree.language,
-        }
+        self.declarations.language()
     }
 
-    /// The Java declaration model of the file, or `None` when the file is not
-    /// Java (or has no lowered items).
-    pub fn as_java(&self) -> Option<&Arc<java::item_tree::ItemTree>> {
-        match self {
-            FileItemTree::Empty(_) | FileItemTree::Kotlin(_) => None,
-            FileItemTree::Java(tree) => Some(tree),
-        }
+    /// The erased declaration model, borrowed: the language-agnostic view,
+    /// without touching the handle's refcount.
+    pub fn declared(&self) -> &dyn Declarations {
+        &*self.declarations
     }
 
-    /// The Kotlin declaration model of the file, or `None` when the file is
-    /// not Kotlin (or has no lowered items — a `.kts` script).
-    pub fn as_kotlin(&self) -> Option<&Arc<kotlin::item_tree::KotlinItemTree>> {
-        match self {
-            FileItemTree::Empty(_) | FileItemTree::Java(_) => None,
-            FileItemTree::Kotlin(tree) => Some(tree),
-        }
+    /// The erased declaration model, shared: for a consumer that outlives the
+    /// facade it read it from.
+    pub fn declarations(&self) -> std::sync::Arc<dyn Declarations> {
+        std::sync::Arc::clone(&self.declarations)
+    }
+}
+
+impl PartialEq for FileItemTree {
+    /// The models' equality, not the handles': a body-only edit leaves the
+    /// item tree's value equal, which is what lets salsa backdate it across
+    /// such an edit (see [`crate::db`]).
+    fn eq(&self, other: &Self) -> bool {
+        self.language() == other.language() && self.declarations.dyn_eq(&*other.declarations)
     }
 }
 
@@ -79,13 +89,4 @@ impl FileItemTree {
 pub struct LoweredFile {
     pub items: FileItemTree,
     pub bodies: Arc<BodyTree>,
-}
-
-/// The lowercase name of a language, as the snapshot renderers spell it.
-pub fn language_name(language: LanguageKind) -> &'static str {
-    match language {
-        LanguageKind::Java => "java",
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => "kotlin",
-        LanguageKind::Unknown => "unknown",
-    }
 }

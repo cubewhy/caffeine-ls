@@ -39,12 +39,13 @@
 //! class-kind table already does.
 
 use hir::hir_def::kotlin::item_tree::{
-    ClassData, ConstructorData, FunctionData, ItemAnnotationValue, KotlinAnnotationRef,
-    KotlinClassKind, KotlinItemData, KotlinItemTree, PropertyData,
+    ClassData, ConstructorData, FunctionData, KotlinAnnotationRef, KotlinClassKind, KotlinItemData,
+    KotlinItemTree, PropertyData,
 };
 use hir::hir_def::kotlin::modifiers::{
     KotlinModality, KotlinModifierFlags, KotlinModifiers, KotlinVisibility,
 };
+use hir_def::jvm::decl::ItemAnnotationValue;
 use hir_expand::body::Literal;
 use hir_expand::ids::ItemId;
 use hir_expand::name::Name;
@@ -66,7 +67,7 @@ pub fn java_view_members(
     name: &str,
 ) -> Vec<MethodData> {
     let tree = hir::file_item_tree(db, source.file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return Vec::new();
     };
     let KotlinItemData::Class(class) = tree.data(source.item) else {
@@ -111,7 +112,7 @@ pub fn java_view_fields(
     name: &str,
 ) -> Vec<FieldData> {
     let tree = hir::file_item_tree(db, source.file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return Vec::new();
     };
     let KotlinItemData::Class(class) = tree.data(source.item) else {
@@ -151,7 +152,7 @@ pub fn java_view_fields(
 /// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
 pub fn file_facade_class(db: &dyn TyDatabase, file: FileId) -> Option<Name> {
     let tree = hir::file_item_tree(db, file);
-    let tree = tree.as_kotlin()?;
+    let tree = hir_def::kotlin::plugin::model(&tree)?;
     if let Some(name) = tree.facade_class() {
         return Some(Name::new(&name));
     }
@@ -176,7 +177,7 @@ pub fn file_facade_class(db: &dyn TyDatabase, file: FileId) -> Option<Name> {
 /// them.
 pub fn file_facade_members(db: &dyn TyDatabase, file: FileId, name: &str) -> Vec<MethodData> {
     let tree = hir::file_item_tree(db, file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return Vec::new();
     };
     let Some(facade) = facade_fqn(tree, db, file) else {
@@ -195,7 +196,7 @@ pub fn file_facade_members(db: &dyn TyDatabase, file: FileId, name: &str) -> Vec
 /// `@JvmField` properties.
 pub fn file_facade_fields(db: &dyn TyDatabase, file: FileId, name: &str) -> Vec<FieldData> {
     let tree = hir::file_item_tree(db, file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return Vec::new();
     };
     let Some(facade) = facade_fqn(tree, db, file) else {

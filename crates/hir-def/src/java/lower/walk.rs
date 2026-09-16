@@ -18,13 +18,13 @@ use hir_expand::{
 };
 
 use super::super::item_tree::{
-    AnnotationData, ClassData, EnumConstantData, EnumData, FieldData, InstanceInitData,
-    ItemAnnotationRef, ItemData, ItemId, ItemTypeRef, MethodData, MethodExtra, MethodExtraJava,
-    ModuleData, ModuleExports, ModuleProvides, ModuleRequires, Param, RecordComponent, RecordData,
-    Signature, StaticInitData, TypeParam,
+    AnnotationData, ClassData, EnumConstantData, EnumData, FieldData, InstanceInitData, ItemData,
+    ItemId, MethodData, MethodExtra, MethodExtraJava, ModuleData, ModuleExports, ModuleProvides,
+    ModuleRequires, RecordComponent, RecordData, Signature, StaticInitData, TypeParam,
 };
 use super::super::modifiers::JavaModifiers;
 use super::{LowerCtx, body};
+use crate::jvm::decl::{ItemAnnotationRef, ItemTypeRef, Param};
 
 pub(super) fn lower_file(ctx: &mut LowerCtx<'_>, file: &java_syntax::SourceFile) {
     for child in file.syntax_node.children() {

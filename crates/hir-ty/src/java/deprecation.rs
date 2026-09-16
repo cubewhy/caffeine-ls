@@ -28,7 +28,8 @@
 //! disabled-means-error, the classfile `0xFFFF` minor version) is a distinct
 //! one.
 
-use hir_def::java::item_tree::{ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId};
+use hir_def::java::item_tree::{ItemData, ItemId};
+use hir_def::jvm::decl::{ItemAnnotationRef, ItemAnnotationValue};
 use hir_expand::body::Literal;
 use hir_expand::name::Name;
 use syntax::stub::PrimitiveValue;
@@ -110,7 +111,7 @@ pub(crate) fn annotation_deprecation(
 /// The deprecation a `@Deprecated` argument list declares: `Terminal` when it
 /// carries `forRemoval = true`, `Ordinary` otherwise
 /// ([§9.6.4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.6)).
-fn deprecation_of_args(args: &[hir_def::java::item_tree::ItemAnnotationArg]) -> Deprecation {
+fn deprecation_of_args(args: &[hir_def::jvm::decl::ItemAnnotationArg]) -> Deprecation {
     let for_removal = args.iter().any(|arg| {
         arg.name.as_str() == "forRemoval"
             && matches!(

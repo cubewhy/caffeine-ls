@@ -20,7 +20,8 @@
 //! [§4.12.4]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4
 //! [§15.29]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.29
 
-use hir_def::java::item_tree::{ItemAnnotationValue, ItemData, ItemId};
+use hir_def::java::item_tree::{ItemData, ItemId};
+use hir_def::jvm::decl::ItemAnnotationValue;
 use hir_expand::body::{BinaryOp, BodyTree, ExprData, ExprId, Literal, UnaryOp};
 use hir_expand::name::Name;
 use rowan::SyntaxNode;

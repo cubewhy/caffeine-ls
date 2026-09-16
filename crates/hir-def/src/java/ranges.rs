@@ -22,13 +22,14 @@ use hir_expand::{
 };
 
 use crate::java::item_tree::{
-    EnumConstantData, FieldData, ImportItem, ItemAnnotationRef, ItemData, ItemId, ItemTree,
-    ItemTypeRef, MethodData, ModuleExports, ModuleRequires, PackageDeclNode, RecordComponent,
+    EnumConstantData, FieldData, ImportItem, ItemData, ItemId, ItemTree, MethodData, ModuleExports,
+    ModuleRequires, PackageDeclNode, RecordComponent,
 };
 use crate::java::lower::walk::{
     annotation_name_ref, annotation_value_from, first_token, is, is_element_value, source_name,
     trimmed_text, type_from,
 };
+use crate::jvm::decl::{ItemAnnotationRef, ItemTypeRef};
 
 /// The Java root node of `source`; `None` for a non-Java file.
 fn java_root(source: &SourceFile) -> Option<&SyntaxNode<Lang>> {

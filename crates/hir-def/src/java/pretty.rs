@@ -18,12 +18,12 @@ use hir_expand::{
 
 use crate::java::{
     item_tree::{
-        ItemData, ItemId, ItemTree, ItemTypeRef, LanguageKind, ModuleData, RecordComponent,
-        Signature, TypeParam,
+        ItemData, ItemId, ItemTree, LanguageKind, ModuleData, RecordComponent, Signature, TypeParam,
     },
     modifiers::JavaModifiers,
     ranges,
 };
+use crate::jvm::decl::ItemTypeRef;
 
 /// The stable, human-readable rendering of a lowered [`ItemTree`] plus the
 /// source ranges resolved from the current syntax tree — the snapshot surface

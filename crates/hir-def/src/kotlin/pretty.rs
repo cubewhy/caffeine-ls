@@ -18,11 +18,10 @@ use hir_expand::{
 };
 
 use super::item_tree::{
-    ConstructorData, ItemAnnotationArg, ItemAnnotationRef, ItemAnnotationValue, ItemId,
-    ItemTypeRef, KotlinAnnotationRef, KotlinItemData, KotlinItemTree, KotlinParam, KotlinSuperType,
-    KotlinTypeParam, TypeAliasData,
+    ConstructorData, ItemId, KotlinAnnotationRef, KotlinItemData, KotlinItemTree, KotlinParam,
+    KotlinSuperType, KotlinTypeParam, TypeAliasData,
 };
-use crate::item_tree::language_name;
+use crate::jvm::decl::{ItemAnnotationArg, ItemAnnotationRef, ItemAnnotationValue, ItemTypeRef};
 use crate::kotlin::modifiers::KotlinModifiers;
 
 /// The stable, human-readable rendering of a lowered [`KotlinItemTree`] plus
@@ -31,7 +30,7 @@ use crate::kotlin::modifiers::KotlinModifiers;
 pub fn pretty_print(tree: &KotlinItemTree, map: &AstIdMap, source: &SourceFile) -> String {
     let mut out = String::new();
 
-    out.push_str(&format!("file ({})", language_name(tree.language)));
+    out.push_str(&format!("file ({})", tree.language.name()));
     if let Some(package) = &tree.package {
         out.push_str(&format!(" package {package}"));
     }

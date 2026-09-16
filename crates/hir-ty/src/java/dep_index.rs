@@ -30,7 +30,8 @@
 use rustc_hash::FxHashSet;
 use vfs::FileId;
 
-use hir_def::java::item_tree::{ItemData, ItemId, ItemTree, ItemTypeRef};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::jvm::decl::ItemTypeRef;
 use hir_expand::{
     body::{BodyId, BodyTree, ExprData, ExprId, StmtData, StmtId},
     name::Name,

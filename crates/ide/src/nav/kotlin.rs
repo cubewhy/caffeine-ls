@@ -531,7 +531,7 @@ fn java_member_resolution(
     let (Some(file), Some(item)) = (file, item) else {
         return Vec::new();
     };
-    if hir::file_item_tree(db, file).as_kotlin().is_some() {
+    if hir::hir_def::kotlin::plugin::tree(db, file).is_some() {
         return declaration_name_range(db, file, item)
             .map(|range| {
                 vec![Resolution::Decl {
@@ -833,7 +833,7 @@ struct Ctx {
 impl Ctx {
     fn new(db: &RootDatabase, file: FileId) -> Option<Ctx> {
         let file_tree = hir::file_item_tree(db, file);
-        let tree = file_tree.as_kotlin()?.clone();
+        let tree = hir::hir_def::kotlin::plugin::tree(db, file)?;
         let language = file_tree.language();
         let parse = parse(db, file, language);
         let source = parse.syntax_node(language);
@@ -869,7 +869,7 @@ fn declaration_name_range(
 ) -> Option<TextRange> {
     let language = hir::file_item_tree(db, file).language();
     match hir::file_item_tree(db, file) {
-        tree if tree.as_kotlin().is_some() => {
+        tree if hir::hir_def::kotlin::plugin::model(&tree).is_some() => {
             let ctx = Ctx::new(db, file)?;
             let _ = language;
             ctx.name_range(item)

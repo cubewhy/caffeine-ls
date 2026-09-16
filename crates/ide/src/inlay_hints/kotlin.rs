@@ -34,7 +34,7 @@ pub(super) fn hints(
     config: &InlayHintsConfig,
 ) -> Vec<InlayHint> {
     let tree = hir::file_item_tree(db, file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir::hir_def::kotlin::plugin::model(&tree) else {
         return Vec::new();
     };
     let bodies = hir::file_body_tree(db, file);
@@ -102,7 +102,7 @@ pub(super) fn resolve(
         return None;
     }
     let tree = hir::file_item_tree(db, file);
-    let tree = tree.as_kotlin()?;
+    let tree = hir::hir_def::kotlin::plugin::model(&tree)?;
     let bodies = hir::file_body_tree(db, file);
     for (id, _) in tree.items.iter() {
         let item = hir_expand::ids::ItemId(id);

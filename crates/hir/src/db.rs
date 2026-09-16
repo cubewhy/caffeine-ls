@@ -200,10 +200,7 @@ pub fn java_item_tree(
     db: &dyn HirDatabase,
     file_id: FileId,
 ) -> Arc<hir_def::java::item_tree::ItemTree> {
-    match file_item_tree(db, file_id).as_java() {
-        Some(tree) => tree.clone(),
-        None => Arc::new(hir_def::java::item_tree::ItemTree::default()),
-    }
+    hir_def::java::plugin::tree(db, file_id)
 }
 
 /// The lowered body tree of a source file (see `hir_def::file_body_tree`).
@@ -724,11 +721,13 @@ fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<[SourceSymbol
 /// The indexed declarations of a file's item tree: the language's own walk
 /// over the declaration model the file lowered to.
 fn collect_file_symbols(tree: &FileItemTree) -> Vec<SourceSymbol> {
-    match tree {
-        FileItemTree::Java(tree) => collect_java_symbols(tree),
-        FileItemTree::Kotlin(tree) => collect_kotlin_symbols(tree),
-        FileItemTree::Empty(_) => Vec::new(),
+    if let Some(tree) = hir_def::java::plugin::model(tree) {
+        return collect_java_symbols(&tree);
     }
+    if let Some(tree) = hir_def::kotlin::plugin::model(tree) {
+        return collect_kotlin_symbols(&tree);
+    }
+    Vec::new()
 }
 
 /// The indexed declarations of a Java file's item tree.
@@ -983,18 +982,14 @@ fn file_docs_query(db: &dyn HirDatabase, file: FileText) -> Arc<DocIndex> {
     let parse = parse(db, file_id, language);
     let source = parse.syntax_node(language);
     let mut entries = Vec::new();
-    match &*tree {
-        FileItemTree::Java(tree) => {
-            for &top in &tree.top {
-                collect_file_docs(map, &source, tree, top, &mut entries);
-            }
+    if let Some(java) = hir_def::java::plugin::model(&tree) {
+        for &top in &java.top {
+            collect_file_docs(map, &source, &java, top, &mut entries);
         }
-        FileItemTree::Kotlin(tree) => {
-            for &top in &tree.top {
-                collect_kotlin_docs(map, &source, tree, top, &mut entries);
-            }
+    } else if let Some(kotlin) = hir_def::kotlin::plugin::model(&tree) {
+        for &top in &kotlin.top {
+            collect_kotlin_docs(map, &source, &kotlin, top, &mut entries);
         }
-        FileItemTree::Empty(_) => {}
     }
     // The walk is in source order; item ids are not (local declarations
     // allocate after the members of their declaring body).
@@ -1309,7 +1304,7 @@ pub fn file_facade_source(
             source_set_package_files_query(db, graph, source_set.clone(), package.clone()).iter()
         {
             let tree = file_item_tree(db, *file);
-            let Some(tree) = tree.as_kotlin() else {
+            let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
                 continue;
             };
             let Some(facade) = tree.facade_class() else {

@@ -55,7 +55,7 @@ pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) ->
         }
         hir::Resolved::Source(class) => {
             let tree = hir::file_item_tree(db, class.file);
-            let Some(tree) = tree.as_kotlin() else {
+            let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
                 // A Java source class: the Java layer owns its supertypes, and
                 // its types are Java's — [`ty_from_java`] is what makes them
                 // Kotlin's (a classfile receiver becomes a platform type).
@@ -101,7 +101,7 @@ fn class_binding(
         return rustc_hash::FxHashMap::default();
     };
     let tree = hir::file_item_tree(db, class.file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return rustc_hash::FxHashMap::default();
     };
     let KotlinItemData::Class(data) = tree.data(class.item) else {
@@ -356,7 +356,7 @@ pub fn declared_variances(
         return None;
     };
     let tree = hir::file_item_tree(db, class.file);
-    let tree = tree.as_kotlin()?;
+    let tree = hir_def::kotlin::plugin::model(&tree)?;
     let KotlinItemData::Class(data) = tree.data(class.item) else {
         return None;
     };
@@ -379,7 +379,7 @@ pub fn is_interface_like(
         return None;
     };
     let tree = hir::file_item_tree(db, class.file);
-    let tree = tree.as_kotlin()?;
+    let tree = hir_def::kotlin::plugin::model(&tree)?;
     match tree.data(class.item) {
         KotlinItemData::Class(data) => Some(matches!(
             data.kind,
@@ -399,7 +399,6 @@ pub fn source_class<'a>(
     let hir::Resolved::Source(class) = &resolved else {
         return None;
     };
-    let tree = hir::file_item_tree(db, class.file);
-    let tree = tree.as_kotlin()?.clone();
+    let tree = hir_def::kotlin::plugin::tree(db, class.file)?;
     Some((class.file, tree))
 }

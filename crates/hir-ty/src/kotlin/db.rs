@@ -50,7 +50,7 @@ pub(crate) fn kotlin_item_ty_query<'db>(db: &'db dyn TyDatabase, key: KotlinItem
     let file_id = key.file(db);
     let item_id = key.item(db);
     let tree = hir::file_item_tree(db, file_id);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return Ty::error(db);
     };
     let resolver = KotlinResolver::for_item(db, file_id, tree, item_id);
@@ -104,7 +104,7 @@ pub(crate) fn kotlin_supertypes_query<'db>(
     let file_id = key.file(db);
     let item_id = key.item(db);
     let tree = hir::file_item_tree(db, file_id);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return Arc::from(Vec::new());
     };
     let KotlinItemData::Class(class) = tree.data(item_id) else {
@@ -125,7 +125,7 @@ pub(crate) fn kotlin_type_params_query<'db>(
     let file_id = key.file(db);
     let item_id = key.item(db);
     let tree = hir::file_item_tree(db, file_id);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return Arc::from(Vec::new());
     };
     let resolver = KotlinResolver::for_item(db, file_id, tree, item_id);

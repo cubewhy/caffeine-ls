@@ -1378,7 +1378,7 @@ fn class_methods(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) -
 /// Java item tree, so the Java layer must answer for it through its JVM view
 /// ([`crate::kotlin::jvm_view`]).
 pub(crate) fn is_kotlin(db: &dyn TyDatabase, source: hir::SourceClass) -> bool {
-    hir::file_item_tree(db, source.file).as_kotlin().is_some()
+    hir::hir_def::kotlin::plugin::tree(db, source.file).is_some()
 }
 
 /// The package of a fully qualified class name, or `None` for the unnamed

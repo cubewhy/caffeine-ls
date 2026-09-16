@@ -6,7 +6,6 @@
 //! memoized; the `ide::Analysis` methods below funnel them through the
 //! cancellation boundary.
 
-use hir::hir_def::FileItemTree;
 use hir::hir_def::java::item_tree::ItemData;
 use hir::hir_def::kotlin::item_tree::{KotlinItemData, KotlinItemTree};
 
@@ -96,11 +95,14 @@ pub struct WorkspaceSymbolSummary {
 /// ranges target its record component, and the canonical constructor's
 /// ranges target the record declaration.
 pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
-    match *hir::file_item_tree(db, file_id) {
-        FileItemTree::Kotlin(ref tree) => return kotlin_document_symbols(db, file_id, tree),
-        // An unknown-language file has no declarations.
-        FileItemTree::Empty(_) => return Vec::new(),
-        FileItemTree::Java(_) => {}
+    let file_tree = hir::file_item_tree(db, file_id);
+    if let Some(tree) = hir::hir_def::kotlin::plugin::model(&file_tree) {
+        return kotlin_document_symbols(db, file_id, tree);
+    }
+    // A file no language lowered — an unknown-language one, or a `.kts`
+    // script — has no declarations and no Java model to walk.
+    if hir::hir_def::java::plugin::model(&file_tree).is_none() {
+        return Vec::new();
     }
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
@@ -260,26 +262,25 @@ fn record_members(
 /// is rendered explicitly as `<default package>`.
 fn package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
     let file_tree = hir::file_item_tree(db, file_id);
-    let name = file_tree
-        .as_java()
+    let name = hir::hir_def::java::plugin::model(&file_tree)
         .and_then(|tree| tree.package.clone())
-        .or_else(|| file_tree.as_kotlin().and_then(|tree| tree.package.clone()))
+        .or_else(|| {
+            hir::hir_def::kotlin::plugin::model(&file_tree).and_then(|tree| tree.package.clone())
+        })
         .map(|name| name.as_str().to_owned())
         .unwrap_or_else(|| "<default package>".to_owned());
-    let range = match &*file_tree {
-        FileItemTree::Java(tree) => {
-            range_ctx(db, file_id, tree.language).and_then(|(map, source)| {
-                tree.package_decls.last().and_then(|decl| {
-                    hir::hir_def::java::ranges::package_name_range(&map, &source, *decl)
-                })
+    let range = if let Some(tree) = hir::hir_def::java::plugin::model(&file_tree) {
+        range_ctx(db, file_id, tree.language).and_then(|(map, source)| {
+            tree.package_decls.last().and_then(|decl| {
+                hir::hir_def::java::ranges::package_name_range(&map, &source, *decl)
             })
-        }
-        FileItemTree::Kotlin(tree) => {
-            range_ctx(db, file_id, tree.language).and_then(|(map, source)| {
-                hir::hir_def::kotlin::ranges::package_name_range(&map, &source, tree)
-            })
-        }
-        FileItemTree::Empty(_) => None,
+        })
+    } else if let Some(tree) = hir::hir_def::kotlin::plugin::model(&file_tree) {
+        range_ctx(db, file_id, tree.language).and_then(|(map, source)| {
+            hir::hir_def::kotlin::ranges::package_name_range(&map, &source, tree)
+        })
+    } else {
+        None
     }
     .unwrap_or_default();
     DocumentSymbol {
@@ -485,18 +486,17 @@ pub fn source_symbol_range(db: &RootDatabase, file_id: FileId, item: u32) -> Opt
     {
         return None;
     }
-    match *hir::file_item_tree(db, file_id) {
-        FileItemTree::Kotlin(ref tree) => {
-            let (map, source) = range_ctx(db, file_id, tree.language)?;
-            hir::hir_def::kotlin::ranges::item_range(&map, &source, tree, item)
-        }
-        FileItemTree::Empty(_) => None,
-        FileItemTree::Java(_) => {
-            let tree = hir::java_item_tree(db, file_id);
-            let (map, source) = range_ctx(db, file_id, tree.language)?;
-            hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)
-        }
+    let file_tree = hir::file_item_tree(db, file_id);
+    if let Some(tree) = hir::hir_def::kotlin::plugin::model(&file_tree) {
+        let (map, source) = range_ctx(db, file_id, tree.language)?;
+        return hir::hir_def::kotlin::ranges::item_range(&map, &source, tree, item);
     }
+    if hir::hir_def::java::plugin::model(&file_tree).is_none() {
+        return None;
+    }
+    let tree = hir::java_item_tree(db, file_id);
+    let (map, source) = range_ctx(db, file_id, tree.language)?;
+    hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)
 }
 
 /// The declared symbols of a Kotlin file, in declaration order, prefixed by a

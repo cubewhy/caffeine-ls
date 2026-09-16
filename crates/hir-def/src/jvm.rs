@@ -3,7 +3,8 @@
 //!
 //! This namespace must stay free of any Java (or Kotlin) syntax concepts:
 //! it hosts the JVM access-flag model ([`access`]), fully qualified names
-//! ([`fqn`]), the shared item ids ([`ids`]) and the re-exports of the JVM
+//! ([`fqn`]), the shared item ids ([`ids`]), the declaration-side IR every
+//! language lowers into ([`decl`]) and the re-exports of the JVM
 //! declaration stubs ([`primitives`], [`stubs`]) that the classfile readers
 //! produce. Language-specific declaration lowering lives in [`crate::java`]
 //! and [`crate::kotlin`], both of which depend on this module and never on
@@ -12,6 +13,7 @@
 pub mod access;
 pub mod class;
 pub mod db;
+pub mod decl;
 pub mod fqn;
 pub mod ids;
 pub mod primitives;

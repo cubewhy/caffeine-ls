@@ -13,7 +13,8 @@
 //! exists (or when a file is not mapped to a source set and no JDK is
 //! registered) every name would fail and the reports would be noise.
 
-use hir_def::java::item_tree::{ItemAnnotationRef, ItemData, ItemId, ItemTree, ItemTypeRef};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::jvm::decl::{ItemAnnotationRef, ItemTypeRef};
 use hir_expand::{
     ast_id_map::AstIdMap,
     body::{BodyId, BodyTree, ExprData, ExprId, LocalId, PatternId, StmtData, StmtId},
@@ -343,7 +344,7 @@ fn item_annotation_refs(data: &ItemData) -> Vec<&ItemAnnotationRef> {
             type_params(&d.sig.type_params, &mut out);
             // §9.7.4: a formal parameter's declaration annotations are the
             // annotations of its own modifier list, lowered with the
-            // signature ([`hir_def::java::item_tree::Param::annotations`]).
+            // signature ([`hir_def::jvm::decl::Param::annotations`]).
             for param in &d.sig.params {
                 annotations(&param.annotations, &mut out);
             }

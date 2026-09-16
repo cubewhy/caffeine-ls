@@ -6,8 +6,6 @@
 //! file and its [`AstIdMap`], computed once per file by a salsa query
 //! ([`crate::db`]).
 
-use triomphe::Arc;
-
 use base_db::LanguageKind;
 use hir_expand::{
     ast_id_map::AstIdMap,
@@ -18,7 +16,6 @@ use stacksafe::stacksafe;
 use syntax::SourceFile;
 
 use super::item_tree::{ItemData, ItemId, ItemTree};
-use crate::item_tree::{FileItemTree, LoweredFile};
 use crate::java::ranges;
 
 pub(super) mod body;
@@ -56,11 +53,11 @@ impl<'a> LowerCtx<'a> {
     }
 }
 
-/// Lowers a Java file into its item tree plus body IR, anchoring every
-/// declaration to its syntax node through `map`. The language-dispatched
-/// entry point is [`crate::lower::lower_source`]; this one is the Java arm and
-/// parses the text as Java.
-pub fn lower_java_source(text: &str, map: &AstIdMap) -> LoweredFile {
+/// Lowers a Java file into its declaration model plus body IR, anchoring every
+/// declaration to its syntax node through `map`. The language-dispatched entry
+/// point is [`crate::lower::lower_source`], which reaches this one through
+/// [`crate::java::plugin::JAVA`]; this one parses the text as Java.
+pub fn lower_java_source(text: &str, map: &AstIdMap) -> (ItemTree, BodyTree) {
     let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
     let file = parse.syntax_node(LanguageKind::Java);
     let SourceFile::Java(java) = &file else {
@@ -82,10 +79,7 @@ pub fn lower_java_source(text: &str, map: &AstIdMap) -> LoweredFile {
         mut tree, bodies, ..
     } = ctx;
     record_nesting(&mut tree, &bodies, &file, map);
-    LoweredFile {
-        items: FileItemTree::Java(Arc::new(tree)),
-        bodies: Arc::new(bodies),
-    }
+    (tree, bodies)
 }
 
 /// Records, after the walk, the two structural relations the item tree does

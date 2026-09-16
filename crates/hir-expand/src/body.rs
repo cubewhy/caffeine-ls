@@ -213,7 +213,7 @@ pub struct Local {
     /// in source order — the *declaration* annotations of this variable, as
     /// opposed to the type annotations its type carries. A method or
     /// constructor parameter's declaration annotations are lowered with the
-    /// signature instead ([`hir_def::java::item_tree::Param::annotations`]);
+    /// signature instead ([`hir_def::jvm::decl::Param::annotations`]);
     /// every other variable declaration — a local, a for-loop or enhanced-for
     /// variable, a resource, a catch parameter, a pattern variable and a
     /// lambda parameter ([`LambdaParam`]) — carries them here.

@@ -47,6 +47,11 @@ pub use crate::kotlin::db::KotlinDatabase;
 /// language-dispatched file queries. Concrete databases (e.g. `ide-db`'s
 /// `RootDatabase`) implement this and salsa's `#[salsa::db]` machinery wires up
 /// the tracked queries.
+///
+/// The per-language marker traits ([`JavaDatabase`], [`KotlinDatabase`]) are
+/// this trait's extension slots: a language adds its own tracked queries by
+/// adding a marker trait of its own next to them and listing it here, without
+/// touching the queries of another language.
 #[salsa::db]
 pub trait DefDatabase: JvmDatabase + JavaDatabase + KotlinDatabase {}
 

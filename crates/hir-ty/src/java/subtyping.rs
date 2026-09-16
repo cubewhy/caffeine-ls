@@ -32,8 +32,9 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::{PrimitiveType, TypeRef};
 
-use hir_def::java::item_tree::{ItemData, ItemTypeRef, TypeParam};
+use hir_def::java::item_tree::{ItemData, TypeParam};
 use hir_def::jvm::access::JvmAccessFlags;
+use hir_def::jvm::decl::ItemTypeRef;
 use hir_expand::name::Name;
 
 use crate::{

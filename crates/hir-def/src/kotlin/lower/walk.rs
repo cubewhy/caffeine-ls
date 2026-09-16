@@ -22,14 +22,16 @@ use hir_expand::{ast_id_map::FileAstId, body::ExprData, name::Name};
 
 use super::LowerCtx;
 use super::body::{self, is_expression};
+use crate::jvm::decl::{
+    AnnotationNode, ItemAnnotationArg, ItemAnnotationRef, ItemAnnotationValue, ItemTypeRef, Param,
+};
 use crate::kotlin::item_tree::{
-    AccessorData, AnnotationNode, AnonymousInitializerNode, ClassData, ClassDeclNode,
-    ConstructorData, ConstructorDeclNode, ConstructorDelegation, EnumEntryData, EnumEntryNode,
-    FunctionData, FunctionDeclNode, ImportHeaderNode, InitData, ItemAnnotationArg,
-    ItemAnnotationRef, ItemAnnotationValue, ItemId, ItemTypeRef, KotlinAnnotationRef,
-    KotlinClassKind, KotlinImportItem, KotlinItemData, KotlinParam, KotlinSuperType,
-    KotlinTypeParam, PackageHeaderNode, Param, PropertyData, PropertyNode, TypeAliasData,
-    TypeAliasNode, ast_id_of, ast_id_or_placeholder,
+    AccessorData, AnonymousInitializerNode, ClassData, ClassDeclNode, ConstructorData,
+    ConstructorDeclNode, ConstructorDelegation, EnumEntryData, EnumEntryNode, FunctionData,
+    FunctionDeclNode, ImportHeaderNode, InitData, ItemId, KotlinAnnotationRef, KotlinClassKind,
+    KotlinImportItem, KotlinItemData, KotlinParam, KotlinSuperType, KotlinTypeParam,
+    PackageHeaderNode, PropertyData, PropertyNode, TypeAliasData, TypeAliasNode, ast_id_of,
+    ast_id_or_placeholder,
 };
 use crate::kotlin::modifiers::{KotlinModifiers, KotlinVariance};
 

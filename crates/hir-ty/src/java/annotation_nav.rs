@@ -21,7 +21,8 @@
 //! body — while the name resolution stays with the layers that own it
 //! ([`crate::java::resolve`], [`crate::java::method`]).
 
-use hir_def::java::item_tree::{ItemAnnotationRef, ItemData, ItemId, ItemTree};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::jvm::decl::ItemAnnotationRef;
 use hir_expand::body::BodyTree;
 use hir_expand::name::Name;
 use rowan::{SyntaxNode, SyntaxToken, TextRange, TextSize, TokenAtOffset};

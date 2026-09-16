@@ -26,6 +26,7 @@ pub mod item_tree;
 pub mod java;
 pub mod jvm;
 pub mod kotlin;
+pub mod lang;
 pub mod lower;
 pub mod pretty;
 

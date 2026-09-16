@@ -39,13 +39,10 @@ use hir_expand::{
 pub use base_db::LanguageKind;
 pub use hir_expand::ids::ItemId;
 // The shared declaration-side type and annotation references, and a formal
-// parameter: Kotlin lowering constructs them directly (`ItemTypeRef`'s
-// `from_spanned` is the Java walker's constructor) and resolves their ranges
-// through [`crate::kotlin::ranges`].
-pub use crate::java::item_tree::{
-    AnnotationNode, ItemAnnotationArg, ItemAnnotationRef, ItemAnnotationValue, ItemTypeRef, Param,
-    TypeNode,
-};
+// parameter, live in the JVM layer: Kotlin lowering constructs them directly
+// (Java's `ItemTypeRef::from_spanned` is the Java walker's own constructor)
+// and resolves their ranges through [`crate::kotlin::ranges`].
+use crate::jvm::decl::{ItemAnnotationRef, ItemAnnotationValue, ItemTypeRef, Param};
 
 /// A formal parameter of a Kotlin declaration: the shared, language-neutral
 /// [`Param`] shape plus the two parameter modifiers Kotlin has and Java does

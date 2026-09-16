@@ -214,7 +214,7 @@ fn collect_members(
     match &resolved {
         hir::Resolved::Source(class) => {
             let tree = hir::file_item_tree(db, class.file);
-            match tree.as_kotlin() {
+            match hir_def::kotlin::plugin::model(&tree) {
                 Some(tree) => {
                     let resolver = KotlinResolver::for_item(db, class.file, tree, class.item);
                     kotlin_members(
@@ -594,7 +594,7 @@ pub fn access_context_for_kotlin(
     item: hir_expand::ids::ItemId,
 ) -> InvocationContext {
     let tree = hir::file_item_tree(db, file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         // A Java call site: the Java layer's own context.
         return crate::java::method::access_context(db, file, item);
     };
@@ -663,7 +663,7 @@ pub fn top_level_callable(
     args: &[CallArg<'_>],
 ) -> Option<Member> {
     let tree = hir::file_item_tree(db, file);
-    let Some(tree) = tree.as_kotlin() else {
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return None;
     };
     let mut candidates = Vec::new();
@@ -687,7 +687,7 @@ pub fn declaration_callable(
     args: &[CallArg<'_>],
 ) -> Option<Member> {
     let tree = hir::file_item_tree(db, file);
-    let tree = tree.as_kotlin()?;
+    let tree = hir_def::kotlin::plugin::model(&tree)?;
     let KotlinItemData::Function(function) = tree.data(item) else {
         return None;
     };

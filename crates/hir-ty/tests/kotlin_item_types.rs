@@ -95,8 +95,7 @@ fn kotlin_fixture_with(
 
 /// The rendered names and types of the file's declaration items.
 fn render_types(db: &TestDatabase, file: FileId) -> String {
-    let tree = hir::file_item_tree(db, file);
-    let tree = tree.as_kotlin().expect("a Kotlin file").clone();
+    let tree = hir::hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
     let mut lines = Vec::new();
     for (id, data) in tree.items.iter() {
         if data.name().is_none()
@@ -194,8 +193,7 @@ mod subtyping {
     /// A database plus the `Ty` of a type written in the fixture, for a
     /// subtyping question.
     fn ty_of(db: &TestDatabase, file: FileId, name: &str) -> Ty {
-        let tree = hir::file_item_tree(db, file);
-        let tree = tree.as_kotlin().expect("a Kotlin file").clone();
+        let tree = hir::hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
         for (id, data) in tree.items.iter() {
             if data.name().map(|n| n.as_str()) == Some(name) {
                 // The declared type, nullability included — the caller strips
@@ -275,8 +273,7 @@ mod subtyping {
 /// The inferred types and diagnostics of a fixture's bodies, rendered one
 /// line per inferred expression in arena order plus one per error.
 fn render_bodies(db: &TestDatabase, file: FileId) -> String {
-    let tree = hir::file_item_tree(db, file);
-    let tree = tree.as_kotlin().expect("a Kotlin file").clone();
+    let tree = hir::hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
     let mut lines = Vec::new();
     for (id, data) in tree.items.iter() {
         let Some(body) = data.body_id() else {
@@ -853,8 +850,7 @@ mod interop_types {
 
     /// The item id of the declaration named `name` in the fixture's file.
     fn item_named(db: &TestDatabase, file: FileId, name: &str) -> hir_expand::ids::ItemId {
-        let tree = hir::file_item_tree(db, file);
-        let tree = tree.as_kotlin().expect("a Kotlin file").clone();
+        let tree = hir::hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
         for (id, data) in tree.items.iter() {
             if data.name().map(|n| n.as_str()) == Some(name) {
                 return hir_expand::ids::ItemId(id);

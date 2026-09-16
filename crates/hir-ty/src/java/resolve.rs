@@ -1731,7 +1731,7 @@ fn resolved_fqn(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Option<Name> {
 /// local declaration encloses it — so the Java path keeps its own walk.
 pub(crate) fn source_class_fqn_of(db: &dyn TyDatabase, source: hir::SourceClass) -> Option<Name> {
     let tree = hir::file_item_tree(db, source.file);
-    match tree.as_java() {
+    match hir_def::java::plugin::model(&tree) {
         Some(tree) => canonical_class_fqn(tree, source.item),
         None => hir::source_class_fqn(db, source.file, source.item),
     }

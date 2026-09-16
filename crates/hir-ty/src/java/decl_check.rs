@@ -12,7 +12,8 @@
 //! declaring method rather than an expression: they are collected per file by
 //! [`class_diagnostics`] and carry the offending method's name.
 
-use hir_def::java::item_tree::{ItemData, ItemId, ItemTree, ItemTypeRef};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::jvm::decl::ItemTypeRef;
 use hir_expand::body::BodyTree;
 use hir_expand::name::Name;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -3094,7 +3095,7 @@ fn sealed_subclass_diagnostics(
         final_ || sealed || non_sealed || matches!(data, ItemData::Enum(_) | ItemData::Record(_));
     // The direct supertypes of the declaration: a class's superclass and the
     // implemented interfaces; an interface's extended interfaces.
-    let super_refs: Vec<&hir_def::java::item_tree::ItemTypeRef> = match data {
+    let super_refs: Vec<&hir_def::jvm::decl::ItemTypeRef> = match data {
         ItemData::Class(d) => d.super_class.iter().chain(d.interfaces.iter()).collect(),
         ItemData::Interface(d) => d.interfaces.iter().collect(),
         ItemData::Record(d) => d.interfaces.iter().collect(),

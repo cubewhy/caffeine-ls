@@ -148,7 +148,7 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                     ty: Some(ty),
                     // §9.7.4: a method or constructor parameter's declaration
                     // annotations are lowered with the signature
-                    // ([`hir_def::java::item_tree::Param::annotations`]), not
+                    // ([`crate::jvm::decl::Param::annotations`]), not
                     // here (the body's parameter list is a second view of the
                     // same declaration).
                     annotations: Vec::new(),

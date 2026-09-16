@@ -232,8 +232,7 @@ fn a_kotlin_file_uses_another_files_top_level_declaration() {
     ];
     let (db, _) = interop_fixture(&files);
     let file = FileId::from_raw(2);
-    let tree = hir::file_item_tree(&db, file);
-    let tree = tree.as_kotlin().clone().expect("a Kotlin file");
+    let tree = hir::hir_def::kotlin::plugin::tree(&db, file).expect("a Kotlin file");
     for (id, data) in tree.items.iter() {
         if data.body_id().is_none() {
             continue;

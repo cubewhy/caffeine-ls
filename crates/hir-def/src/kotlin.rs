@@ -33,5 +33,6 @@ pub mod db;
 pub mod item_tree;
 pub mod lower;
 pub mod modifiers;
+pub mod plugin;
 pub mod pretty;
 pub mod ranges;
