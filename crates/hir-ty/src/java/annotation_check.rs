@@ -57,12 +57,12 @@ use syntax::stub::PrimitiveType;
 use vfs::FileId;
 
 use crate::java::annotation_value::{self, ValueCtx};
-use crate::java::db::TyDatabase;
 use crate::java::decl_check::{DeclDiagnostic, SafeVarargsRejection};
 use crate::java::range_ctx::range_ctx;
 use crate::java::resolve::{Resolver, candidate_fqns, resolve_type_ref, ty_from_library};
 use crate::java::subtyping::is_assignable;
 use crate::java::ty::{Ty, TyKind};
+use crate::jvm::db::TyDatabase;
 use hir_def::java::ranges;
 
 /// The element types an annotation may be applied to on a *declaration*
@@ -269,7 +269,7 @@ fn check_functional_interface(
     };
     let class_ty = Ty::reference(db, Name::new(fqn.as_str()), Vec::new());
     let ctx = crate::java::method::access_context(db, file, item);
-    let abstract_count = crate::java::method::all_methods(db, scope, &class_ty, &ctx)
+    let abstract_count = crate::jvm::member_set::all_methods(db, scope, &class_ty, &ctx)
         .into_iter()
         .filter(|method| method.abstract_)
         .filter(|method| !is_object_method_override(&Name::new(&method.name)))
@@ -1932,7 +1932,7 @@ fn no_such_element(
 /// members another type owns, `Object`'s public ones above all.
 fn names_member_method(cx: &ValueCtx<'_>, annotation_ty: &Ty, name: &Name) -> bool {
     let ctx = crate::java::method::access_context(cx.db, cx.file, cx.item);
-    crate::java::method::all_methods(cx.db, cx.scope, annotation_ty, &ctx)
+    crate::jvm::member_set::all_methods(cx.db, cx.scope, annotation_ty, &ctx)
         .iter()
         .any(|method| method.name.as_str() == name.as_str())
 }

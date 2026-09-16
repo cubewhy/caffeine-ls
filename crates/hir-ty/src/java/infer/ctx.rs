@@ -10,10 +10,10 @@ use crate::java::{
     const_eval::Const,
     deprecation,
     diagnostics::{DiagLocation, TypeError},
-    method::{FieldData, MethodData},
     release_api::{self, ReleaseApi},
     ty::{Ty, TyKind, boxed_type, capture_conversion, unboxed_primitive},
 };
+use crate::jvm::member::{FieldData, MethodData};
 
 use super::{Flow, InferCtx, ResolvedMember};
 

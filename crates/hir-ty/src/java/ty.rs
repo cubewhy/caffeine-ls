@@ -15,7 +15,7 @@ use syntax::stub::{TypeBound, TypeRef};
 
 use rustc_hash::FxHashMap;
 
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 pub use crate::jvm::ty::{boxed_type, numeric_promotion, primitive_name, unboxed_primitive};
 pub use crate::ty::*;
 
@@ -81,7 +81,7 @@ pub fn ty_from_source(db: &dyn TyDatabase, tyref: &TypeRef<Name>) -> Ty {
 /// by `T`; an unbounded `?` becomes `CAP#<n>` bounded by `Object`; `? super T`
 /// becomes `CAP#<n>` bounded above by `Object` and below by `T`. Applied to
 /// the receiver before the member set walk of
-/// [`crate::java::method::member_set`], and only there: the capture variables never
+/// [`crate::jvm::member_set::member_set`], and only there: the capture variables never
 /// reach the memoized subtype queries.
 pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: Ty) -> Ty {
     let fresh = |bound: Ty| Ty::fresh_capture(db, bound);

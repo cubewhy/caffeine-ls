@@ -5,8 +5,8 @@
 //! (its lint key, its suppression and its message) is owned by
 //! `ide-diagnostics`.
 
-use crate::java::db::TyDatabase;
 use crate::java::ty::{Ty, TyKind};
+use crate::jvm::db::TyDatabase;
 
 /// Whether `ty` is a *raw* use of a generic class
 /// ([JLS §4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8),

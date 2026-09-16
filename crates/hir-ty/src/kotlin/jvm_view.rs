@@ -53,10 +53,9 @@ use vfs::FileId;
 
 use super::resolve::KotlinResolver;
 use super::ty::{ty_from_kotlin, ty_from_type_ref};
-use crate::java::db::TyDatabase;
-use crate::java::method::{
-    Access, ClassKey, FieldData, MethodData, MethodTypeParam, source_top_level,
-};
+use crate::jvm::db::TyDatabase;
+use crate::jvm::member::{Access, ClassKey, FieldData, MethodData, MethodTypeParam};
+use crate::jvm::member_set::source_top_level;
 use crate::ty::{Ty, TypeVarScope};
 
 /// The JVM methods a Kotlin classifier declares under the JVM name `name` —

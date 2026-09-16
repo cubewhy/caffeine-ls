@@ -6,9 +6,9 @@ use rustc_hash::FxHashSet;
 
 use super::{Constraint, Inference, InvocationPhase};
 use crate::{
-    java::db::TyDatabase,
     java::subtyping::{is_assignable, strict_conversion, supertypes_impl},
     java::ty::{BoundKind, Ty, TyData, TyKind, boxed_type},
+    jvm::db::TyDatabase,
 };
 
 impl Inference {

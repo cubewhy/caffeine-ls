@@ -80,7 +80,7 @@ pub enum MismatchTarget {
 impl KotlinTypeError {
     /// The message kotlinc 2.4.20 reports for this error, as the type layer can
     /// spell it (`<type>` is the type's own display).
-    pub fn message(&self, db: &dyn crate::java::db::TyDatabase) -> String {
+    pub fn message(&self, db: &dyn crate::jvm::db::TyDatabase) -> String {
         use crate::kotlin::ty::display_kotlin;
         let display = |ty: &Ty| display_kotlin(db, *ty).to_string();
         match self {

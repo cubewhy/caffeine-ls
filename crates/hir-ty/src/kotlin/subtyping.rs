@@ -35,7 +35,7 @@ use hir::hir_def::kotlin::modifiers::KotlinVariance;
 use hir_expand::name::Name;
 use vfs::FileId;
 
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 use crate::kotlin::ty::ty_from_java;
 use crate::ty::{Ty, TyKind};
 

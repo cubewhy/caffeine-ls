@@ -3,7 +3,7 @@
 //! Every type of a Kotlin declaration is computed by a salsa query keyed on the
 //! interned `(file, item)` pair ([`KotlinItemKey`]), so it is memoized per
 //! declaration and invalidated exactly when the file changes — the same shape
-//! the Java layer uses ([`crate::java::db::ItemKey`]).
+//! the Java layer uses ([`crate::jvm::db::ItemKey`]).
 //!
 //! Type *parameters* are not a query: they are derived by walking the item
 //! tree's `parent` chain ([`KotlinResolver::for_item`]), which is a bounded
@@ -17,7 +17,7 @@ use hir_expand::ids::ItemId;
 
 use super::resolve::KotlinResolver;
 use super::ty::ty_from_type_ref;
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 use crate::ty::Ty;
 
 /// A workspace-unique Kotlin item id. Interned so it can key tracked queries;

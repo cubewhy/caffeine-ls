@@ -17,8 +17,8 @@
 
 use hir_expand::name::Name;
 
-use crate::java::db::TyDatabase;
 use crate::java::ty::Ty;
+use crate::jvm::db::TyDatabase;
 
 /// The one platform API a report names.
 #[derive(Debug, Clone, PartialEq, Eq)]

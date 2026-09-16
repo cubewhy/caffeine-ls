@@ -959,7 +959,7 @@ impl InferCtx<'_> {
                 // close can throw it.
                 let mut close_thrown: Vec<(Ty, ExprId)> = Vec::new();
                 for (resource_ty, resource) in resource_tys.iter().zip(resources) {
-                    let members = crate::java::method::member_set(
+                    let members = crate::jvm::member_set::member_set(
                         self.db,
                         &self.scope,
                         resource_ty,

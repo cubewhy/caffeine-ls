@@ -35,7 +35,7 @@ use stacksafe::stacksafe;
 use syntax::stub::PrimitiveType;
 use vfs::FileId;
 
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 
 /// The maximum rewrite depth of [`rewrite_with`] before a recursive
 /// cycle is declared and the remainder of the type degrades to

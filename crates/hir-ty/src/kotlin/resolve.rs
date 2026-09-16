@@ -45,7 +45,7 @@ use hir::hir_def::kotlin::item_tree::{
 use hir_expand::name::Name;
 use vfs::FileId;
 
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 use crate::ty::{Ty, TypeVarScope};
 
 /// The `.`-prefixes of a fully qualified name, most specific first: a

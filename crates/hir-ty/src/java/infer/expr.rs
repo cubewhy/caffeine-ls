@@ -11,12 +11,14 @@ use rustc_hash::FxHashMap;
 use stacksafe::stacksafe;
 use syntax::stub::{PrimitiveType, TypeRef};
 
+use crate::java::method::InvocationMode;
 use crate::java::{
     diagnostics::{DiagLocation, NonStaticThisKind, TypeError},
-    method::{FieldData, InvocationMode, pick_field},
     resolve::resolve_type_ref,
     ty::{Ty, TyKind, boxed_type},
 };
+use crate::jvm::member::FieldData;
+use crate::jvm::member_set::pick_field;
 
 use super::{FinalFieldWrite, Flow, InferCtx, ResolvedMember, poly::*};
 

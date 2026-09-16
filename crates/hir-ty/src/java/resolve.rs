@@ -34,9 +34,9 @@ use hir_expand::name::Name;
 use syntax::stub::{TypeBound, TypeRef};
 
 use crate::{
-    java::db::TyDatabase,
     java::range_ctx::range_ctx,
     java::ty::{BoundKind, Ty, TyKind, TypeVarScope, WildcardBound, ty_from_type_ref},
+    jvm::db::TyDatabase,
 };
 
 /// A type parameter in scope at some item, together with the declaration that
@@ -2077,13 +2077,13 @@ pub fn declared_type_param_scopes(
 /// method, or the type of a class/interface/enum/record/annotation
 /// declaration. Memoized per (file, item) by the tracked query in [`crate::java::db`].
 pub fn item_ty(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Ty {
-    crate::java::db::item_ty_query(db, crate::java::db::ItemKey::new(db, file_id, item_id))
+    crate::java::db::item_ty_query(db, crate::jvm::db::ItemKey::new(db, file_id, item_id))
 }
 
 /// The parameter types of a method or constructor, in declaration order.
 /// Memoized per (file, item) by the tracked query in [`crate::java::db`].
 pub fn method_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Vec<Ty> {
-    crate::java::db::method_params_query(db, crate::java::db::ItemKey::new(db, file_id, item_id))
+    crate::java::db::method_params_query(db, crate::jvm::db::ItemKey::new(db, file_id, item_id))
 }
 
 /// The element types of the record components of `item` (a record
@@ -2095,7 +2095,7 @@ pub fn method_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> V
 pub fn record_component_types(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Vec<Ty> {
     crate::java::db::record_component_types_query(
         db,
-        crate::java::db::ItemKey::new(db, file_id, item_id),
+        crate::jvm::db::ItemKey::new(db, file_id, item_id),
     )
 }
 

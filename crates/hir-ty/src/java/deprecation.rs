@@ -35,12 +35,13 @@ use hir_expand::name::Name;
 use syntax::stub::PrimitiveValue;
 use vfs::FileId;
 
-use crate::java::db::TyDatabase;
-use crate::java::method::{MethodData, source_top_level, top_level_of};
 use crate::java::resolve::{
     NameResolution, Resolver, item_data, resolve_name_checked, scope_for_file,
 };
 use crate::java::ty::Ty;
+use crate::jvm::db::TyDatabase;
+use crate::jvm::member::MethodData;
+use crate::jvm::member_set::{source_top_level, top_level_of};
 
 /// How a declaration is deprecated ([JLS §9.6.4.6]): a plain `@Deprecated`, or
 /// `@Deprecated(forRemoval = true)` — *terminally* deprecated, whose use is a
@@ -464,7 +465,7 @@ pub(crate) fn method_api(db: &dyn TyDatabase, data: &MethodData) -> DeprecatedAp
 /// The `DeprecatedApi` of a resolved field.
 pub(crate) fn field_api(
     db: &dyn TyDatabase,
-    data: &crate::java::method::FieldData,
+    data: &crate::jvm::member::FieldData,
 ) -> DeprecatedApi {
     DeprecatedApi::Field {
         owner: data.owner.display_name(db),

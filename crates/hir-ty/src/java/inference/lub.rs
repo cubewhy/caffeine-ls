@@ -3,9 +3,9 @@
 use rustc_hash::FxHashSet;
 
 use crate::{
-    java::db::TyDatabase,
     java::subtyping::{is_subtype, supertypes_impl},
     java::ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type},
+    jvm::db::TyDatabase,
 };
 
 /// The least upper bound of a set of types

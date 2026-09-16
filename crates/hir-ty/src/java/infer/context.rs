@@ -10,10 +10,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use vfs::FileId;
 
 use crate::java::{
-    db::TyDatabase,
     resolve::{Resolver, resolve_type_ref},
     ty::Ty,
 };
+use crate::jvm::db::TyDatabase;
 
 use super::body_types;
 
@@ -229,7 +229,7 @@ pub(super) fn prior_initializer_writes(
 pub(super) fn find_method_item(
     db: &dyn TyDatabase,
     file: FileId,
-    method: &crate::java::method::MethodData,
+    method: &crate::jvm::member::MethodData,
 ) -> Option<ItemId> {
     let tree = hir::java_item_tree(db, file);
     for top in &tree.top {
@@ -243,7 +243,7 @@ pub(super) fn find_method_item(
 pub(super) fn find_method_rec(
     tree: &hir_def::java::item_tree::ItemTree,
     id: ItemId,
-    method: &crate::java::method::MethodData,
+    method: &crate::jvm::member::MethodData,
 ) -> Option<ItemId> {
     use hir_def::java::item_tree::ItemData as I;
     match tree.data(id) {

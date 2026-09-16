@@ -20,13 +20,15 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use triomphe::Arc;
 use vfs::FileId;
 
-use crate::java::db::TyDatabase;
-use crate::java::method::{self, Access, InvocationContext, InvocationMode, MethodData};
+use crate::java::method::{InvocationContext, InvocationMode};
 use crate::java::range_ctx::range_ctx;
 use crate::java::release_api::ReleaseApi;
 use crate::java::resolve::scope_for_file;
 use crate::java::subtyping;
 use crate::java::ty::{Ty, TyKind, TypeVarScope};
+use crate::jvm::db::TyDatabase;
+use crate::jvm::member::{Access, MethodData};
+use crate::jvm::member_set::{all_methods_raw, inherited_defaults, member_set};
 use base_db::LanguageKind;
 use hir_def::java::ranges;
 
@@ -1185,7 +1187,7 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
         if data.is_type() {
             // §6.7: a class-like declaration is checked against its own key —
             // its canonical name, or its declaration when it has none.
-            let key = crate::java::method::ClassKey::of(tree, file, id);
+            let key = crate::jvm::member::ClassKey::of(tree, file, id);
             out.extend(check_class(db, file, scope, tree, &key, id));
         }
         for &child in data.body() {
@@ -1204,7 +1206,7 @@ fn check_class(
     file: FileId,
     scope: &hir::ResolutionScope,
     tree: &hir_def::java::item_tree::ItemTree,
-    key: &crate::java::method::ClassKey,
+    key: &crate::jvm::member::ClassKey,
     item: hir_def::java::item_tree::ItemId,
 ) -> Vec<DeclDiagnostic> {
     // The access-control context of the class itself ([§6.6.1]): the walk is
@@ -1220,7 +1222,7 @@ fn check_class(
     // and for `@Override` ([§9.6.4.4]). Split into the class's own
     // declarations and the inherited set.
     let self_ty = key.as_ty(db, Vec::new());
-    let all = method::all_methods_raw(db, scope, &self_ty, &ctx);
+    let all = all_methods_raw(db, scope, &self_ty, &ctx);
     let declared: Vec<&MethodData> = all.iter().filter(|m| m.owner == *key).collect();
     let inherited: Vec<&MethodData> = all.iter().filter(|m| m.owner != *key).collect();
     // §9.6.4.6: *overriding* a deprecated method is a use of it, reported at
@@ -1572,13 +1574,11 @@ fn check_class(
             .as_reference(db)
             .map(|(name, _)| name.as_str().to_owned());
         let accessible_no_arg_thrown: Vec<Ty> = match &super_class {
-            Some(fqn) => {
-                method::member_set(db, scope, &super_ty, &fqn_ctor_name(db, scope, fqn), &ctx)
-                    .iter()
-                    .find(|ctor| ctor.params.is_empty())
-                    .map(|ctor| ctor.throws.clone())
-                    .unwrap_or_default()
-            }
+            Some(fqn) => member_set(db, scope, &super_ty, &fqn_ctor_name(db, scope, fqn), &ctx)
+                .iter()
+                .find(|ctor| ctor.params.is_empty())
+                .map(|ctor| ctor.throws.clone())
+                .unwrap_or_default(),
             None => Vec::new(),
         };
         for thrown in accessible_no_arg_thrown {
@@ -1665,7 +1665,7 @@ fn check_class(
                 .map(|ex| crate::java::resolve::resolve_type_ref(db, scope, &resolver, ex))
                 .collect();
             let range = item_name_range(db, file, tree, *child);
-            for thrown in method::member_set(
+            for thrown in member_set(
                 db,
                 scope,
                 &super_ty,
@@ -1772,7 +1772,7 @@ fn check_class(
     // class inherits them only if it overrides the signature itself. The
     // defaults are collected *without* the most-derived dedup — unrelated
     // defaults do not override each other, they conflict.
-    let defaults = method::inherited_defaults(db, scope, &self_ty);
+    let defaults = inherited_defaults(db, scope, &self_ty);
     let defaults: Vec<&MethodData> = defaults.iter().filter(|m| m.owner != *key).collect();
     for (i, a) in defaults.iter().enumerate() {
         for b in &defaults[i + 1..] {
@@ -2322,8 +2322,8 @@ fn is_override_annotation(
 fn related(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
-    a: &crate::java::method::ClassKey,
-    b: &crate::java::method::ClassKey,
+    a: &crate::jvm::member::ClassKey,
+    b: &crate::jvm::member::ClassKey,
 ) -> bool {
     if a == b {
         return true;
@@ -2543,7 +2543,7 @@ fn has_no_accessible_no_arg_ctor(
         None => return None,
     };
     let access = ctx.with_mode(InvocationMode::Super);
-    let has_no_arg = method::member_set(db, scope, super_ty, name, &access)
+    let has_no_arg = member_set(db, scope, super_ty, name, &access)
         .iter()
         .any(|method| method.params.is_empty());
     Some(!has_no_arg)
@@ -3074,7 +3074,7 @@ fn sealed_subclass_diagnostics(
     scope: &hir::ResolutionScope,
     resolver: &crate::java::resolve::Resolver,
     item: hir_def::java::item_tree::ItemId,
-    key: &crate::java::method::ClassKey,
+    key: &crate::jvm::member::ClassKey,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     // §14.3: a *local* class-like declaration can never appear in a `permits`

@@ -5,11 +5,12 @@
 
 use hir_expand::body::{BodyTree, ExprData, ExprId, StmtData, StmtId};
 
-use crate::java::{method::MethodData, ty::Ty};
+use crate::java::ty::Ty;
+use crate::jvm::member::MethodData;
 
 use super::InferCtx;
 
-use crate::java::method::Access;
+use crate::jvm::member::Access;
 
 /// Whether `expr` is a poly expression ([JLS §15.2]): a lambda or method
 /// reference, or a parenthesized or conditional expression whose arms are

@@ -40,8 +40,9 @@ use hir_expand::name::Name;
 use vfs::FileId;
 
 use super::resolve::KotlinResolver;
-use crate::java::db::TyDatabase;
-use crate::java::method::{FieldData, InvocationContext, InvocationMode, MethodData};
+use crate::java::method::{InvocationContext, InvocationMode};
+use crate::jvm::db::TyDatabase;
+use crate::jvm::member::{FieldData, MethodData};
 use crate::kotlin::ty::ty_from_java;
 use crate::ty::{Ty, TyKind};
 
@@ -54,7 +55,7 @@ pub enum MemberTarget {
         item: hir_expand::ids::ItemId,
     },
     /// A Java source method or constructor, or a classfile method — the
-    /// instantiated form [`crate::java::method::member_set`] returns.
+    /// instantiated form [`crate::jvm::member_set::member_set`] returns.
     Java(Box<MethodData>),
     /// A Java source field or a classfile field, or a synthesized property.
     JavaField(Box<FieldData>),
@@ -383,7 +384,7 @@ fn kotlin_members(
 /// The members `name` names on a Java or classfile receiver ([KLS
 /// `overload-resolution.html#receivers`](https://kotlinlang.org/spec/overload-resolution.html#receivers)
 /// for the Kotlin rules that consume them; the *Java* declaration shapes come
-/// from [`crate::java::method::member_set`] and are projected through
+/// from [`crate::jvm::member_set::member_set`] and are projected through
 /// [`MemberTarget`]).
 ///
 /// Three Kotlin-specific rules sit on top of the Java member set:
@@ -419,7 +420,9 @@ fn java_members(
     // declares a `void layout()` method), while a *call* filters to the
     // functions anyway, so both `x.layout` and `x.layout()` resolve.
     for accessor in property_getters(name) {
-        for method in crate::java::method::member_set(db, scope, receiver, accessor.as_str(), ctx) {
+        for method in
+            crate::jvm::member_set::member_set(db, scope, receiver, accessor.as_str(), ctx)
+        {
             // A getter takes no arguments and returns the property's type.
             let mut member = member_of_method(db, name.clone(), MemberKind::Getter, method);
             member.params = Vec::new();
@@ -427,7 +430,9 @@ fn java_members(
         }
     }
     for accessor in property_setters(name) {
-        for method in crate::java::method::member_set(db, scope, receiver, accessor.as_str(), ctx) {
+        for method in
+            crate::jvm::member_set::member_set(db, scope, receiver, accessor.as_str(), ctx)
+        {
             // A setter's parameter is the property's type, which
             // [`member_of_method`] converts.
             out.push(member_of_method(
@@ -440,7 +445,8 @@ fn java_members(
     }
     // A Java field is the Kotlin property of its own name — Kotlin reads a Java
     // field directly — and comes before a method of the same name.
-    if let Some(field) = crate::java::method::pick_field(db, scope, receiver, name.as_str(), ctx) {
+    if let Some(field) = crate::jvm::member_set::pick_field(db, scope, receiver, name.as_str(), ctx)
+    {
         out.push(Member {
             target: MemberTarget::JavaField(Box::new(field)),
             name: name.clone(),
@@ -450,7 +456,7 @@ fn java_members(
             defaults: 0,
         });
     }
-    for method in crate::java::method::member_set(db, scope, receiver, name.as_str(), ctx) {
+    for method in crate::jvm::member_set::member_set(db, scope, receiver, name.as_str(), ctx) {
         out.push(member_of_method(
             db,
             name.clone(),
@@ -490,7 +496,9 @@ fn java_members(
             Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
             _ => name.simple_name().to_owned(),
         };
-        for method in crate::java::method::member_set(db, scope, receiver, &constructor_name, ctx) {
+        for method in
+            crate::jvm::member_set::member_set(db, scope, receiver, &constructor_name, ctx)
+        {
             out.push(member_of_method(
                 db,
                 name.clone(),
@@ -616,12 +624,12 @@ pub fn access_context_for_kotlin(
     let (enclosing_class, subclass_of) = match enclosing {
         Some(class) => {
             let key =
-                hir::source_class_fqn(db, file, class).map(crate::java::method::ClassKey::Named);
+                hir::source_class_fqn(db, file, class).map(crate::jvm::member::ClassKey::Named);
             let subclass = super::db::supertypes(db, file, class)
                 .first()
                 .and_then(|supertype| match supertype.kind(db) {
                     TyKind::Reference { name, .. } => {
-                        Some(crate::java::method::ClassKey::Named(name.clone()))
+                        Some(crate::jvm::member::ClassKey::Named(name.clone()))
                     }
                     _ => None,
                 });

@@ -16,7 +16,7 @@
 //! ([§5.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.5)).
 //!
 //! The per-scope subtype and supertype results are memoized as tracked
-//! queries keyed on the interned scope ([`crate::java::db::ScopeId`]) and the
+//! queries keyed on the interned scope ([`crate::jvm::db::ScopeId`]) and the
 //! interned type id ([`crate::java::ty::TyData`]), so repeated checks of the same
 //! pair — the IDE pattern — hit the query cache. The public functions
 //! intern the scope and the types, then delegate.
@@ -38,11 +38,11 @@ use hir_def::jvm::decl::ItemTypeRef;
 use hir_expand::name::Name;
 
 use crate::{
-    java::db::{ScopeId, ScopeKind, TyDatabase},
     java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     java::ty::{
         BoundKind, Ty, TyData, TyKind, TypeVarScope, WildcardBound, boxed_type, unboxed_primitive,
     },
+    jvm::db::{ScopeId, ScopeKind, TyDatabase},
 };
 
 /// The direct supertypes of `ty`

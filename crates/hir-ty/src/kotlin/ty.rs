@@ -27,7 +27,7 @@ use syntax::stub::PrimitiveType;
 use hir_def::kotlin::modifiers::KotlinVariance as Variance;
 
 use super::resolve::KotlinResolver;
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 use crate::ty::{BoundKind, Ty, TyKind, WildcardBound};
 
 /// The [`Ty`] a written type reference denotes.

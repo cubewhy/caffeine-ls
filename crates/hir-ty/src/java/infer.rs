@@ -5,7 +5,7 @@
 //! variable ([JLS §14.4]) of a method, constructor or initializer body, given
 //! the declaration types computed by [`crate::java::db::item_ty_query`] and the
 //! body IR of `hir-def`. Names are resolved lexically ([JLS §6.3]); field and
-//! method access is resolved by [`crate::java::method::pick_field`] /
+//! method access is resolved by [`crate::jvm::member_set::pick_field`] /
 //! [`crate::java::method::pick_method`] under the access context of the call site
 //! ([JLS §6.6]).
 //!
@@ -70,12 +70,13 @@ use self::context::*;
 
 use crate::{
     java::const_eval::Const,
-    java::db::TyDatabase,
     java::diagnostics::TypeError,
-    java::method::{FieldData, InvocationContext, MethodData, access_context},
+    java::method::{InvocationContext, access_context},
     java::range_ctx::range_ctx,
     java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     java::ty::Ty,
+    jvm::db::TyDatabase,
+    jvm::member::{FieldData, MethodData},
 };
 
 /// The inferred types of a method or constructor body.
@@ -128,7 +129,7 @@ pub enum ResolvedMember {
 
 /// body (a declaration without statements) or is not a body-carrying item.
 pub fn body_types(db: &dyn TyDatabase, file: FileId, item: ItemId) -> Option<Arc<BodyTypes>> {
-    crate::java::db::body_types_query(db, crate::java::db::ItemKey::new(db, file, item))
+    crate::java::db::body_types_query(db, crate::jvm::db::ItemKey::new(db, file, item))
 }
 
 // The `(file, item)` bodies whose `body_types` is currently being computed on

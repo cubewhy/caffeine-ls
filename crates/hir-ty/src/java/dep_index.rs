@@ -39,9 +39,10 @@ use hir_expand::{
 };
 
 use crate::{
-    java::db::{ItemKey, TyDatabase, body_types_query, item_ty_query, method_params_query},
+    java::db::{body_types_query, item_ty_query, method_params_query},
     java::name_check::{body_type_refs, expr_forest_type_refs, item_type_refs},
     java::subtyping::source_supertypes,
+    jvm::db::{ItemKey, TyDatabase},
 };
 
 /// The workspace source files whose declarations `file`'s type outputs resolve

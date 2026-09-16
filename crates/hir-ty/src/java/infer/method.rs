@@ -13,11 +13,13 @@ use syntax::stub::PrimitiveType;
 
 use crate::java::{
     diagnostics::{NonStaticThisKind, TypeError},
-    method::{InvocationMode, MethodData, member_set},
+    method::InvocationMode,
     resolve::resolve_type_ref,
     subtyping::supertypes_impl,
     ty::{Ty, TyKind},
 };
+use crate::jvm::member::MethodData;
+use crate::jvm::member_set::member_set;
 
 use super::{
     InferCtx, ResolvedMember, body_in_flight, body_types,
@@ -170,7 +172,7 @@ impl InferCtx<'_> {
         expr: ExprId,
         name: Name,
         owner: Option<Name>,
-        members: &[crate::java::method::MethodData],
+        members: &[crate::jvm::member::MethodData],
         arg_kinds: &[ArgInfo],
         found: usize,
     ) {
@@ -238,7 +240,7 @@ impl InferCtx<'_> {
             .map(|m| m.params.len().abs_diff(found))
             .min()
             .unwrap_or(0);
-        let closest: Vec<&crate::java::method::MethodData> = members
+        let closest: Vec<&crate::jvm::member::MethodData> = members
             .iter()
             .filter(|m| m.params.len().abs_diff(found) == min_distance)
             .collect();
@@ -761,7 +763,7 @@ impl InferCtx<'_> {
 ///
 /// Only used for rendering: the variables carry their declared bounds so a
 /// bound-shaped formal still renders meaningfully (`V` rather than `Object`).
-fn reported_formals(db: &dyn crate::java::db::TyDatabase, method: &MethodData) -> Vec<Ty> {
+fn reported_formals(db: &dyn crate::jvm::db::TyDatabase, method: &MethodData) -> Vec<Ty> {
     if method.type_params.is_empty() {
         return method.params.clone();
     }
@@ -786,7 +788,7 @@ fn reported_formals(db: &dyn crate::java::db::TyDatabase, method: &MethodData) -
 /// applies to `found` actual arguments ([JLS §15.12.2.4]): the fixed prefix,
 /// then the last formal's element type repeated for every trailing actual —
 /// or the array formal itself when a lone trailing actual is array-shaped.
-fn pack_varargs(db: &dyn crate::java::db::TyDatabase, formals: &[Ty], found: usize) -> Vec<Ty> {
+fn pack_varargs(db: &dyn crate::jvm::db::TyDatabase, formals: &[Ty], found: usize) -> Vec<Ty> {
     let Some((last, fixed)) = formals.split_last() else {
         return Vec::new();
     };

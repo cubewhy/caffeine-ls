@@ -31,13 +31,15 @@ use syntax::stub::{AnnotationValue as ClassfileValue, PrimitiveType, PrimitiveVa
 use vfs::FileId;
 
 use crate::java::const_eval::{ArithOp, shift_mask, wrap_arith, wrap_divrem, wrap_ushr};
-use crate::java::db::TyDatabase;
-use crate::java::method::{FieldData, access_context, pick_field};
+use crate::java::method::access_context;
 use crate::java::range_ctx::range_ctx;
 use crate::java::resolve::{
     Resolver, candidate_fqns, innermost_item, resolve_type_ref, scope_for_file,
 };
 use crate::java::ty::{Ty, TyKind};
+use crate::jvm::db::TyDatabase;
+use crate::jvm::member::FieldData;
+use crate::jvm::member_set::pick_field;
 
 /// The deepest chain of field definitions a [§4.12.4] verdict follows before
 /// giving up (a `final` field initialized by another `final` field, and so

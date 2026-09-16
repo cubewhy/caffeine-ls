@@ -10,10 +10,11 @@ use syntax::stub::TypeRef;
 use crate::java::{
     diagnostics::{DiagLocation, TypeError},
     inference::{Inference, InvocationPhase},
-    method::{MethodData, member_set},
     resolve::resolve_type_ref,
     ty::{Ty, TyData, TyKind, TypeVarScope},
 };
+use crate::jvm::member::MethodData;
+use crate::jvm::member_set::member_set;
 
 use super::{InferCtx, ResolvedMember, overload::CallResolution, poly::ArgInfo};
 
@@ -474,7 +475,7 @@ impl InferCtx<'_> {
     pub(super) fn class_type_param_bounds(
         &self,
         fqn: &Name,
-    ) -> Vec<crate::java::method::MethodTypeParam> {
+    ) -> Vec<crate::jvm::member::MethodTypeParam> {
         let Some(resolved) = hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) else {
             return Vec::new();
         };
@@ -498,7 +499,7 @@ impl InferCtx<'_> {
                 info.type_params
                     .iter()
                     .zip(names.iter())
-                    .map(|(tp, name)| crate::java::method::MethodTypeParam {
+                    .map(|(tp, name)| crate::jvm::member::MethodTypeParam {
                         scope: crate::java::ty::TypeVarScope::LibraryClass {
                             owner: owner.clone(),
                             name: name.clone(),
@@ -541,7 +542,7 @@ impl InferCtx<'_> {
                 match declared {
                     Some(declared) => declared
                         .iter()
-                        .map(|tp| crate::java::method::MethodTypeParam {
+                        .map(|tp| crate::jvm::member::MethodTypeParam {
                             scope: crate::java::ty::TypeVarScope::Class {
                                 file: source.file,
                                 item: source.item,

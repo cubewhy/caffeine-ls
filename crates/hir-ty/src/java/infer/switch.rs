@@ -375,7 +375,7 @@ impl InferCtx<'_> {
     pub(super) fn warn_unchecked_invocation(
         &mut self,
         expr: ExprId,
-        method: &crate::java::method::MethodData,
+        method: &crate::jvm::member::MethodData,
     ) {
         if self.probing || !method.raw_erased {
             return;
@@ -396,7 +396,7 @@ impl InferCtx<'_> {
         &mut self,
         expr: ExprId,
         arg_kinds: &[crate::java::infer::poly::ArgInfo],
-        method: &crate::java::method::MethodData,
+        method: &crate::jvm::member::MethodData,
     ) {
         if self.probing {
             return;
@@ -564,7 +564,7 @@ impl InferCtx<'_> {
 /// ([JLS §5.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.5.2)):
 /// an array's element type, so `(List<String>[]) o` is unchecked exactly as
 /// `(List<String>) o` is; any non-array type is itself.
-fn cast_target(db: &dyn crate::java::db::TyDatabase, ty: &Ty) -> Ty {
+fn cast_target(db: &dyn crate::jvm::db::TyDatabase, ty: &Ty) -> Ty {
     let mut current = *ty;
     while let TyKind::Array(inner) = current.kind(db) {
         current = **inner;

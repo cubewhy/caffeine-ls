@@ -26,10 +26,10 @@ use std::collections::VecDeque;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    java::db::TyDatabase,
-    java::method::{MethodData, MethodTypeParam},
     java::ty::Ty,
     java::ty::TypeVarScope,
+    jvm::db::TyDatabase,
+    jvm::member::{MethodData, MethodTypeParam},
 };
 
 mod incorporate;

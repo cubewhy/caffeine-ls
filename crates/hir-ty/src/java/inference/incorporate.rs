@@ -4,9 +4,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{Constraint, Inference, InvocationPhase};
 use crate::{
-    java::db::TyDatabase,
     java::subtyping::{is_assignable, is_subtype, supertypes_impl},
     java::ty::{Ty, TyKind},
+    jvm::db::TyDatabase,
 };
 
 impl Inference {

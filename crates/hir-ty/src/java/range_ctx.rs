@@ -14,7 +14,7 @@ use hir_expand::ast_id_map::AstIdMap;
 use syntax::SourceFile;
 use vfs::FileId;
 
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 
 /// The `(map, source)` pair the range helpers resolve against, when the
 /// file's language is known; `None` for an `Unknown` file (no parse exists).

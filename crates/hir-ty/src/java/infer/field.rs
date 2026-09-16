@@ -9,12 +9,11 @@ use hir_expand::{
 
 use crate::java::{
     diagnostics::{IllegalAccessKind, TypeError},
-    method::{
-        ClassKey, FieldData, InvocationContext, member_set_ignoring_access, pick_field,
-        pick_field_ignoring_access,
-    },
+    method::InvocationContext,
     ty::Ty,
 };
+use crate::jvm::member::{ClassKey, FieldData};
+use crate::jvm::member_set::{member_set_ignoring_access, pick_field, pick_field_ignoring_access};
 
 use super::{FinalFieldWrite, InferCtx, InitCtx, poly::access_keyword};
 

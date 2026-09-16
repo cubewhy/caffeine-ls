@@ -33,16 +33,15 @@ use vfs::FileId;
 
 use crate::java::annotation_check::{declaration_annotations, declaration_type_refs};
 use crate::java::annotation_value::{NameTarget, ValueCtx, name_target};
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 
-use crate::java::method::{
-    FieldData, InvocationContext, InvocationMode, MethodData, access_context, pick_method,
-};
+use crate::java::method::{InvocationContext, InvocationMode, access_context, pick_method};
 use crate::java::range_ctx::range_ctx;
 use crate::java::resolve::{
     NameResolution, Resolver, candidate_fqns, resolve_type_name_at, scope_for_file,
 };
 use crate::java::ty::Ty;
+use crate::jvm::member::{FieldData, MethodData};
 use hir_def::java::ranges;
 
 /// The declaration an annotation reference denotes, in the shape the IDE's

@@ -4,7 +4,7 @@ use rustc_hash::FxHashMap;
 
 use super::Inference;
 use super::instantiation::{bounds_compatible, pick_instantiation};
-use crate::{java::db::TyDatabase, java::ty::Ty};
+use crate::{java::ty::Ty, jvm::db::TyDatabase};
 
 impl Inference {
     /// Bound set resolution ([JLS §18.4.1]). Returns the instantiation of

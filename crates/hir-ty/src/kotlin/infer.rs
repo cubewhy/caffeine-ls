@@ -49,7 +49,7 @@ use hir_expand::name::Name;
 use super::diagnostics::{KotlinTypeError, MismatchTarget};
 use super::method::{self, CallArg};
 use super::resolve::KotlinResolver;
-use crate::java::db::TyDatabase;
+use crate::jvm::db::TyDatabase;
 use crate::ty::{Ty, TyKind};
 
 /// The types a body's inference produced.
@@ -82,9 +82,9 @@ pub enum KotlinResolvedMember {
     },
     /// A Java source or classfile method — the instantiated JVM view a Kotlin
     /// receiver resolved through ([`crate::kotlin::jvm_view`]).
-    Java(Box<crate::java::method::MethodData>),
+    Java(Box<crate::jvm::member::MethodData>),
     /// A Java source or classfile field.
-    JavaField(Box<crate::java::method::FieldData>),
+    JavaField(Box<crate::jvm::member::FieldData>),
 }
 
 impl KotlinBodyTypes {
