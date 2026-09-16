@@ -2,8 +2,8 @@
 //! of source files or stdin and reports, per file, the detected language, the
 //! syntax-tree node count, the full syntax-tree dump and any syntax errors.
 //!
-//! Language is detected by file extension (`.java` → Java, `.kt`/`.kts` →
-//! Kotlin); for stdin — which has no extension — `--language` is required.
+//! Language is detected by file extension ([`syntax::lang`]); for stdin —
+//! which has no extension — `--language` is required.
 //!
 //! Output formats:
 //! - `text` (default): a human-readable report with the tree dump.
@@ -23,7 +23,7 @@ use syntax::{LanguageKind, SourceFile, SyntaxError};
 
 use crate::{
     cli::{EXIT_CLEAN, EXIT_FINDINGS, report},
-    flags::{ParseArgs, ParseLanguage, ParseOutputFormat},
+    flags::{ParseArgs, ParseOutputFormat},
 };
 
 pub fn run(args: &ParseArgs) -> anyhow::Result<i32> {
@@ -31,7 +31,8 @@ pub fn run(args: &ParseArgs) -> anyhow::Result<i32> {
     if args.path.is_none() && stdin.is_terminal() {
         anyhow::bail!(
             "no input path given and stdin is a terminal; pass a source file/folder \
-             or pipe code in (with --language <java|kotlin> for stdin)"
+             or pipe code in (with --language <{}> for stdin)",
+            language_names()
         );
     }
 
@@ -125,16 +126,14 @@ struct FileInput {
 /// languages. Unknown-extension files pass the filter: single files bail,
 /// folder walks skip them.
 fn resolve_inputs(args: &ParseArgs) -> anyhow::Result<Vec<FileInput>> {
-    let override_lang = args.language.map(|language| match language {
-        ParseLanguage::Java => LanguageKind::Java,
-        ParseLanguage::Kotlin => LanguageKind::Kotlin,
-    });
+    let override_lang = args.language;
 
     let stdin_input = || -> anyhow::Result<Vec<FileInput>> {
         let Some(lang) = override_lang else {
             anyhow::bail!(
                 "stdin has no file extension to detect a language; \
-                 re-run with --language <java|kotlin>"
+                 re-run with --language <{}>",
+                language_names()
             );
         };
         Ok(vec![FileInput {
@@ -158,9 +157,11 @@ fn resolve_inputs(args: &ParseArgs) -> anyhow::Result<Vec<FileInput>> {
         let display = raw_path.display().to_string();
         let Some(language) = detect_language(override_lang, &display) else {
             anyhow::bail!(
-                "cannot determine the language of {} (expected a .java/.kt/.kts file); \
-                 pass --language <java|kotlin>",
-                raw_path.display()
+                "cannot determine the language of {} (expected a {} file); \
+                 pass --language <{}>",
+                raw_path.display(),
+                source_extensions(),
+                language_names()
             );
         };
         return Ok(vec![FileInput {
@@ -179,7 +180,8 @@ fn resolve_inputs(args: &ParseArgs) -> anyhow::Result<Vec<FileInput>> {
     let files = report::discover_files(raw_path);
     anyhow::ensure!(
         !files.is_empty(),
-        "no supported source files (.java, .kt, .kts) found under {}",
+        "no supported source files ({}) found under {}",
+        source_extensions(),
         raw_path.display()
     );
 
@@ -267,19 +269,28 @@ fn parse_one(file: &str, language: LanguageKind, text: &str) -> ParseEntry {
 
     ParseEntry {
         file: file.to_string(),
-        language: language_name(language),
+        language: language.name(),
         node_count,
         tree,
         syntax_errors,
     }
 }
 
-fn language_name(language: LanguageKind) -> &'static str {
-    match language {
-        LanguageKind::Java => "java",
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => "kotlin",
-        LanguageKind::Unknown => "unknown",
-    }
+/// The language names the `--language` flag accepts, from the registry.
+fn language_names() -> String {
+    syntax::lang::languages()
+        .iter()
+        .map(|language| language.name())
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// The source extensions the CLI scans for, as `.ext/.ext`, from the registry.
+fn source_extensions() -> String {
+    syntax::lang::file_extensions()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Replicates the language-agnostic shape of a `rowan` syntax-tree dump
@@ -411,7 +422,7 @@ mod tests {
 
     fn flags(
         path: Option<PathBuf>,
-        language: Option<ParseLanguage>,
+        language: Option<LanguageKind>,
         format: ParseOutputFormat,
     ) -> ParseArgs {
         ParseArgs {
@@ -520,7 +531,7 @@ mod tests {
 
     #[test]
     fn parses_stdin_with_explicit_language_as_jsonl() {
-        let args = flags(None, Some(ParseLanguage::Kotlin), ParseOutputFormat::Jsonl);
+        let args = flags(None, Some(LanguageKind::Kotlin), ParseOutputFormat::Jsonl);
         let (code, out) = run(&args, "fun main() = println(\"hi\")\n");
 
         assert!(code == EXIT_CLEAN || code == EXIT_FINDINGS, "{out}");
@@ -582,7 +593,7 @@ mod tests {
         let (code, out) = run(
             &flags(
                 Some(file),
-                Some(ParseLanguage::Java),
+                Some(LanguageKind::Java),
                 ParseOutputFormat::Json,
             ),
             "",

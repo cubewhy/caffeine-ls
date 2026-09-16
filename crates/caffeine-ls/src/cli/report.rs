@@ -210,10 +210,11 @@ pub(crate) fn discover_files(root: &Path) -> Vec<PathBuf> {
         .flatten()
         .filter(|entry| entry.file_type().is_some_and(|t| t.is_file()))
         .filter(|entry| {
-            matches!(
-                entry.path().extension().and_then(|ext| ext.to_str()),
-                Some("java") | Some("kt") | Some("kts")
-            )
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| syntax::lang::file_extensions().any(|owned| owned == ext))
         })
         .map(|entry| entry.into_path())
         .collect();

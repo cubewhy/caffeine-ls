@@ -1618,6 +1618,7 @@ dependencies = [
  "gen-lsp-types",
  "lsp-server",
  "serde_json",
+ "syntax",
  "tempfile",
  "tracing",
  "zip",

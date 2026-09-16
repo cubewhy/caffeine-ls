@@ -271,7 +271,7 @@ fn is_build_configuration_file(path: &AbsPathBuf) -> bool {
 /// recreation and modification coming from the client.
 fn is_watched_source_file(path: &AbsPathBuf) -> bool {
     path.extension()
-        .is_some_and(|ext| ext == "java" || ext == "kt" || ext == "kts")
+        .is_some_and(|ext| syntax::lang::file_extensions().any(|owned| owned == ext))
 }
 
 pub fn on_did_change_configuration(

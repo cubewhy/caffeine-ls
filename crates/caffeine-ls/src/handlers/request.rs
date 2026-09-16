@@ -291,11 +291,8 @@ pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Resu
     // The signature in a fence tagged with the file's language, the
     // declaration's documentation behind it as Markdown — so a client
     // highlights the signature with the right grammar.
-    // `ide::LanguageKind`, not the LSP `LanguageKind` this module glob-imports.
-    let language = match state.analysis.file_language(file_id) {
-        ide::LanguageKind::Kotlin | ide::LanguageKind::KotlinScript => "kotlin",
-        _ => "java",
-    };
+    let language =
+        syntax::lang::language_id(state.analysis.file_language(file_id)).unwrap_or("plaintext");
     let mut value = format!("```{language}\n{}\n```", info.value);
     if let Some(docs) = info.docs {
         value.push_str("\n\n");

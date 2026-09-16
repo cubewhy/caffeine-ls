@@ -1095,7 +1095,9 @@ impl GlobalState {
                 }
 
                 Some(vfs::loader::Entry::Directories(vfs::loader::Directories {
-                    extensions: vec!["java".into(), "kt".into(), "kts".into()],
+                    extensions: syntax::lang::file_extensions()
+                        .map(ToOwned::to_owned)
+                        .collect(),
                     include: vec![path.clone()],
                     exclude: if *generated {
                         Vec::new()

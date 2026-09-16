@@ -80,6 +80,17 @@ pub fn language_id(kind: LanguageKind) -> Option<&'static str> {
     for_kind(kind).map(|language| language.language_id())
 }
 
+/// The kind of the language named `name` — the spelling [`LanguageSyntax::name`]
+/// answers with, which is what the CLI accepts. A language answering for several
+/// kinds is named by its first, the file production rather than the script, so
+/// this is the inverse of [`LanguageKind::name`] only for those.
+pub fn for_name(name: &str) -> Option<LanguageKind> {
+    LANGUAGES
+        .iter()
+        .find(|language| language.name() == name)
+        .and_then(|language| language.kinds().first().copied())
+}
+
 /// The kind a parsed file reports: the registry key it was parsed under, with a
 /// script reported as its base language (a `.kts` file is written in Kotlin).
 /// The wrapper is the sum type the rowan `Lang` needs, so it is where the

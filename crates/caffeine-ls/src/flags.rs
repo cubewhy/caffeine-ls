@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
+use syntax::{LanguageKind, lang};
 
 #[derive(Debug, clap::Parser)]
 pub struct Flags {
@@ -72,8 +73,8 @@ pub struct ParseArgs {
 
     /// Language to parse with. Required when reading from stdin (which has no
     /// extension to detect); otherwise overrides extension-based detection.
-    #[arg(long, value_enum)]
-    pub language: Option<ParseLanguage>,
+    #[arg(long, value_parser = language_parser(), value_name = "LANG")]
+    pub language: Option<LanguageKind>,
 
     /// Output format of the report
     #[arg(long, value_enum, default_value_t = ParseOutputFormat::Text)]
@@ -84,10 +85,18 @@ pub struct ParseArgs {
     pub output: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ParseLanguage {
-    Java,
-    Kotlin,
+/// The `--language` values, generated from the language registry: every
+/// language a registered implementation names, so a new language adds a value
+/// (and its `--help` entry) without a change here.
+fn language_parser() -> impl clap::builder::TypedValueParser<Value = LanguageKind> {
+    use clap::builder::TypedValueParser;
+
+    clap::builder::PossibleValuesParser::new(
+        lang::languages().iter().map(|language| language.name()),
+    )
+    .map(|name: String| {
+        lang::for_name(&name).expect("a name the registry lists is a registered language")
+    })
 }
 
 /// Output formats of the `parse` subcommand. `Jsonl` emits one compact JSON

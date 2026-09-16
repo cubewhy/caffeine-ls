@@ -659,11 +659,9 @@ impl LspHarness {
 
         let uri = self.uri(relative_path);
 
-        let language_id = match path.extension().and_then(|ext| ext.to_str()) {
-            Some("java") => "java",
-            Some("kotlin") | Some("kt") => "kotlin",
-            _ => "plaintext",
-        };
+        let language_id =
+            syntax::lang::language_id(syntax::LanguageKind::from_path(&path.to_string_lossy()))
+                .unwrap_or("plaintext");
 
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
