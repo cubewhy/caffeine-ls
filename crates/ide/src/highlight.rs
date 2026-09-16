@@ -119,13 +119,6 @@ pub(crate) fn contains(map: &Highlights, range: TextRange) -> bool {
 /// file whose language the server cannot tell (no source root yet) and for an
 /// unknown language.
 pub fn highlight(db: &RootDatabase, file_id: FileId) -> Vec<Highlight> {
-    let Some(language) = ide_db::base_db::file_language_kind(db, file_id) else {
-        return Vec::new();
-    };
-    let parse = ide_db::base_db::parse(db, file_id, language);
-    let source = parse.syntax_node(language);
-    match &source {
-        syntax::SourceFile::Java(_) => java::highlight(db, file_id, &source),
-        syntax::SourceFile::Kotlin(_) => kotlin::highlight(&source),
-    }
+    crate::lang::for_file(db, file_id)
+        .map_or_else(Default::default, |ide| ide.highlight(db, file_id))
 }

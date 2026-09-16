@@ -68,7 +68,7 @@ enum Resolution {
 }
 
 /// The declarations the reference at `offset` resolves to.
-pub(super) fn definition(
+pub(crate) fn definition(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,
@@ -97,7 +97,7 @@ pub(super) fn definition(
 /// pipeline answers for — the declaration's own name (when
 /// `include_declaration`), the names of its supertypes and declared types, the
 /// import paths that bind it and the annotation names that apply it.
-pub(super) fn references(
+pub(crate) fn references(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,
@@ -145,7 +145,7 @@ pub(super) fn references(
 
 /// The library files a Kotlin reference needs before it can be answered, in
 /// resolution order (see [`super::pending_library_files`]).
-pub(super) fn pending_library_files(
+pub(crate) fn pending_library_files(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,
@@ -174,7 +174,7 @@ pub(super) fn pending_library_files(
 /// references Java classes as readily as Kotlin ones), so the rendering
 /// dispatches on the declaring file's language: a Kotlin declaration renders
 /// from the item tree, a Java one through [`super::java::hover`].
-pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
+pub(crate) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     let ctx = Ctx::new(db, file)?;
     let token = identifier_at(&ctx, offset)?;
     match site_of(&token) {
@@ -359,7 +359,7 @@ fn render_signature(
 
 /// The declaration of the class-like type `fqn` in `file`'s scope — the
 /// declaration a click on an inlay hint's type label navigates to.
-pub(super) fn class_declaration(
+pub(crate) fn class_declaration(
     db: &RootDatabase,
     file: FileId,
     fqn: &str,
@@ -859,29 +859,23 @@ impl Ctx {
     }
 }
 
-/// The declared-name range of a declaration in `file`, in whichever of the two
-/// languages that file is — a Kotlin reference can name a *Java* declaration,
-/// so the resolution's target range is resolved per the declaration's language.
+/// The declared-name range of a declaration in `file`, in whichever language
+/// declares it: the target's own language resolves it.
 fn declaration_name_range(
     db: &RootDatabase,
     file: FileId,
     item: hir::hir_def::jvm::ids::ItemId,
 ) -> Option<TextRange> {
-    let language = hir::file_item_tree(db, file).language();
-    match hir::file_item_tree(db, file) {
-        tree if hir::hir_def::kotlin::plugin::model(&tree).is_some() => {
-            let ctx = Ctx::new(db, file)?;
-            let _ = language;
-            ctx.name_range(item)
-        }
-        _ => {
-            let tree = hir::hir_def::java::plugin::tree(db, file);
-            let parse = parse(db, file, language);
-            let source = parse.syntax_node(language);
-            let map = hir::hir_def::db::ast_id_map(db, file, language);
-            hir::hir_def::java::ranges::item_name_range(map, &source, &tree, item)
-        }
-    }
+    crate::lang::for_file(db, file)?.declaration_name_range(db, file, item)
+}
+
+/// The declared-name range of a *Kotlin* declaration.
+pub(crate) fn kotlin_declaration_name_range(
+    db: &RootDatabase,
+    file: FileId,
+    item: hir::hir_def::jvm::ids::ItemId,
+) -> Option<TextRange> {
+    Ctx::new(db, file)?.name_range(item)
 }
 
 /// The identifier token written at `offset`.

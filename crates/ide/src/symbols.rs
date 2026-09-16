@@ -16,9 +16,10 @@ fn range_ctx(
     file: FileId,
     language: ide_db::base_db::LanguageKind,
 ) -> Option<(hir_expand::ast_id_map::AstIdMap, syntax::SourceFile)> {
-    if language == ide_db::base_db::LanguageKind::Unknown {
-        return None;
-    }
+    // A kind no language answers for is a file with no source root yet (opened
+    // before the workspace loaded) or a non-JVM file: it has no parse to
+    // resolve ranges against.
+    crate::lang::ide(language)?;
     let parse = ide_db::base_db::parse(db, file, language);
     let source = parse.syntax_node(language);
     let map = hir::hir_def::db::ast_id_map(db, file, language).clone();
@@ -31,8 +32,7 @@ use vfs::FileId;
 
 use crate::RootDatabase;
 
-use hir_expand::arena::ArenaId;
-type ItemId = hir::hir_def::jvm::ids::ItemId;
+pub(crate) type ItemId = hir::hir_def::jvm::ids::ItemId;
 
 /// A source symbol as seen by the IDE.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,15 +95,22 @@ pub struct WorkspaceSymbolSummary {
 /// ranges target its record component, and the canonical constructor's
 /// ranges target the record declaration.
 pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
-    let file_tree = hir::file_item_tree(db, file_id);
-    if let Some(tree) = hir::hir_def::kotlin::plugin::model(&file_tree) {
-        return kotlin_document_symbols(db, file_id, tree);
-    }
-    // A file no language lowered — an unknown-language one, or a `.kts`
-    // script — has no declarations and no Java model to walk.
-    if hir::hir_def::java::plugin::model(&file_tree).is_none() {
-        return Vec::new();
-    }
+    crate::lang::for_file(db, file_id)
+        .map_or_else(Vec::new, |ide| ide.document_symbols(db, file_id))
+}
+
+/// The outline of a Java file: the symbols of its item tree, records expanded
+/// with their implicit members.
+///
+/// A record ([JLS §8.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10))
+/// is expanded with its *implicit* members — a public accessor method per
+/// component ([§8.10.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.3))
+/// and its canonical constructor ([§8.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.4))
+/// — so the outline shows what the language synthesizes. These are synthetic
+/// (`item: None`) and carry no source ranges of their own: the accessor
+/// ranges target its record component, and the canonical constructor's
+/// ranges target the record declaration.
+pub(crate) fn java_document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
     let tree = hir::hir_def::java::plugin::tree(db, file_id);
@@ -112,7 +119,7 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
     if !symbols.is_empty() {
         // The package is an independent item above the file's top-level
         // types; it is not a container of them.
-        out.push(package_symbol(db, file_id));
+        out.push(java_package_symbol(db, file_id));
     }
     out.extend(symbols.iter().flat_map(|source| {
         let top_level = source
@@ -120,8 +127,10 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
             .as_str()
             .rsplit_once('.')
             .is_none_or(|(parent, _)| !names.contains(parent));
-        let data = tree.data(source.item);
         let item = source.item;
+        let Some(data) = hir_def_item_data(&tree, item) else {
+            return Vec::new();
+        };
         // The item tree carries no offsets: the ranges are resolved from the
         // file's parse. A record's outline range points at its declaration
         // *header* (the definition, including the component list) rather than
@@ -148,12 +157,21 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
             detail: symbol_detail(source, top_level),
             item: Some(source.item),
         };
-        // Records synthesize their implicit members right after themselves,
-        // so the name-prefix nesting (parent = name minus the last `.`-segment)
-        // groups each under the record.
-        std::iter::once(symbol.clone()).chain(record_members(db, file_id, &symbol, data))
+        std::iter::once(symbol.clone())
+            .chain(record_members(db, file_id, &symbol, data))
+            .collect::<Vec<_>>()
     }));
     out
+}
+
+/// The lowered item data of `item`, when the file's model declares it: a
+/// rewritten file's tree can shrink under a stale id, so the item is bounds
+/// checked before the arena is read.
+fn hir_def_item_data<'a>(
+    tree: &'a hir::hir_def::java::item_tree::ItemTree,
+    item: ItemId,
+) -> Option<&'a hir::hir_def::java::item_tree::ItemData> {
+    ((item.0.0 as usize) < tree.items.len()).then(|| tree.data(item))
 }
 
 /// The implicit members of a record declaration, synthesized as `item: None`
@@ -261,28 +279,66 @@ fn record_members(
 /// top-level types. The unnamed package ([JLS §7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2))
 /// is rendered explicitly as `<default package>`.
 fn package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
-    let file_tree = hir::file_item_tree(db, file_id);
-    let name = hir::hir_def::java::plugin::model(&file_tree)
-        .and_then(|tree| tree.package.clone())
-        .or_else(|| {
-            hir::hir_def::kotlin::plugin::model(&file_tree).and_then(|tree| tree.package.clone())
-        })
-        .map(|name| name.as_str().to_owned())
-        .unwrap_or_else(|| "<default package>".to_owned());
-    let range = if let Some(tree) = hir::hir_def::java::plugin::model(&file_tree) {
-        range_ctx(db, file_id, tree.language).and_then(|(map, source)| {
+    crate::lang::for_file(db, file_id).map_or_else(
+        || default_package_symbol(db, file_id),
+        |ide| ide.package_symbol(db, file_id),
+    )
+}
+
+/// The synthesized package symbol of a file no language declares: the default
+/// package, with no range.
+fn default_package_symbol(_db: &RootDatabase, _file_id: FileId) -> DocumentSymbol {
+    let name = "<default package>".to_owned();
+    DocumentSymbol {
+        name: name.clone(),
+        display_name: name,
+        kind: hir::SourceSymbolKind::Package,
+        range: TextRange::default(),
+        name_range: TextRange::default(),
+        detail: None,
+        item: None,
+    }
+}
+
+/// The synthesized package symbol of a Java file.
+pub(crate) fn java_package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
+    let tree = hir::hir_def::java::plugin::tree(db, file_id);
+    let name = tree.package.as_ref().map_or_else(
+        || "<default package>".to_owned(),
+        |name| name.as_str().to_owned(),
+    );
+    let range = range_ctx(db, file_id, tree.language)
+        .and_then(|(map, source)| {
             tree.package_decls.last().and_then(|decl| {
                 hir::hir_def::java::ranges::package_name_range(&map, &source, *decl)
             })
         })
-    } else if let Some(tree) = hir::hir_def::kotlin::plugin::model(&file_tree) {
-        range_ctx(db, file_id, tree.language).and_then(|(map, source)| {
-            hir::hir_def::kotlin::ranges::package_name_range(&map, &source, tree)
-        })
-    } else {
-        None
+        .unwrap_or_default();
+    DocumentSymbol {
+        name: name.clone(),
+        display_name: name,
+        kind: hir::SourceSymbolKind::Package,
+        range,
+        name_range: range,
+        detail: None,
+        item: None,
     }
-    .unwrap_or_default();
+}
+
+/// The synthesized package symbol of a Kotlin file.
+pub(crate) fn kotlin_package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
+    let Some(tree) = hir::hir_def::kotlin::plugin::tree(db, file_id) else {
+        return default_package_symbol(db, file_id);
+    };
+    let name = tree.package.as_ref().map_or_else(
+        || "<default package>".to_owned(),
+        |name| name.as_str().to_owned(),
+    );
+    let range = range_ctx(db, file_id, tree.language)
+        .and_then(|(map, source)| {
+            hir::hir_def::kotlin::ranges::package_name_range(&map, &source, &tree)
+        })
+        .unwrap_or_default();
     DocumentSymbol {
         name: name.clone(),
         display_name: name,
@@ -476,27 +532,43 @@ pub fn workspace_symbol_summaries(
 /// `workspaceSymbol/resolve` half of the flow. Returns `None` for a stale
 /// `(file, item)` (file rewritten or deleted since the row was served).
 pub fn source_symbol_range(db: &RootDatabase, file_id: FileId, item: u32) -> Option<TextRange> {
-    let item = hir::hir_def::jvm::ids::ItemId(ArenaId(item));
-    // The id indexes into this revision's item tree; re-validate before
-    // touching the arena — `Arena::get` panics out of bounds and a rewritten
-    // file's tree can shrink.
+    let item = hir::hir_def::jvm::ids::ItemId(hir_expand::arena::ArenaId(item));
+    crate::lang::for_file(db, file_id).and_then(|ide| ide.source_symbol_range(db, file_id, item))
+}
+
+/// The declared range of `item` in a Java file. `None` for an item the file no
+/// longer declares: a rewritten file's tree can shrink under a stale id.
+pub(crate) fn java_source_symbol_range(
+    db: &RootDatabase,
+    file_id: FileId,
+    item: ItemId,
+) -> Option<TextRange> {
     if !hir::file_symbols(db, file_id)
         .iter()
         .any(|symbol| symbol.item == item)
     {
         return None;
     }
-    let file_tree = hir::file_item_tree(db, file_id);
-    if let Some(tree) = hir::hir_def::kotlin::plugin::model(&file_tree) {
-        let (map, source) = range_ctx(db, file_id, tree.language)?;
-        return hir::hir_def::kotlin::ranges::item_range(&map, &source, tree, item);
-    }
-    if hir::hir_def::java::plugin::model(&file_tree).is_none() {
-        return None;
-    }
     let tree = hir::hir_def::java::plugin::tree(db, file_id);
     let (map, source) = range_ctx(db, file_id, tree.language)?;
     hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)
+}
+
+/// The declared range of `item` in a Kotlin file.
+pub(crate) fn kotlin_source_symbol_range(
+    db: &RootDatabase,
+    file_id: FileId,
+    item: ItemId,
+) -> Option<TextRange> {
+    if !hir::file_symbols(db, file_id)
+        .iter()
+        .any(|symbol| symbol.item == item)
+    {
+        return None;
+    }
+    let tree = hir::hir_def::kotlin::plugin::tree(db, file_id)?;
+    let (map, source) = range_ctx(db, file_id, tree.language)?;
+    hir::hir_def::kotlin::ranges::item_range(&map, &source, &tree, item)
 }
 
 /// The declared symbols of a Kotlin file, in declaration order, prefixed by a
@@ -509,17 +581,17 @@ pub fn source_symbol_range(db: &RootDatabase, file_id: FileId, item: u32) -> Opt
 /// signature the *item tree* knows — a function's parameters and return type,
 /// a property's type — because the Kotlin type layer's rendering is not
 /// available for an arbitrary declaration yet.
-fn kotlin_document_symbols(
-    db: &RootDatabase,
-    file_id: FileId,
-    tree: &KotlinItemTree,
-) -> Vec<DocumentSymbol> {
+pub(crate) fn kotlin_document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
+    let Some(tree) = hir::hir_def::kotlin::plugin::tree(db, file_id) else {
+        return Vec::new();
+    };
+    let tree = &tree;
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
     let ctx = range_ctx(db, file_id, tree.language);
     let mut out = Vec::with_capacity(symbols.len() + 1);
     if !symbols.is_empty() {
-        out.push(package_symbol(db, file_id));
+        out.push(kotlin_package_symbol(db, file_id));
     }
     out.extend(symbols.iter().map(|source| {
         let top_level = source
@@ -613,9 +685,8 @@ fn registered_source_sets(db: &RootDatabase) -> Vec<hir::SourceSetId> {
 /// the type of a class-like declaration — rendered from the HIR type layer
 /// with the *simple* class name (the last `.`-segment).
 pub fn item_ty(db: &RootDatabase, file_id: FileId, item: hir::hir_def::jvm::ids::ItemId) -> String {
-    hir_ty::item_ty(db, file_id, item)
-        .display_simple(db)
-        .to_string()
+    crate::lang::for_file(db, file_id)
+        .map_or_else(String::new, |ide| ide.item_ty(db, file_id, item))
 }
 
 /// The parameter types of a method or constructor, in declaration order,
@@ -625,10 +696,8 @@ pub fn method_params(
     file_id: FileId,
     item: hir::hir_def::jvm::ids::ItemId,
 ) -> Arc<[String]> {
-    Arc::from(
-        hir_ty::method_params(db, file_id, item)
-            .into_iter()
-            .map(|ty| ty.display_simple(db).to_string())
-            .collect::<Vec<_>>(),
+    crate::lang::for_file(db, file_id).map_or_else(
+        || Arc::from(Vec::new()),
+        |ide| ide.method_params(db, file_id, item),
     )
 }

@@ -213,7 +213,7 @@ fn resolutions(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolut
 
 /// The declarations the reference at `offset` resolves to in a Java file
 /// ([JLS §6.5]).
-pub(super) fn definition(
+pub(crate) fn definition(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,
@@ -258,7 +258,7 @@ pub(super) fn definition(
 /// * Only `IDENTIFIER` tokens are candidates ([`file_references`]), so a javadoc
 ///   `{@link ...}` — one `JAVADOC` token — is not a site; `definition` answers
 ///   nothing at such an offset either, so the two requests stay consistent.
-pub(super) fn references(
+pub(crate) fn references(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,
@@ -1282,7 +1282,7 @@ fn switch_scrutinee_of(bodies: &BodyTree, offset: TextSize, label: ExprId) -> Op
 /// The library files a reference in a Java file resolves into but which are not
 /// loaded into the database yet, in resolution order — the Java arm of
 /// [`super::pending_library_files`], whose doc states the contract.
-pub(super) fn pending_library_files(
+pub(crate) fn pending_library_files(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,
@@ -2425,7 +2425,7 @@ fn library_member_hover(
 /// that has to be loaded for it, which the inlay-hint layer defers on — so a
 /// library member's names render on the first request rather than only once its
 /// source happens to be open.
-pub(super) fn declared_parameter_names(
+pub(crate) fn declared_parameter_names(
     db: &RootDatabase,
     file: FileId,
     method: &hir_ty::MethodData,
@@ -2442,7 +2442,7 @@ pub(super) fn declared_parameter_names(
 /// when there is one. The inlay-hint path drives the load with it, exactly as
 /// goto-definition and hover defer through [`pending_library_files`]; `None`
 /// when no load can name the member.
-pub(super) fn pending_parameter_names(
+pub(crate) fn pending_parameter_names(
     db: &RootDatabase,
     file: FileId,
     method: &hir_ty::MethodData,
@@ -2646,7 +2646,7 @@ fn type_ref_name(tyref: &syntax::stub::TypeRef<hir_expand::name::Name>) -> Optio
 /// requests agree on which declaration an offset names. A *type parameter* has
 /// no item of its own, so a hover on its declaration or on a reference to it
 /// (both of which a definition answers) renders nothing yet.
-pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
+pub(crate) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     let tree = hir::hir_def::java::plugin::tree(db, file);
     let bodies = hir::file_body_tree(db, file);
 
@@ -2789,7 +2789,7 @@ pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
 /// reference, which has no target: a click on such a label simply does not
 /// navigate, rather than deferring the request to a materialization the hint
 /// path does not drive.
-pub(super) fn class_declaration(
+pub(crate) fn class_declaration(
     db: &RootDatabase,
     file: FileId,
     fqn: &str,
@@ -2967,4 +2967,18 @@ fn exprs_at(bodies: &BodyTree, offset: TextSize) -> Vec<ExprId> {
 /// walks stop here instead of ascending.
 fn innermost_expr_at(bodies: &BodyTree, offset: TextSize) -> Option<ExprId> {
     exprs_at(bodies, offset).first().copied()
+}
+
+/// The range of the declaration's own name in a Java file.
+pub(crate) fn declaration_name_range(
+    db: &RootDatabase,
+    file: FileId,
+    item: hir::hir_def::jvm::ids::ItemId,
+) -> Option<TextRange> {
+    let language = hir::file_item_tree(db, file).language();
+    let tree = hir::hir_def::java::plugin::tree(db, file);
+    let parse = ide_db::base_db::parse(db, file, language);
+    let source = parse.syntax_node(language);
+    let map = hir::hir_def::db::ast_id_map(db, file, language);
+    hir::hir_def::java::ranges::item_name_range(map, &source, &tree, item)
 }

@@ -22,10 +22,9 @@ use triomphe::Arc;
 use vfs::{AbsPathBuf, FileId};
 
 use crate::RootDatabase;
-use ide_db::base_db::LanguageKind;
 
-mod java;
-mod kotlin;
+pub(crate) mod java;
+pub(crate) mod kotlin;
 
 /// The declaration a reference resolves to: a file and the source range of
 /// the declaring construct.
@@ -97,13 +96,8 @@ impl LibraryFileRef {
 /// Java file, the Kotlin scope rules for a Kotlin one — see
 /// [`kotlin`]).
 pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::definition(db, file, offset),
-        // `Unknown` is a file with no source root yet (opened before the
-        // workspace loaded) or a non-JVM file; it lowers to an empty item tree,
-        // so the Java path finds nothing.
-        _ => java::definition(db, file, offset),
-    }
+    crate::lang::for_file(db, file)
+        .map_or_else(Default::default, |ide| ide.definition(db, file, offset))
 }
 
 /// The reference sites of the declaration(s) the reference at `offset` names —
@@ -115,12 +109,9 @@ pub fn references(
     offset: TextSize,
     include_declaration: bool,
 ) -> Vec<ReferenceTarget> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => {
-            kotlin::references(db, file, offset, include_declaration)
-        }
-        _ => java::references(db, file, offset, include_declaration),
-    }
+    crate::lang::for_file(db, file).map_or_else(Default::default, |ide| {
+        ide.references(db, file, offset, include_declaration)
+    })
 }
 
 /// The library files the reference at `offset` resolves into but which are
@@ -132,12 +123,9 @@ pub fn pending_library_files(
     file: FileId,
     offset: TextSize,
 ) -> Vec<LibraryFileRef> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => {
-            kotlin::pending_library_files(db, file, offset)
-        }
-        _ => java::pending_library_files(db, file, offset),
-    }
+    crate::lang::for_file(db, file).map_or_else(Default::default, |ide| {
+        ide.pending_library_files(db, file, offset)
+    })
 }
 
 /// The hover at `offset`, resolved by the file's language: the declaration a
@@ -145,10 +133,7 @@ pub fn pending_library_files(
 /// declaration whose own name the offset is on — nothing for an offset that
 /// names nothing.
 pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::hover(db, file, offset),
-        _ => java::hover(db, file, offset),
-    }
+    crate::lang::for_file(db, file).and_then(|ide| ide.hover(db, file, offset))
 }
 
 /// The declaration of the class-like type `fqn` names in `file`'s scope — the
@@ -160,12 +145,7 @@ pub(crate) fn class_declaration(
     file: FileId,
     fqn: &str,
 ) -> Option<NavigationTarget> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => {
-            kotlin::class_declaration(db, file, fqn)
-        }
-        _ => java::class_declaration(db, file, fqn),
-    }
+    crate::lang::for_file(db, file).and_then(|ide| ide.class_declaration(db, file, fqn))
 }
 
 /// The parameter names the declaration the invocation `method` selected writes
@@ -185,10 +165,8 @@ pub(crate) fn declared_parameter_names(
     method: &hir_ty::MethodData,
     constructor: bool,
 ) -> Option<Vec<String>> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
-        _ => java::declared_parameter_names(db, file, method, constructor),
-    }
+    crate::lang::for_file(db, file)
+        .and_then(|ide| ide.declared_parameter_names(db, file, method, constructor))
 }
 
 /// The library file that has to be loaded before the invocation `method`'s
@@ -206,8 +184,6 @@ pub(crate) fn pending_parameter_names(
     method: &hir_ty::MethodData,
     constructor: bool,
 ) -> Option<LibraryFileRef> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
-        _ => java::pending_parameter_names(db, file, method, constructor),
-    }
+    crate::lang::for_file(db, file)
+        .and_then(|ide| ide.pending_parameter_names(db, file, method, constructor))
 }

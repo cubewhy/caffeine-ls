@@ -30,7 +30,7 @@ use syntax::kotlin::{Lang, SyntaxKind as K};
 use super::{Highlight, Highlights, HlMods, HlTag, insert};
 
 /// The semantic highlighting of a Kotlin file, sorted by range start.
-pub(super) fn highlight(source: &SourceFile) -> Vec<Highlight> {
+pub(crate) fn highlight(source: &SourceFile) -> Vec<Highlight> {
     let Some(root) = kotlin_root(source) else {
         return Vec::new();
     };

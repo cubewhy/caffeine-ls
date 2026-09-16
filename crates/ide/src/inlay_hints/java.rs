@@ -78,7 +78,7 @@ impl Search {
 }
 
 /// The file's hints whose offset `range` contains, sorted by offset.
-pub(super) fn hints(
+pub(crate) fn hints(
     db: &RootDatabase,
     file: FileId,
     range: TextRange,
@@ -109,7 +109,7 @@ pub(super) fn hints(
 ///
 /// Empty for a request the parameter-name category is off for, and for the
 /// calls whose arguments would render no hint anyway.
-pub(super) fn pending_library_files(
+pub(crate) fn pending_library_files(
     db: &RootDatabase,
     file: FileId,
     range: TextRange,
@@ -129,7 +129,7 @@ pub(super) fn pending_library_files(
 }
 
 /// The one hint a resolve names, with its deferred detail.
-pub(super) fn resolve(
+pub(crate) fn resolve(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,

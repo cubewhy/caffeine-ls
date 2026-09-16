@@ -27,7 +27,7 @@ use super::{InlayHint, InlayHintDetail, InlayHintKind, InlayHintLabelPart, Inlay
 use crate::RootDatabase;
 
 /// The file's hints in `range`.
-pub(super) fn hints(
+pub(crate) fn hints(
     db: &RootDatabase,
     file: FileId,
     range: TextRange,
@@ -91,7 +91,7 @@ pub(super) fn hints(
 
 /// The detail of the hint a resolve names: the type's canonical (fully
 /// qualified) spelling, for the client's expanded tooltip.
-pub(super) fn resolve(
+pub(crate) fn resolve(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,

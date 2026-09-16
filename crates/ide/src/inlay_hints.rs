@@ -20,7 +20,6 @@
 //! hint applies, and — through every part's [`InlayHintLabelPart::class`] — the
 //! declaration a click on a rendered class name navigates to.
 
-use ide_db::base_db::LanguageKind;
 use rowan::{TextRange, TextSize};
 use smol_str::SmolStr;
 use vfs::FileId;
@@ -112,14 +111,9 @@ pub fn inlay_hints(
     range: TextRange,
     config: &InlayHintsConfig,
 ) -> Vec<InlayHint> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::hints(db, file, range, config),
-        // `Unknown` is a file with no source root yet (opened before the
-        // workspace loaded) or a non-JVM file; it lowers to an empty item tree
-        // and has no parse to read ranges from, so the Java path answers
-        // nothing for it.
-        _ => java::hints(db, file, range, config),
-    }
+    crate::lang::for_file(db, file).map_or_else(Default::default, |ide| {
+        ide.inlay_hints(db, file, range, config)
+    })
 }
 
 /// The library files the hints over `range` need loaded before their parameter
@@ -138,10 +132,9 @@ pub fn pending_library_files(
     range: TextRange,
     config: &InlayHintsConfig,
 ) -> Vec<crate::nav::LibraryFileRef> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => Vec::new(),
-        _ => java::pending_library_files(db, file, range, config),
-    }
+    crate::lang::for_file(db, file).map_or_else(Default::default, |ide| {
+        ide.inlay_hint_pending_library_files(db, file, range, config)
+    })
 }
 
 /// The one hint a resolve names, with its deferred detail. `None` when no hint
@@ -154,10 +147,6 @@ pub fn inlay_hint_resolve(
     kind: InlayHintKind,
     config: &InlayHintsConfig,
 ) -> Option<InlayHintDetail> {
-    match hir::file_item_tree(db, file).language() {
-        LanguageKind::Kotlin | LanguageKind::KotlinScript => {
-            kotlin::resolve(db, file, offset, kind, config)
-        }
-        _ => java::resolve(db, file, offset, kind, config),
-    }
+    crate::lang::for_file(db, file)
+        .and_then(|ide| ide.inlay_hint_resolve(db, file, offset, kind, config))
 }

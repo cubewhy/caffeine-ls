@@ -42,7 +42,7 @@ use super::{Highlight, Highlights, HlMods, HlTag, insert};
 use crate::RootDatabase;
 
 /// The semantic highlighting of a Java file, sorted by range start.
-pub(super) fn highlight(db: &RootDatabase, file_id: FileId, source: &SourceFile) -> Vec<Highlight> {
+pub(crate) fn highlight(db: &RootDatabase, file_id: FileId, source: &SourceFile) -> Vec<Highlight> {
     let Some(root) = java_root(source) else {
         return Vec::new();
     };
