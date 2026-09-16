@@ -1,3 +1,5 @@
+use crate::lang;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LanguageKind {
     Java,
@@ -9,15 +11,15 @@ pub enum LanguageKind {
 }
 
 impl LanguageKind {
+    /// The language of the file at `path`, by its extension ([`crate::lang`]).
     pub fn from_path(path: &str) -> Self {
-        if path.ends_with(".java") {
-            LanguageKind::Java
-        } else if path.ends_with(".kts") {
-            LanguageKind::KotlinScript
-        } else if path.ends_with(".kt") {
-            LanguageKind::Kotlin
-        } else {
-            LanguageKind::Unknown
-        }
+        lang::for_path(path).unwrap_or(LanguageKind::Unknown)
+    }
+
+    /// The lowercase name the snapshot renderers spell this language with. A
+    /// `.kts` script is spelled as Kotlin: the two kinds are one language
+    /// parsed by two productions.
+    pub fn name(self) -> &'static str {
+        lang::for_kind(self).map_or("unknown", |lang| lang.name())
     }
 }

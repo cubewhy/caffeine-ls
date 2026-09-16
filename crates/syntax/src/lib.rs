@@ -3,6 +3,7 @@ pub use kotlin_syntax as kotlin;
 
 pub mod class_parser;
 mod diagnostics;
+pub mod lang;
 mod language;
 mod parse;
 pub mod stub;

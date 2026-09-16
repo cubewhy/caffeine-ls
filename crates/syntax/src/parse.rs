@@ -1,6 +1,6 @@
 use rowan::{GreenNode, TextRange};
 
-use crate::{LanguageKind, diagnostics::DiagnosticCode, java, kotlin};
+use crate::{LanguageKind, diagnostics::DiagnosticCode, java, kotlin, lang};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SyntaxError {
@@ -26,23 +26,11 @@ pub enum SourceFile {
 
 impl SourceFile {
     pub fn parse(language: LanguageKind, text: &str) -> Parse {
-        match language {
-            LanguageKind::Java => Parse::from_java(java::SourceFile::parse(text)),
-            LanguageKind::Kotlin => Parse::from_kotlin(kotlin::SourceFile::parse(text)),
-            // `.kts` files are parsed with the KLS `script` grammar
-            // ([spec: grammar-rule-script]).
-            LanguageKind::KotlinScript => {
-                Parse::from_kotlin(kotlin::SourceFile::parse_script(text))
-            }
-            LanguageKind::Unknown => Parse::empty(),
-        }
+        lang::for_kind(language).map_or_else(Parse::empty, |lang| lang.parse(language, text))
     }
 
     pub fn language(&self) -> LanguageKind {
-        match self {
-            SourceFile::Java(_) => LanguageKind::Java,
-            SourceFile::Kotlin(_) => LanguageKind::Kotlin,
-        }
+        lang::kind_of(self)
     }
 }
 
@@ -64,58 +52,8 @@ impl Parse {
             .green
             .clone()
             .expect("empty parse result has no syntax tree");
-        match language {
-            LanguageKind::Java => SourceFile::Java(java::SourceFile {
-                syntax_node: rowan::SyntaxNode::new_root(green),
-            }),
-            LanguageKind::Kotlin | LanguageKind::KotlinScript => {
-                SourceFile::Kotlin(kotlin::SourceFile {
-                    syntax_node: rowan::SyntaxNode::new_root(green),
-                })
-            }
-            LanguageKind::Unknown => {
-                panic!("cannot create a syntax node for an unknown language")
-            }
-        }
-    }
-
-    fn from_java(parse: java::Parse<java::SourceFile>) -> Parse {
-        let (green, errors) = parse.into();
-        let errors = errors.into_iter().map(java_syntax_error).collect();
-        Parse {
-            green: Some(green),
-            errors,
-        }
-    }
-
-    fn from_kotlin(parse: kotlin::Parse<kotlin::SourceFile>) -> Parse {
-        let (green, errors) = parse.into();
-        let errors = errors.into_iter().map(kotlin_syntax_error).collect();
-        Parse {
-            green: Some(green),
-            errors,
-        }
-    }
-}
-
-fn java_syntax_error(err: java::SyntaxError) -> SyntaxError {
-    let code = DiagnosticCode::from_java_syntax(&err.kind);
-    let message = err.kind.desc();
-
-    SyntaxError {
-        message,
-        range: err.range,
-        code,
-    }
-}
-
-fn kotlin_syntax_error(err: kotlin::SyntaxError) -> SyntaxError {
-    let code = DiagnosticCode::from_kotlin_syntax(&err.kind);
-    let message = err.kind.desc();
-
-    SyntaxError {
-        message,
-        range: err.range,
-        code,
+        lang::for_kind(language)
+            .expect("cannot create a syntax node for an unknown language")
+            .syntax_node(language, green)
     }
 }
