@@ -12,11 +12,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::java::{
     inference::{Constraint, Inference, InvocationPhase},
-    method::InvocationContext,
     resolve::resolve_type_ref,
     ty::{BoundKind, Ty, TyKind, TypeVarScope, WildcardBound, boxed_type},
 };
 use crate::jvm::member::{ClassKey, MethodData};
+use crate::jvm::member_set::InvocationContext;
 use crate::jvm::member_set::{member_set, single_abstract_method};
 
 use super::{

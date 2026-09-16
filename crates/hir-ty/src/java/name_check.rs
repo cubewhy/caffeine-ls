@@ -32,13 +32,12 @@ use crate::{
     java::decl_check::DeclDiagnostic,
     java::deprecation::{self, DeprecatedReference},
     java::diagnostics::DiagLocation,
-    java::method::InvocationContext,
     java::range_ctx::range_ctx,
     java::release_api,
     java::resolve::{NameResolution, Resolver, item_data, resolve_name_checked, resolve_type_ref},
     java::ty::Ty,
     jvm::db::TyDatabase,
-    jvm::member_set::{member_set, pick_field},
+    jvm::member_set::{InvocationContext, member_set, pick_field},
 };
 use hir_def::java::ranges;
 

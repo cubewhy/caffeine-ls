@@ -20,17 +20,159 @@ use hir_def::jvm::access::JvmAccessFlags;
 use hir_expand::name::Name;
 
 use crate::{
-    java::method::{
-        InvocationContext, is_accessible, is_kotlin, member_accessible, mode_allows,
-        self_type_param_indexes, source_class_fields, source_class_methods,
-    },
-    java::resolve::item_data,
+    java::method::{is_accessible, member_accessible, mode_allows, self_type_param_indexes},
     java::subtyping::supertypes_query,
     java::ty::capture_conversion,
     jvm::db::{ContextKey, ScopeId, ScopeKind, TyDatabase},
     jvm::member::{Access, ClassKey, FieldData, MethodData, MethodTypeParam},
     ty::{Ty, TyData, TyKind, TypeVarScope},
 };
+
+/// How the method name is qualified: the invocation mode of
+/// [JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1):
+/// a static invocation (`TypeName.m`, §15.12.1), a super invocation
+/// (`super.m` or `TypeName.super.m`), or a virtual invocation (via an
+/// expression). The mode restricts which members are candidates
+/// ([§15.12.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.3)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InvocationMode {
+    /// `TypeName.m(...)`: only static members are candidates.
+    Static,
+    /// `T::m` — a *type-qualified* method reference ([JLS §15.13.1]): the
+    /// reference resolves a static member (declared in a class *or* an
+    /// interface) or an unbound instance member, so no static/instance filter
+    /// applies — the §15.12.3 virtual-invocation restriction that excludes
+    /// static interface methods is specific to receiver-expression invocations.
+    TypeQualified,
+    /// `super.m(...)`: only instance members are candidates.
+    Super,
+    /// `InterfaceName.super.m(...)`: only instance members are candidates.
+    Interface,
+    /// An unqualified `m(...)` whose receiver is the implicit `this`
+    /// ([JLS §15.12.1] MethodName form): the class-or-interface members are
+    /// candidates as in a virtual invocation, but a *static* member is also
+    /// reachable when it is declared in the class/interface the receiver names
+    /// ([§15.12.3]): javac resolves `s()` inside the interface that declares
+    /// `static void s()`, yet rejects `expr.s()` where `expr`'s type merely
+    /// implements the interface — the static-interface-member exclusion of the
+    /// virtual-invocation form applies only when the method is reached through
+    /// an expression.
+    MethodName,
+    /// `expression.m(...)`: all members except static methods declared in an
+    /// interface are candidates.
+    Virtual,
+}
+
+/// The context of a method invocation: how the name is qualified (the
+/// invocation mode, JLS §15.12.1/§15.12.3) and the lexical context used for
+/// access control ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
+///
+/// Source call sites obtain a fully constrained context with [`access_context`]
+/// and refine the mode per call site with [`InvocationContext::with_mode`];
+/// [`InvocationContext::external`] models a library-only probe call site
+/// outside the resolved scope.
+#[derive(Debug, Clone)]
+pub struct InvocationContext {
+    /// The invocation mode.
+    pub mode: InvocationMode,
+    /// The class or interface in which the invocation appears, for `private`
+    /// and `protected` access control
+    /// ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1),
+    /// [§6.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.2)).
+    /// A *local* declaration ([JLS §14.3]) is its own class here, which is what
+    /// makes its private members accessible to the body that declares it.
+    pub enclosing_class: Option<ClassKey>,
+    /// The package of the compilation unit in which the invocation appears,
+    /// for package and `protected` access control; the unnamed package is `""`.
+    pub package: Option<String>,
+    /// The class of which the access site is a (possibly anonymous) *subclass*,
+    /// for the second half of [§6.6.2]: a protected member declared by that
+    /// class is accessible from outside its package to code that is responsible
+    /// for the implementation of an object of the subclass. An anonymous class
+    /// creation `new C(args) { ... }` is exactly such a subclass — the
+    /// anonymous body may invoke C's protected constructor and protected
+    /// members even from another package (the Gson `new TypeToken<T>() {}`
+    /// idiom) — even though no source item exists for the anonymous class to
+    /// name as the enclosing class.
+    pub subclass_of: Option<ClassKey>,
+}
+
+impl InvocationContext {
+    /// The access control of a probe call site that resides outside `scope` —
+    /// a library-only caller that is not a member of any of the resolved
+    /// classes. It is affected by access control: it is neither a subclass of,
+    /// nor in the package of, any `scope` class, so only `public` members are
+    /// candidates ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
+    /// Source call sites use [`access_context`] instead.
+    pub fn external(_scope: &hir::ResolutionScope) -> Self {
+        Self {
+            mode: InvocationMode::Virtual,
+            // A fully qualified name that is not a subclass of anything in
+            // `scope`, and not a member of any of its classes (§6.6.1).
+            enclosing_class: Some(ClassKey::Named(Name::new("library.probe.Caller"))),
+            // The unnamed package: package and `protected` members of named
+            // packages are not accessible (§6.6.1).
+            package: Some(String::new()),
+            subclass_of: None,
+        }
+    }
+
+    /// The context interned as `key` ([`ContextKey`]).
+    pub fn from_key(db: &dyn TyDatabase, key: ContextKey) -> InvocationContext {
+        InvocationContext {
+            mode: *key.mode(db),
+            enclosing_class: key.enclosing_class(db).clone(),
+            package: key
+                .package(db)
+                .as_ref()
+                .map(|name| name.as_str().to_owned()),
+            subclass_of: key.subclass_of(db).clone(),
+        }
+    }
+
+    /// The access-control context of an import declaration
+    /// ([§7.5.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5.4)):
+    /// an import appears at compilation-unit level, so the site has the unit's
+    /// package ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1))
+    /// and neither an enclosing class nor a superclass — the unnamed package is
+    /// `""`, as in [`InvocationContext::external`]. A static import naming a
+    /// package member the unit's own package declares is therefore valid, and
+    /// the mode is a static access ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)).
+    pub fn for_import(package: Option<&str>) -> Self {
+        Self {
+            mode: InvocationMode::Static,
+            enclosing_class: None,
+            package: Some(package.unwrap_or_default().to_owned()),
+            subclass_of: None,
+        }
+    }
+
+    /// The invocation context of the same access site with the invocation mode
+    /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
+    /// of the call set to `mode`.
+    pub fn with_mode(&self, mode: InvocationMode) -> InvocationContext {
+        InvocationContext {
+            mode,
+            enclosing_class: self.enclosing_class.clone(),
+            package: self.package.clone(),
+            subclass_of: self.subclass_of.clone(),
+        }
+    }
+
+    /// The invocation context of the same access site, additionally *within an
+    /// anonymous class body whose direct superclass (or implemented interface)
+    /// is `superclass`* ([JLS §15.9.5], [§6.6.2]): the anonymous body is a
+    /// subclass of `superclass`, so protected members the *superclass itself*
+    /// declares are accessible to it from any package.
+    pub fn with_anonymous_superclass(&self, superclass: Name) -> InvocationContext {
+        InvocationContext {
+            mode: self.mode,
+            enclosing_class: self.enclosing_class.clone(),
+            package: self.package.clone(),
+            subclass_of: Some(ClassKey::Named(superclass)),
+        }
+    }
+}
 
 /// The member set of a name on a receiver type
 /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)):
@@ -521,7 +663,7 @@ fn is_raw_use(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) 
     };
     match resolved {
         // A Kotlin file's facade declares no type parameters.
-        hir::Resolved::KotlinFacade { .. } => false,
+        hir::Resolved::Facade { .. } => false,
         hir::Resolved::Library(library) => {
             hir::class_generic_info(db, &hir::Resolved::Library(library))
                 .is_some_and(|info| !info.type_params.is_empty())
@@ -628,7 +770,7 @@ fn abstract_methods_impl(
         let args = args.clone();
         match resolved {
             // A Kotlin file's facade is no functional interface.
-            hir::Resolved::KotlinFacade { .. } => continue,
+            hir::Resolved::Facade { .. } => continue,
             hir::Resolved::Library(class) => {
                 let Some(record) = hir::class_record(db, &class) else {
                     continue;
@@ -651,17 +793,12 @@ fn abstract_methods_impl(
                     ));
                 }
             }
-            hir::Resolved::Source(source) => {
-                let tree = hir::java_item_tree(db, source.file);
-                let Some(ItemData::Interface(class)) = item_data(&tree, source.item) else {
-                    continue;
-                };
-                for &item in &class.body {
-                    let Some(ItemData::Method(method)) = item_data(&tree, item) else {
-                        continue;
-                    };
-                    let name = method.name.as_str().to_owned();
-                    declarations.extend(source_class_methods(db, source, args.clone(), &name));
+            // A source class answers through the JVM view of the language
+            // that declares it: an interface's declared abstract members are
+            // that language's own ([`crate::lang::JvmMemberSource`]).
+            class @ hir::Resolved::Source(_) => {
+                if let Some(source) = crate::lang::member_source(db, &class) {
+                    declarations.extend(source.abstract_methods(db, &class, &args));
                 }
             }
         }
@@ -811,18 +948,14 @@ fn class_methods(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) -
     };
     let args = args.clone();
     match resolved {
+        // A classfile's members are its record's.
         hir::Resolved::Library(class) => library_class_methods(db, class, args, name),
-        // A Kotlin source class has no Java item tree: its JVM-visible members
-        // are the ones the compiler emits for it
-        // ([`crate::kotlin::jvm_view`]).
-        hir::Resolved::Source(source) if is_kotlin(db, source) => {
-            crate::kotlin::jvm_view::java_view_members(db, source, name)
-        }
-        hir::Resolved::Source(source) => source_class_methods(db, source, args, name),
-        // A facade's methods are the file's top-level functions.
-        hir::Resolved::KotlinFacade { file, .. } => {
-            crate::kotlin::jvm_view::file_facade_members(db, file, name)
-        }
+        // A source class — a facade included — answers through the JVM view of
+        // the language that declares it (a Kotlin class's JVM-visible members
+        // are the ones its compiler emits; a facade's are the file's top-level
+        // declarations).
+        class => crate::lang::member_source(db, &class)
+            .map_or_else(Vec::new, |source| source.methods(db, &class, &args, name)),
     }
 }
 
@@ -1155,15 +1288,12 @@ fn class_fields(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) ->
     };
     let args = args.clone();
     match resolved {
+        // A classfile's fields are its record's.
         hir::Resolved::Library(class) => library_class_fields(db, class, args, name),
-        hir::Resolved::Source(source) if is_kotlin(db, source) => {
-            crate::kotlin::jvm_view::java_view_fields(db, source, name)
-        }
-        hir::Resolved::Source(source) => source_class_fields(db, source, args, name),
-        // A facade's fields are the file's top-level `const val`s.
-        hir::Resolved::KotlinFacade { file, .. } => {
-            crate::kotlin::jvm_view::file_facade_fields(db, file, name)
-        }
+        // A source class answers through the JVM view of its own language (a
+        // facade's fields are the file's top-level `const val`s).
+        class => crate::lang::member_source(db, &class)
+            .map_or_else(Vec::new, |source| source.fields(db, &class, &args, name)),
     }
 }
 

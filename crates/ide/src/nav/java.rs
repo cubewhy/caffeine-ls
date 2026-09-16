@@ -1944,7 +1944,7 @@ fn owner_lookup(db: &RootDatabase, file: FileId, owner_fqn: &str) -> OwnerLookup
         // A Kotlin file's facade owns nothing a Java navigation can enter — its
         // members are the file's top-level declarations, which the Java layer
         // answers for a *member* lookup, not for navigation into a body.
-        hir::Resolved::KotlinFacade { .. } => OwnerLookup::Unresolved,
+        hir::Resolved::Facade { .. } => OwnerLookup::Unresolved,
         hir::Resolved::Library(class) => {
             let library = class.library;
             let fqn = resolved.fqn(db);
@@ -2187,7 +2187,7 @@ fn class_resolution(db: &RootDatabase, file: FileId, fqn: &Name) -> Vec<Resoluti
             name: fqn.simple_name().to_owned(),
         }],
         // A facade has no declaration to navigate to.
-        hir::Resolved::KotlinFacade { .. } => Vec::new(),
+        hir::Resolved::Facade { .. } => Vec::new(),
         hir::Resolved::Library(class) => {
             let library_fqn = resolved.fqn(db);
             library_class_resolution(db, class.library, library_fqn.as_name())
@@ -2567,7 +2567,7 @@ fn library_of(db: &RootDatabase, file: FileId, owner_fqn: &str) -> Option<hir::L
     let scope = hir_ty::scope_for_file(db, file);
     match hir::fqn_resolve(db, &scope, owner_fqn)? {
         hir::Resolved::Library(class) => Some(class.library),
-        hir::Resolved::Source(_) | hir::Resolved::KotlinFacade { .. } => None,
+        hir::Resolved::Source(_) | hir::Resolved::Facade { .. } => None,
     }
 }
 

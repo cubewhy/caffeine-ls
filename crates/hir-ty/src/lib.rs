@@ -92,6 +92,7 @@
 pub mod java;
 pub mod jvm;
 pub mod kotlin;
+pub mod lang;
 pub mod ty;
 
 pub use jvm::db::TyDatabase;
@@ -103,7 +104,7 @@ pub use java::diagnostics::{DiagLocation, TypeError};
 pub use java::infer::{BodyTypes, ResolvedMember, body_types, inferred_lambda_parameter_ty};
 pub use java::inference::least_upper_bound;
 pub use java::level_check::level_diagnostics;
-pub use java::method::{InvocationContext, InvocationMode, PolyArg, access_context, pick_method};
+pub use java::method::{PolyArg, access_context, pick_method};
 pub use java::name_check::{item_annotation_references, item_type_references};
 pub use java::release_api::ReleaseApi;
 pub use java::resolve::scope_for_file as scope_for_test;
@@ -116,6 +117,7 @@ pub use java::subtyping::{is_assignable, is_subtype, supertypes};
 pub use java::ty::{capture_conversion, ty_from_source};
 pub use jvm::member::{Access, ClassKey, FieldData, MethodData, MethodDisplay, MethodTypeParam};
 pub use jvm::member_set::all_methods as all_methods_for_test;
+pub use jvm::member_set::{InvocationContext, InvocationMode};
 pub use jvm::member_set::{abstract_methods, member_set, pick_field, single_abstract_method};
 pub use kotlin::db::body_types as kotlin_body_types;
 pub use kotlin::db::type_params as kotlin_type_params;

@@ -13,7 +13,7 @@ use hir_def::java::item_tree::ItemId;
 use hir_expand::name::Name;
 use vfs::FileId;
 
-use crate::java::method::{InvocationContext, InvocationMode};
+use crate::jvm::member_set::{InvocationContext, InvocationMode};
 
 /// The type database: [`hir::HirDatabase`] plus the type-system API of this
 /// crate. Concrete databases (e.g. `ide-db`'s `RootDatabase`) implement this

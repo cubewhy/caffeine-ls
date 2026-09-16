@@ -50,19 +50,16 @@ pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) ->
     match &resolved {
         // A Kotlin file's facade is a Java class with no declared supertype but
         // `Object` — `kotlin.Any` from a Kotlin receiver.
-        hir::Resolved::KotlinFacade { .. } => {
+        hir::Resolved::Facade { .. } => {
             return vec![Ty::reference(db, "kotlin.Any", Vec::new())];
         }
         hir::Resolved::Source(class) => {
             let tree = hir::file_item_tree(db, class.file);
             let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
-                // A Java source class: the Java layer owns its supertypes, and
-                // its types are Java's — [`ty_from_java`] is what makes them
+                // Another language declares the class: its own type layer owns
+                // the supertypes, and [`ty_from_java`] is what makes its types
                 // Kotlin's (a classfile receiver becomes a platform type).
-                return crate::java::subtyping::supertypes(db, scope, ty)
-                    .into_iter()
-                    .map(|supertype| ty_from_java(db, supertype))
-                    .collect();
+                return supertypes_of_another_language(db, scope, ty);
             };
             let _ = tree;
             // A source supertype list is declared over the *class's* type
@@ -77,13 +74,40 @@ pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) ->
                 .collect()
         }
         // A library classifier's supertypes come from its classfile record, as
-        // interned binary names — the Java layer's own spelling of them — and
-        // each is converted to the Kotlin type it denotes.
-        hir::Resolved::Library(_) => crate::java::subtyping::supertypes(db, scope, ty)
-            .into_iter()
-            .map(|supertype| ty_from_java(db, supertype))
-            .collect(),
+        // interned binary names, and each is converted to the Kotlin type it
+        // denotes.
+        hir::Resolved::Library(_) => supertypes_of_another_language(db, scope, ty),
     }
+}
+
+/// The supertypes of a type of *another* language (a Java source class, or a
+/// classfile), read through the registry: the declaring layer answers in its
+/// own types, which Kotlin reads through its JVM codec ([`ty_from_java`]).
+fn supertypes_of_another_language(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Vec<Ty> {
+    let Some(fqn) = reference_fqn(db, ty) else {
+        return Vec::new();
+    };
+    let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
+        return Vec::new();
+    };
+    let language = match &resolved {
+        // A classfile declares no language: the entry that reads classfiles
+        // answers for it.
+        hir::Resolved::Library(_) => crate::lang::classfile(),
+        class => match crate::lang::for_class(db, class) {
+            Some(language) => language,
+            None => return Vec::new(),
+        },
+    };
+    language
+        .supertypes(db, scope, *ty)
+        .into_iter()
+        .map(|supertype| ty_from_java(db, supertype))
+        .collect()
 }
 
 /// The binding of a *source* class's declared type parameters to the receiver's

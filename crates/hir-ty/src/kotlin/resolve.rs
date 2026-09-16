@@ -435,7 +435,7 @@ impl<'a> KotlinResolver<'a> {
             hir::Resolved::Source(class) => hir::source_class_fqn(self.db, class.file, class.item)?,
             hir::Resolved::Library(_) => resolved.fqn(self.db).as_name().clone(),
             // A facade is named by the compiler, not by a declaration.
-            hir::Resolved::KotlinFacade { fqn, .. } => fqn.clone(),
+            hir::Resolved::Facade { fqn, .. } => fqn.clone(),
         })
     }
 

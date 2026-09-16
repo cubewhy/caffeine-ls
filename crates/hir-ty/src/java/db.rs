@@ -22,10 +22,10 @@ use syntax::stub::TypeRef;
 use vfs::FileId;
 
 use crate::{
-    java::method::InvocationMode,
     java::resolve::{self, Resolver, item_data, resolve_type_ref, scope_for_file},
     java::ty::Ty,
     jvm::db::{ContextKey, ItemKey, TyDatabase},
+    jvm::member_set::InvocationMode,
 };
 
 /// The type parameters in scope at every item of `file`
@@ -352,7 +352,7 @@ pub fn file_dependency_refs(db: &dyn TyDatabase, file_id: FileId) -> Arc<FxHashS
 /// as `""`. A virtual invocation
 /// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
 /// is assumed; the per-call-site mode
-/// ([`crate::java::method::InvocationContext::with_mode`]) refines it. See
+/// ([`crate::jvm::member_set::InvocationContext::with_mode`]) refines it. See
 /// [`crate::java::method::access_context`].
 #[salsa::tracked(returns(copy))]
 pub(crate) fn access_context_key_query<'db>(

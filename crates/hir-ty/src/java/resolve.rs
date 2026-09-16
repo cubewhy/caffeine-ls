@@ -1042,7 +1042,7 @@ fn canonical_type_name(
         // A source class keeps its dotted spelling, a facade the name the
         // compiler gives it.
         hir::Resolved::Source(_) => Some(candidate.clone()),
-        hir::Resolved::KotlinFacade { fqn, .. } => Some(fqn),
+        hir::Resolved::Facade { fqn, .. } => Some(fqn),
     }
 }
 
@@ -1238,7 +1238,7 @@ fn on_demand_candidate_accessible(
     }
     match hir::fqn_resolve(db, scope, fqn.as_str()) {
         // A Kotlin file's facade is a public source class.
-        Some(hir::Resolved::KotlinFacade { .. }) => true,
+        Some(hir::Resolved::Facade { .. }) => true,
         Some(hir::Resolved::Library(class)) => class.entry.flags & 0x0001 != 0,
         Some(hir::Resolved::Source(source)) => {
             let tree = hir::java_item_tree(db, source.file);
@@ -1714,7 +1714,7 @@ fn resolved_fqn(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Option<Name> {
         }
         // A facade's name is the one the compiler gives it: it is not a
         // *declaration*, so it has no binary name of its own either.
-        hir::Resolved::KotlinFacade { fqn, .. } => Some(fqn.clone()),
+        hir::Resolved::Facade { fqn, .. } => Some(fqn.clone()),
         hir::Resolved::Source(_) => None,
     }
 }
@@ -1755,7 +1755,7 @@ pub fn type_argument_arity(
     let resolved = hir::fqn_resolve(db, scope, fqn.as_str())?;
     match &resolved {
         // A Kotlin file's facade declares none.
-        hir::Resolved::KotlinFacade { .. } => Some(0),
+        hir::Resolved::Facade { .. } => Some(0),
         hir::Resolved::Library(_) => hir::class_generic_info(db, &resolved)
             .map(|info| info.type_params.len())
             // A classfile without a `Signature` attribute declares none.
@@ -1873,16 +1873,16 @@ pub(crate) fn class_is_generic(
     };
     match resolved {
         // A Kotlin file's facade declares none.
-        hir::Resolved::KotlinFacade { .. } => false,
+        hir::Resolved::Facade { .. } => false,
         // A library class is generic when its classfile `Signature` attribute
         // ([JVMS §4.7.9.1]) declares type parameters.
         hir::Resolved::Library(_) => {
             hir::class_generic_info(db, &resolved).is_some_and(|info| !info.type_params.is_empty())
         }
-        // A Kotlin source class declares no *Java* type parameters: its own
-        // live in the item tree the Kotlin layer reads, and a Java reference to
-        // it is not a raw type ([JLS §4.8] is a Java-source question).
-        hir::Resolved::Source(source) if crate::java::method::is_kotlin(db, source) => false,
+        // A class of another language declares no *Java* type parameters: its
+        // own live in the model its layer reads, and a Java reference to it is
+        // not a raw type ([JLS §4.8] is a Java-source question).
+        hir::Resolved::Source(source) if !crate::lang::is_java_file(db, source.file) => false,
         // A source class is generic when its declaration carries them.
         hir::Resolved::Source(source) => {
             let tree = hir::java_item_tree(db, source.file);
@@ -1965,7 +1965,7 @@ fn class_param_bounds(
 ) -> Option<Vec<(TypeVarScope, Vec<Ty>)>> {
     match resolved {
         // A Kotlin file's facade declares none.
-        hir::Resolved::KotlinFacade { .. } => None,
+        hir::Resolved::Facade { .. } => None,
         hir::Resolved::Library(_) => {
             let info = hir::class_generic_info(db, resolved)?;
             let interner = &db.hir_state().interner;
@@ -1996,15 +1996,15 @@ fn class_param_bounds(
             )
         }
         hir::Resolved::Source(source) => {
-            // A Kotlin source class has no Java item tree to read its declared
-            // parameters from. Its type arguments are Kotlin's own, and the
-            // transforms this feeds — capture conversion
+            // A class of another language has no Java item tree to read its
+            // declared parameters from. Its type arguments are its own
+            // language's, and the transforms this feeds — capture conversion
             // ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)),
             // which exists to turn a wildcard into a fresh variable — have
             // nothing to capture in a type that carries none. The bounds are
-            // read where they belong, by the Kotlin layer's own subtyping
-            // ([`crate::kotlin::subtyping`]).
-            if crate::java::method::is_kotlin(db, *source) {
+            // read where they belong, by that language's own subtyping
+            // (through [`crate::lang`]).
+            if !crate::lang::is_java_file(db, source.file) {
                 return None;
             }
             let tree = hir::java_item_tree(db, source.file);

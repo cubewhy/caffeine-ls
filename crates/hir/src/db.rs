@@ -525,13 +525,13 @@ pub struct SourceClass {
 pub enum Resolved {
     Library(ResolvedClass),
     Source(SourceClass),
-    /// The JVM facade class the compiler synthesizes for a Kotlin file's
-    /// top-level declarations
-    /// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+    /// The JVM facade class a compiler synthesizes for a file's top-level
+    /// declarations (Kotlin's `FooKt`,
+    /// <https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
     /// A facade has no declaration — no item, no item-tree entry — so it is
     /// identified by the file it is a facade of, and carries the name it was
-    /// resolved under.
-    KotlinFacade {
+    /// resolved under. The language of a facade is its file's.
+    Facade {
         file: FileId,
         fqn: Name,
     },
@@ -549,16 +549,15 @@ impl Resolved {
             }
             // The facade carries its own name: the file it belongs to is its
             // definition, and the name the compiler gives the facade.
-            Resolved::KotlinFacade { fqn, .. } => hir_def::jvm::fqn::FqName::from(fqn.as_str()),
+            Resolved::Facade { fqn, .. } => hir_def::jvm::fqn::FqName::from(fqn.as_str()),
             Resolved::Source(_) => hir_def::jvm::fqn::FqName::from(""),
         }
     }
 
-    /// The file a *Kotlin facade* class is the facade of, `None` for a real
-    /// class.
+    /// The file a *facade* class is the facade of, `None` for a real class.
     pub fn facade_file(&self) -> Option<FileId> {
         match self {
-            Resolved::KotlinFacade { file, .. } => Some(*file),
+            Resolved::Facade { file, .. } => Some(*file),
             _ => None,
         }
     }
@@ -1538,7 +1537,7 @@ fn source_resolve(db: &dyn HirDatabase, source_set: &SourceSetId, fqn: &str) -> 
     // class of the same name.
     if let Some(file) = file_facade_source(db, &ResolutionScope::SourceSet(source_set.clone()), fqn)
     {
-        return Some(Resolved::KotlinFacade {
+        return Some(Resolved::Facade {
             file,
             fqn: Name::new(fqn),
         });
@@ -1631,7 +1630,7 @@ pub fn super_types(_db: &dyn HirDatabase, resolved: &Resolved) -> Vec<Symbol> {
         }
         // A source class and a facade have no classfile supertypes: `hir-ty`
         // answers theirs from the item tree — a facade's are `Object`'s.
-        Resolved::Source(_) | Resolved::KotlinFacade { .. } => Vec::new(),
+        Resolved::Source(_) | Resolved::Facade { .. } => Vec::new(),
     }
 }
 
@@ -1655,7 +1654,7 @@ pub struct ClassGenericInfo {
 pub fn class_generic_info(db: &dyn HirDatabase, resolved: &Resolved) -> Option<ClassGenericInfo> {
     let resolved = match resolved {
         Resolved::Library(resolved) => resolved,
-        Resolved::Source(_) | Resolved::KotlinFacade { .. } => return None,
+        Resolved::Source(_) | Resolved::Facade { .. } => return None,
     };
     let record = class_record(db, resolved)?;
     let ClassOrModuleStub::Class(class) = record.as_ref() else {

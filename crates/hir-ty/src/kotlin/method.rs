@@ -40,9 +40,9 @@ use hir_expand::name::Name;
 use vfs::FileId;
 
 use super::resolve::KotlinResolver;
-use crate::java::method::{InvocationContext, InvocationMode};
 use crate::jvm::db::TyDatabase;
 use crate::jvm::member::{FieldData, MethodData};
+use crate::jvm::member_set::{InvocationContext, InvocationMode};
 use crate::kotlin::ty::ty_from_java;
 use crate::ty::{Ty, TyKind};
 
@@ -241,9 +241,10 @@ fn collect_members(
         // A Kotlin file's facade class: Kotlin reaches a file's top-level
         // declarations by *import*, not through the facade's name, so the arm
         // contributes nothing here — the file's own top level is what
-        // [`super::infer`] consults, and a Java caller reaches them through the
-        // facade, which the Java layer answers ([`crate::java::method`]).
-        hir::Resolved::KotlinFacade { .. } => {}
+        // [`super::infer`] consults, and a caller of another language reaches
+        // them through the facade, which this language's JVM view answers
+        // ([`crate::kotlin::jvm_view`]).
+        hir::Resolved::Facade { .. } => {}
     }
     // Inherited: the declared supertypes, then their own. The walk goes through
     // the Kotlin subtyping relation, which substitutes the receiver's arguments
@@ -603,8 +604,10 @@ pub fn access_context_for_kotlin(
 ) -> InvocationContext {
     let tree = hir::file_item_tree(db, file);
     let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
-        // A Java call site: the Java layer's own context.
-        return crate::java::method::access_context(db, file, item);
+        // A call site of another language — a Java file, or a `.kts` script no
+        // language lowered: the context is the classfile-shaped one the entry
+        // that reads classfiles derives.
+        return crate::lang::classfile().access_context(db, file, item);
     };
     let package = tree
         .package

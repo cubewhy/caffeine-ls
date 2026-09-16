@@ -35,13 +35,14 @@ use crate::java::annotation_check::{declaration_annotations, declaration_type_re
 use crate::java::annotation_value::{NameTarget, ValueCtx, name_target};
 use crate::jvm::db::TyDatabase;
 
-use crate::java::method::{InvocationContext, InvocationMode, access_context, pick_method};
+use crate::java::method::{access_context, pick_method};
 use crate::java::range_ctx::range_ctx;
 use crate::java::resolve::{
     NameResolution, Resolver, candidate_fqns, resolve_type_name_at, scope_for_file,
 };
 use crate::java::ty::Ty;
 use crate::jvm::member::{FieldData, MethodData};
+use crate::jvm::member_set::{InvocationContext, InvocationMode};
 use hir_def::java::ranges;
 
 /// The declaration an annotation reference denotes, in the shape the IDE's
@@ -526,7 +527,7 @@ fn is_annotation_interface(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fq
             ItemData::Annotation(_)
         ),
         // A Kotlin file's facade is no annotation interface.
-        Some(hir::Resolved::KotlinFacade { .. }) => false,
+        Some(hir::Resolved::Facade { .. }) => false,
         Some(hir::Resolved::Library(resolved)) => {
             hir::class_record(db, &resolved).is_some_and(|record| {
                 matches!(

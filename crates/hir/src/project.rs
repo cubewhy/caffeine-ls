@@ -364,7 +364,7 @@ mod tests {
 
         let library_of = |resolved: &Resolved| match resolved {
             Resolved::Library(r) => Some(r.library),
-            Resolved::Source(_) | Resolved::KotlinFacade { .. } => None,
+            Resolved::Source(_) | Resolved::Facade { .. } => None,
         };
         assert_eq!(a_first.as_ref().and_then(library_of), Some(lib_a));
         assert_eq!(b_first.as_ref().and_then(library_of), Some(lib_b));

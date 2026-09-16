@@ -1749,7 +1749,7 @@ fn enum_constants(
     let resolved = hir::fqn_resolve(db, scope, name.as_str())?;
     match resolved {
         // A Kotlin file's facade declares no enum.
-        hir::Resolved::KotlinFacade { .. } => None,
+        hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
             let source_tree = hir::java_item_tree(db, source.file);
             if !matches!(source_tree.data(source.item), ItemData::Enum(_)) {
@@ -1822,7 +1822,7 @@ fn annotation_type(
     let ty = Ty::reference(db, fqn, Vec::new());
     match hir::fqn_resolve(db, scope, fqn)? {
         // A Kotlin file's facade is not an annotation interface.
-        hir::Resolved::KotlinFacade { .. } => None,
+        hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
             let source_tree = hir::java_item_tree(db, source.file);
             if !matches!(source_tree.data(source.item), ItemData::Annotation(_)) {
@@ -1952,7 +1952,7 @@ fn resolve_annotation_type(
         .find(|candidate| hir::fqn_resolve(db, scope, candidate.as_str()).is_some())?;
     let fqn = fqn.as_str();
     match hir::fqn_resolve(db, scope, fqn)? {
-        hir::Resolved::KotlinFacade { .. } => None,
+        hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
             let source_tree = hir::java_item_tree(db, source.file);
             match source_tree.data(source.item) {

@@ -13,12 +13,12 @@ use syntax::stub::PrimitiveType;
 
 use crate::java::{
     diagnostics::{NonStaticThisKind, TypeError},
-    method::InvocationMode,
     resolve::resolve_type_ref,
     subtyping::supertypes_impl,
     ty::{Ty, TyKind},
 };
 use crate::jvm::member::MethodData;
+use crate::jvm::member_set::InvocationMode;
 use crate::jvm::member_set::member_set;
 
 use super::{

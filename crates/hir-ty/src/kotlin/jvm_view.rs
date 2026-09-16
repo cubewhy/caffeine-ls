@@ -1,9 +1,9 @@
-//! The JVM-visible shape of a Kotlin declaration, as the *Java* model the Java
-//! layer consumes.
+//! The JVM-visible shape of a Kotlin declaration, as the *JVM* member set the
+//! type layer enumerates.
 //!
-//! A Java file reads a Kotlin declaration through the classfile the compiler
-//! emits for it, so this module answers with the same
-//! [`MethodData`]/[`FieldData`] shapes [`crate::java::method`] produces for a
+//! A caller of another language reads a Kotlin declaration through the
+//! classfile the compiler emits for it, so this module answers with the same
+//! [`MethodData`]/[`FieldData`] shapes the JVM layer's member set carries for a
 //! classfile — one whose `owner_file`/`decl_item` point at the *Kotlin*
 //! declaration. The shapes are the compiler's, observed with kotlinc 2.4.20 and
 //! `javap -p`, and described in the item tree's own class-kind table
@@ -59,7 +59,7 @@ use crate::jvm::member_set::source_top_level;
 use crate::ty::{Ty, TypeVarScope};
 
 /// The JVM methods a Kotlin classifier declares under the JVM name `name` —
-/// [`crate::java::method::source_class_methods`]'s twin for a Kotlin file.
+/// the Java source enumeration's twin, for a Kotlin file.
 pub fn java_view_members(
     db: &dyn TyDatabase,
     source: hir::SourceClass,

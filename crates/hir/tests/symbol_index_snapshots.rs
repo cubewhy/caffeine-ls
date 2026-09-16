@@ -66,7 +66,7 @@ fn render_resolved(db: &common::TestDatabase, resolved: Option<&Resolved>) -> St
             format!("source @file{} item{}", class.file.index(), class.item.0.0)
         }
         Some(resolved @ Resolved::Library(_)) => format!("library {}", resolved.fqn(db)),
-        Some(resolved @ Resolved::KotlinFacade { .. }) => {
+        Some(resolved @ Resolved::Facade { .. }) => {
             format!("kotlin facade {}", resolved.fqn(db))
         }
         None => "<none>".to_owned(),

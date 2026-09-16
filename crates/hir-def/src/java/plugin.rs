@@ -56,6 +56,13 @@ impl Declarations for Declared {
     }
 }
 
+/// Whether the Java language lowered `file` — the Java layer's own question at
+/// a site that reads a Java item tree by item id: a file of another language
+/// has no Java declaration, and its ids index another model's arena.
+pub fn declares_file(db: &dyn DefDatabase, file: FileId) -> bool {
+    crate::db::file_item_tree(db, file).language() == LanguageKind::Java
+}
+
 /// The Java declaration model of `file` — the accessor every Java-only layer
 /// reads. A file that is not Java has no Java declarations: the model's own
 /// "no declarations" answer, an empty tree.

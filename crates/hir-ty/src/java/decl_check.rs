@@ -20,7 +20,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use triomphe::Arc;
 use vfs::FileId;
 
-use crate::java::method::{InvocationContext, InvocationMode};
 use crate::java::range_ctx::range_ctx;
 use crate::java::release_api::ReleaseApi;
 use crate::java::resolve::scope_for_file;
@@ -28,6 +27,7 @@ use crate::java::subtyping;
 use crate::java::ty::{Ty, TyKind, TypeVarScope};
 use crate::jvm::db::TyDatabase;
 use crate::jvm::member::{Access, MethodData};
+use crate::jvm::member_set::{InvocationContext, InvocationMode};
 use crate::jvm::member_set::{all_methods_raw, inherited_defaults, member_set};
 use base_db::LanguageKind;
 use hir_def::java::ranges;
@@ -2535,7 +2535,7 @@ fn has_no_accessible_no_arg_ctor(
         Some(hir::Resolved::Source(_)) => fqn.as_str().rsplit('.').next().unwrap_or(fqn.as_str()),
         // A Kotlin file's facade: the class's *simple* name is what its
         // `<init>` is looked up under (the Java `new` path's own naming).
-        Some(hir::Resolved::KotlinFacade { .. }) => {
+        Some(hir::Resolved::Facade { .. }) => {
             fqn.as_str().rsplit('.').next().unwrap_or(fqn.as_str())
         }
         // An unresolvable superclass is already reported as a missing type by
@@ -3004,7 +3004,7 @@ fn sealed_permits(
     let resolved = hir::fqn_resolve(db, scope, fqn)?;
     match resolved {
         // A Kotlin file's facade is neither sealed nor a permitted subclass.
-        hir::Resolved::KotlinFacade { .. } => None,
+        hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
             let tree = hir::java_item_tree(db, source.file);
             let (permits, sealed) = match tree.data(source.item) {
@@ -4002,7 +4002,7 @@ fn local_class_diagnostics(
 fn class_is_sealed(db: &dyn TyDatabase, resolved: &hir::Resolved) -> bool {
     match resolved {
         // A Kotlin file's facade carries no Kotlin `sealed` modifier.
-        hir::Resolved::KotlinFacade { file, .. } => {
+        hir::Resolved::Facade { file, .. } => {
             let _ = file;
             false
         }
@@ -4106,7 +4106,7 @@ fn local_redeclaration_is_legal(
 fn class_simple_name(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Name {
     match resolved {
         // A facade is named after the file it belongs to.
-        hir::Resolved::KotlinFacade { fqn, .. } => Name::new(fqn.simple_name()),
+        hir::Resolved::Facade { fqn, .. } => Name::new(fqn.simple_name()),
         hir::Resolved::Source(source) => hir::java_item_tree(db, source.file)
             .data(source.item)
             .name()

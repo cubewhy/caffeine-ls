@@ -231,7 +231,7 @@ pub fn module_for_class(
         Resolved::Library(resolved) => resolved,
         // A source class and a Kotlin facade live in no *library* module
         // ([JLS §7.7] is a classfile question).
-        Resolved::Source(_) | Resolved::KotlinFacade { .. } => return None,
+        Resolved::Source(_) | Resolved::Facade { .. } => return None,
     };
     let module = resolved.entry.module?;
     let stub = module_descriptor(db, resolved.library, module)?;

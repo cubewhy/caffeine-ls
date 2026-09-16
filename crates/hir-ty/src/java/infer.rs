@@ -71,12 +71,13 @@ use self::context::*;
 use crate::{
     java::const_eval::Const,
     java::diagnostics::TypeError,
-    java::method::{InvocationContext, access_context},
+    java::method::access_context,
     java::range_ctx::range_ctx,
     java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     java::ty::Ty,
     jvm::db::TyDatabase,
     jvm::member::{FieldData, MethodData},
+    jvm::member_set::InvocationContext,
 };
 
 /// The inferred types of a method or constructor body.

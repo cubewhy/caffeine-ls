@@ -9,7 +9,6 @@ use hir_expand::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::java::method::{InvocationContext, InvocationMode};
 use crate::java::{
     diagnostics::TypeError,
     inference::{Constraint, Inference, InvocationPhase},
@@ -18,6 +17,7 @@ use crate::java::{
 };
 use crate::jvm::db::TyDatabase;
 use crate::jvm::member::MethodData;
+use crate::jvm::member_set::{InvocationContext, InvocationMode};
 use crate::jvm::member_set::{member_set, single_abstract_method};
 
 use super::{InferCtx, ResolvedMember, poly::MethodRefKind};

@@ -703,7 +703,7 @@ fn declaration_by_fqn(db: &RootDatabase, file: FileId, fqn: &str) -> Option<Reso
             }),
             // A Kotlin file's facade class is synthesized: it has no
             // declaration to navigate to.
-            hir::Resolved::KotlinFacade { .. } => None,
+            hir::Resolved::Facade { .. } => None,
             hir::Resolved::Library(class) => {
                 library_class_resolution(db, class.library, resolved.fqn(db).as_str())
             }
