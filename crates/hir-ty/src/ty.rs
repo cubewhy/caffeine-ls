@@ -28,7 +28,7 @@
 //! accessor therefore takes the database.
 use std::fmt;
 
-use hir_def::java::item_tree::ItemId;
+use hir_def::jvm::ids::ItemId;
 use hir_expand::name::Name;
 use rustc_hash::FxHashMap;
 use stacksafe::stacksafe;

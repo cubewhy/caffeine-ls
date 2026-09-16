@@ -798,7 +798,7 @@ pub fn source_context(
 ) -> hir_ty::InvocationContext {
     // `register_source_set` maps the first source file to `FileId(1)`.
     let file = FileId::from_raw(1);
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     match tree.top.first().copied() {
         Some(item) => hir_ty::access_context(db, file, item),
         None => hir_ty::InvocationContext::external(&hir::ResolutionScope::SourceSet(source_set)),
@@ -2268,7 +2268,7 @@ pub fn check_resolve_src(src: &str) -> String {
     register_jdk(&mut db, &fixture);
     let file_id = FileId::from_raw(1);
     add_source(&mut db, file_id, "/src/com/example/Box.java", src);
-    let tree = hir::java_item_tree(&db, file_id);
+    let tree = hir_def::java::plugin::tree(&db, file_id);
 
     let mut lines = vec![format!("SOURCE:\n{src}"), "RESOLVED:".to_owned()];
     for (id, data) in all_items(&tree) {
@@ -2309,7 +2309,7 @@ pub fn check_bounds_resolve_src(src: &str) -> String {
     register_jdk(&mut db, &fixture);
     let file_id = FileId::from_raw(1);
     add_source(&mut db, file_id, "/src/com/example/Box.java", src);
-    let tree = hir::java_item_tree(&db, file_id);
+    let tree = hir_def::java::plugin::tree(&db, file_id);
 
     let render = |ty: &Ty| {
         let bounds: Vec<String> = ty
@@ -2686,7 +2686,7 @@ pub fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
         .collect::<Vec<_>>();
     for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
-        let tree = hir::java_item_tree(db, file_id);
+        let tree = hir_def::java::plugin::tree(db, file_id);
         let bodies = hir::file_body_tree(db, file_id);
         let line_index = line_index::LineIndex::new(text);
         for (id, data) in all_items(&tree) {
@@ -2909,7 +2909,7 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
         .collect::<Vec<_>>();
     for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
-        let tree = hir::java_item_tree(db, file_id);
+        let tree = hir_def::java::plugin::tree(db, file_id);
         let bodies = hir::file_body_tree(db, file_id);
         let src = AnnotationSource {
             text,
@@ -3084,7 +3084,7 @@ pub fn render_body_diagnostic_spans(db: &TestDatabase, files: &[(&str, &str)]) -
         .collect::<Vec<_>>();
     for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
-        let tree = hir::java_item_tree(db, file_id);
+        let tree = hir_def::java::plugin::tree(db, file_id);
         let bodies = hir::file_body_tree(db, file_id);
         let line_index = line_index::LineIndex::new(text);
         for (id, data) in all_items(&tree) {
@@ -3450,7 +3450,7 @@ fn render_release_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> Stri
                 decl_message(db, &diag)
             ));
         }
-        let tree = hir::java_item_tree(db, file_id);
+        let tree = hir_def::java::plugin::tree(db, file_id);
         let bodies = hir::file_body_tree(db, file_id);
         for (id, _) in all_items(&tree) {
             let Some(types) = hir_ty::body_types(db, file_id, id) else {
@@ -3645,7 +3645,7 @@ pub fn check_source_methods_site(
     lines.push("METHODS:".to_owned());
     for (label, file_index, method, build_receiver, name, arg_builders) in samples {
         let file_id = FileId::from_raw((*file_index + 1) as u32);
-        let tree = hir::java_item_tree(&db, file_id);
+        let tree = hir_def::java::plugin::tree(&db, file_id);
         let Some(method_id) = find_method(&tree, method) else {
             panic!("method {method} not found in file {file_index}");
         };

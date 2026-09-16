@@ -223,7 +223,7 @@ fn library_annotation_deprecation(
 /// enclosing declarations, of every item of a file at once
 /// ([`crate::java::db::deprecated_enclosing_query`]).
 pub(crate) fn source_item(db: &dyn TyDatabase, file: FileId, item: ItemId) -> Option<Deprecation> {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let data = item_data(&tree, item)?;
     let annotations = item_annotations(data);
     if annotations.is_empty() {
@@ -379,7 +379,7 @@ pub(crate) fn class_owner(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn
     let text = fqn.as_str();
     match hir::fqn_resolve(db, scope, text) {
         Some(hir::Resolved::Source(class)) => {
-            let tree = hir::java_item_tree(db, class.file);
+            let tree = hir_def::java::plugin::tree(db, class.file);
             source_owner(tree.package.as_ref(), text)
         }
         // A facade is a top-level class: its owner is its package.
@@ -444,7 +444,7 @@ pub(crate) fn outermost_class(
 ) -> Option<Name> {
     match hir::fqn_resolve(db, scope, fqn.as_str()) {
         Some(hir::Resolved::Source(class)) => {
-            let tree = hir::java_item_tree(db, class.file);
+            let tree = hir_def::java::plugin::tree(db, class.file);
             let top = source_top_level(tree.package.as_ref().map(Name::as_str), fqn.as_str());
             Some(Name::new(&top))
         }

@@ -2,8 +2,12 @@
 //! ([`JvmMemberSource`]) and the Java type layer's own answers
 //! ([`LanguageTypes`]).
 
+use triomphe::Arc;
+
 use base_db::LanguageKind;
 use hir_def::java::item_tree::ItemData;
+use hir_expand::name::Name;
+use rustc_hash::FxHashSet;
 use vfs::FileId;
 
 use crate::{
@@ -53,6 +57,14 @@ impl LanguageTypes for Java {
     ) -> InvocationContext {
         access_context(db, file, item)
     }
+
+    fn file_resolved_deps(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<FileId>> {
+        crate::java::db::file_resolved_deps(db, file)
+    }
+
+    fn file_dependency_refs(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<Name>> {
+        crate::java::db::file_dependency_refs(db, file)
+    }
 }
 
 impl JvmMemberSource for Java {
@@ -96,7 +108,7 @@ impl JvmMemberSource for Java {
         let hir::Resolved::Source(source) = class else {
             return Vec::new();
         };
-        let tree = hir::java_item_tree(db, source.file);
+        let tree = hir_def::java::plugin::tree(db, source.file);
         let Some(ItemData::Interface(class)) = item_data(&tree, source.item) else {
             return Vec::new();
         };

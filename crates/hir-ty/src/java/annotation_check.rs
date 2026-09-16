@@ -1751,7 +1751,7 @@ fn enum_constants(
         // A Kotlin file's facade declares no enum.
         hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
-            let source_tree = hir::java_item_tree(db, source.file);
+            let source_tree = hir_def::java::plugin::tree(db, source.file);
             if !matches!(source_tree.data(source.item), ItemData::Enum(_)) {
                 return None;
             }
@@ -1824,7 +1824,7 @@ fn annotation_type(
         // A Kotlin file's facade is not an annotation interface.
         hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
-            let source_tree = hir::java_item_tree(db, source.file);
+            let source_tree = hir_def::java::plugin::tree(db, source.file);
             if !matches!(source_tree.data(source.item), ItemData::Annotation(_)) {
                 return None;
             }
@@ -1954,7 +1954,7 @@ fn resolve_annotation_type(
     match hir::fqn_resolve(db, scope, fqn)? {
         hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
-            let source_tree = hir::java_item_tree(db, source.file);
+            let source_tree = hir_def::java::plugin::tree(db, source.file);
             match source_tree.data(source.item) {
                 ItemData::Annotation(annotation) => {
                     // The `@Target` argument list was lowered with the

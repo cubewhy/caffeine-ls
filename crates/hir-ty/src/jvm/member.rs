@@ -12,8 +12,8 @@
 use smol_str::SmolStr;
 use vfs::FileId;
 
-use hir_def::java::item_tree::ItemId;
 use hir_def::jvm::access::{JvmAccessFlags, JvmVisibility};
+use hir_def::jvm::ids::ItemId;
 use hir_expand::name::Name;
 
 use crate::jvm::db::TyDatabase;

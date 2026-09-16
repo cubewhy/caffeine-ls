@@ -669,7 +669,7 @@ fn is_raw_use(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) 
                 .is_some_and(|info| !info.type_params.is_empty())
         }
         hir::Resolved::Source(source) => {
-            let tree = hir::java_item_tree(db, source.file);
+            let tree = hir_def::java::plugin::tree(db, source.file);
             let Some(data) = crate::java::resolve::item_data(&tree, source.item) else {
                 return false;
             };

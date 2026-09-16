@@ -16,20 +16,15 @@ use triomphe::Arc;
 
 use base_db::{
     FileText, LanguageKind, SourceDatabase, SourceRootId, SourceRootInput, file_language_kind,
-    parse,
     salsa::{self, Setter as _},
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use dashmap::DashMap;
-use hir_def::FileItemTree;
-use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
-use hir_def::kotlin::item_tree::{KotlinItemData, KotlinItemTree};
-use hir_expand::{ast_id_map::AstIdMap, name::Name};
+use hir_expand::{ids::ItemId, name::Name};
 use lasso::ThreadedRodeo;
 use parking_lot::Mutex;
 use rowan::TextRange;
 use rustc_hash::{FxHashMap, FxHashSet};
-use syntax::SourceFile;
 use vfs::{AbsPath, AbsPathBuf, FileId};
 
 use crate::{
@@ -188,19 +183,6 @@ pub trait HirDatabase: JavaDatabase + KotlinDatabase {}
 /// `hir_def::file_item_tree`).
 pub fn file_item_tree(db: &dyn HirDatabase, file_id: FileId) -> Arc<hir_def::FileItemTree> {
     hir_def::file_item_tree(db, file_id)
-}
-
-/// The lowered item tree of a source file as the *Java* declaration model.
-///
-/// A file that is not Java — or has not been lowered — yields an empty tree,
-/// which is what the Java-only paths saw before the facade existed; they must
-/// not rely on it to tell a Java file apart (they take a file they know is
-/// Java).
-pub fn java_item_tree(
-    db: &dyn HirDatabase,
-    file_id: FileId,
-) -> Arc<hir_def::java::item_tree::ItemTree> {
-    hir_def::java::plugin::tree(db, file_id)
 }
 
 /// The lowered body tree of a source file (see `hir_def::file_body_tree`).
@@ -517,7 +499,7 @@ pub struct ResolvedClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceClass {
     pub file: FileId,
-    pub item: hir_def::java::item_tree::ItemId,
+    pub item: hir_def::jvm::ids::ItemId,
 }
 
 /// A class resolved either to a library entry or to a source declaration.
@@ -705,210 +687,19 @@ fn debug_path(db: &dyn HirDatabase, file: FileId) -> String {
 #[salsa::tracked(returns(ref))]
 fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<[SourceSymbol]> {
     let file_id = *file.file_id(db);
-    let tree = file_item_tree(db, file_id);
-    let symbols = collect_file_symbols(&tree);
+    let symbols = crate::lang::for_file(db, file_id)
+        .map_or_else(Vec::new, |index| index.file_symbols(db, file_id));
     tracing::debug!(
         file_id = ?file_id,
         path = %debug_path(db, file_id),
-        language = ?tree.language(),
+        language = ?file_item_tree(db, file_id).language(),
         symbol_count = symbols.len(),
         "hir: indexed file declarations",
     );
     Arc::from(symbols)
 }
 
-/// The indexed declarations of a file's item tree: the language's own walk
-/// over the declaration model the file lowered to.
-fn collect_file_symbols(tree: &FileItemTree) -> Vec<SourceSymbol> {
-    if let Some(tree) = hir_def::java::plugin::model(tree) {
-        return collect_java_symbols(&tree);
-    }
-    if let Some(tree) = hir_def::kotlin::plugin::model(tree) {
-        return collect_kotlin_symbols(&tree);
-    }
-    Vec::new()
-}
-
-/// The indexed declarations of a Java file's item tree.
-///
-/// A *local* class-like declaration
-/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
-/// is deliberately absent: §6.7 gives it neither a fully qualified nor a
-/// canonical name, so it can neither be named from another file nor be looked
-/// up by name — this index *is* the workspace symbol index, and the IDE
-/// surfaces a local declaration from its own file's item tree instead.
-fn collect_java_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
-    fn collect(tree: &ItemTree, id: ItemId, prefix: Option<&Name>, out: &mut Vec<SourceSymbol>) {
-        let data = tree.data(id);
-        let Some(kind) = SourceSymbolKind::of(data) else {
-            // Initializers have no name and are not indexed.
-            return;
-        };
-        let (simple, public) = match data {
-            ItemData::Class(d) | ItemData::Interface(d) => (&d.name, d.modifiers.is_public()),
-            ItemData::Enum(d) => (&d.name, d.modifiers.is_public()),
-            ItemData::Record(d) => (&d.name, d.modifiers.is_public()),
-            ItemData::Annotation(d) => (&d.name, d.modifiers.is_public()),
-            // Enum constants are implicitly `public static final`
-            // ([JLS §8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1)).
-            ItemData::EnumConstant(d) => (&d.name, true),
-            // A module declaration carries no access modifiers
-            // ([JLS §7.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7)).
-            ItemData::Module(d) => (&d.name, false),
-            ItemData::Method(d) => (&d.name, d.modifiers.is_public()),
-            ItemData::Field(d) => (&d.name, d.modifiers.is_public()),
-            ItemData::StaticInit(_) | ItemData::InstanceInit(_) => unreachable!(),
-        };
-        let name = match prefix {
-            Some(prefix) => join_name(prefix, simple.as_str()),
-            // The unnamed package
-            // ([JLS §7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2))
-            // yields a bare simple name.
-            None => match &tree.package {
-                Some(package) => join_name(package, simple.as_str()),
-                None => simple.clone(),
-            },
-        };
-        out.push(SourceSymbol {
-            name: name.clone(),
-            item: id,
-            kind,
-            public,
-        });
-        if data.body().is_empty() {
-            return;
-        }
-        let child_prefix = match kind {
-            // Nested types are indexed under the enclosing FQN
-            // ([JLS §8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3));
-            // members under `EnclosingFqn.simple`.
-            SourceSymbolKind::Class
-            | SourceSymbolKind::Interface
-            | SourceSymbolKind::Enum
-            | SourceSymbolKind::Record
-            | SourceSymbolKind::Annotation => Some(&name),
-            SourceSymbolKind::Module
-            | SourceSymbolKind::Method
-            | SourceSymbolKind::Field
-            | SourceSymbolKind::EnumConstant
-            | SourceSymbolKind::Package
-            // The Kotlin kinds never occur for a Java item; a Java declaration
-            // that carries one of these cannot exist, so the arm is
-            // unreachable but kept total.
-            | SourceSymbolKind::Object
-            | SourceSymbolKind::Function
-            | SourceSymbolKind::Property
-            | SourceSymbolKind::Constructor
-            | SourceSymbolKind::TypeAlias => prefix,
-        };
-        for &child in data.body() {
-            collect(tree, child, child_prefix, out);
-        }
-    }
-
-    let mut out = Vec::new();
-    for &top in &tree.top {
-        collect(tree, top, None, &mut out);
-    }
-    out
-}
-
-/// The indexed declarations of a Kotlin file's item tree.
-///
-/// Kotlin's own name rules ([KLS
-/// `declarations.html#classifier-declaration-scopes`](https://kotlinlang.org/spec/declarations.html#classifier-declaration-scopes),
-/// [KLS `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)):
-/// a nested classifier and a member are both reached as `Enclosing.simple`, a
-/// type alias and a top-level declaration as `package.simple`, a constructor
-/// as its class's name (the JVM name the compiler synthesizes), and a
-/// `companion object` as a member of its enclosing classifier.
-///
-/// A declaration is `public` unless it is `private`; `internal` is visible
-/// inside the workspace, which is the granularity a workspace index has
-/// ([KLS `declarations.html#declaration-visibility`](https://kotlinlang.org/spec/declarations.html#declaration-visibility)).
-fn collect_kotlin_symbols(tree: &KotlinItemTree) -> Vec<SourceSymbol> {
-    fn collect(
-        tree: &KotlinItemTree,
-        id: ItemId,
-        prefix: Option<&Name>,
-        out: &mut Vec<SourceSymbol>,
-    ) {
-        let data = tree.data(id);
-        let Some(kind) = SourceSymbolKind::of_kotlin(data) else {
-            // An `init` block and a property accessor declare no name.
-            return;
-        };
-        // A constructor has no declared name: it is indexed under its
-        // classifier's qualified name.
-        let simple = match data {
-            KotlinItemData::Class(data) => data.name.as_str(),
-            KotlinItemData::Function(data) => data.name.as_str(),
-            KotlinItemData::Property(data) => data.name.as_str(),
-            KotlinItemData::EnumEntry(data) => data.name.as_str(),
-            KotlinItemData::TypeAlias(data) => data.name.as_str(),
-            KotlinItemData::Constructor(_) => {
-                let Some(prefix) = prefix else {
-                    // A constructor is always nested in a classifier.
-                    return;
-                };
-                out.push(SourceSymbol {
-                    name: prefix.clone(),
-                    item: id,
-                    kind,
-                    public: data
-                        .modifiers()
-                        .is_none_or(|modifiers| !modifiers.visibility.is_private()),
-                });
-                return;
-            }
-            KotlinItemData::Accessor(_) | KotlinItemData::AnonymousInitializer(_) => return,
-        };
-        let name = match prefix {
-            Some(prefix) => join_name(prefix, simple),
-            None => match &tree.package {
-                Some(package) => join_name(package, simple),
-                None => Name::new(simple),
-            },
-        };
-        out.push(SourceSymbol {
-            name: name.clone(),
-            item: id,
-            kind,
-            // An enum entry declares no visibility and is `public`; every
-            // other indexed item is `public` unless it says `private`.
-            public: data
-                .modifiers()
-                .is_none_or(|modifiers| !modifiers.visibility.is_private()),
-        });
-        if let KotlinItemData::Class(class) = data {
-            if let Some(constructor) = class.primary_constructor {
-                collect(tree, constructor, Some(&name), out);
-            }
-        }
-        let child_prefix = match kind {
-            // Nested classifiers and members are both `Enclosing.simple`; an
-            // enum entry's members belong to the enum's anonymous subclass.
-            SourceSymbolKind::Class
-            | SourceSymbolKind::Interface
-            | SourceSymbolKind::Enum
-            | SourceSymbolKind::Annotation
-            | SourceSymbolKind::Object
-            | SourceSymbolKind::EnumConstant => Some(&name),
-            _ => prefix,
-        };
-        for &child in data.body() {
-            collect(tree, child, child_prefix, out);
-        }
-    }
-
-    let mut out = Vec::new();
-    for &top in &tree.top {
-        collect(tree, top, None, &mut out);
-    }
-    out
-}
-
-fn join_name(prefix: &Name, suffix: &str) -> Name {
+pub(crate) fn join_name(prefix: &Name, suffix: &str) -> Name {
     let mut text = String::with_capacity(prefix.as_str().len() + 1 + suffix.len());
     text.push_str(prefix.as_str());
     text.push('.');
@@ -976,70 +767,14 @@ fn file_docs_query(db: &dyn HirDatabase, file: FileText) -> Arc<DocIndex> {
             entries: Box::new([]),
         });
     }
-    let tree = file_item_tree(db, file_id);
-    let map = hir_def::db::ast_id_map(db, file_id, language);
-    let parse = parse(db, file_id, language);
-    let source = parse.syntax_node(language);
-    let mut entries = Vec::new();
-    if let Some(java) = hir_def::java::plugin::model(&tree) {
-        for &top in &java.top {
-            collect_file_docs(map, &source, &java, top, &mut entries);
-        }
-    } else if let Some(kotlin) = hir_def::kotlin::plugin::model(&tree) {
-        for &top in &kotlin.top {
-            collect_kotlin_docs(map, &source, &kotlin, top, &mut entries);
-        }
-    }
+    let mut entries = crate::lang::for_file(db, file_id)
+        .map_or_else(Vec::new, |index| index.file_docs(db, file_id));
     // The walk is in source order; item ids are not (local declarations
     // allocate after the members of their declaring body).
     entries.sort_unstable_by_key(|&(item, _)| item);
     Arc::new(DocIndex {
         entries: entries.into_boxed_slice(),
     })
-}
-
-/// Collects the KDoc range of `id` and of every declaration nested in it — its
-/// members and a property's accessors — mirroring the item walk the IDE's
-/// outline uses.
-fn collect_kotlin_docs(
-    map: &AstIdMap,
-    source: &SourceFile,
-    tree: &KotlinItemTree,
-    id: ItemId,
-    out: &mut Vec<(ItemId, TextRange)>,
-) {
-    if let Some(range) = hir_def::kotlin::ranges::item_doc_range(map, source, tree, id) {
-        out.push((id, range));
-    }
-    if let KotlinItemData::Property(property) = tree.data(id) {
-        for &accessor in &property.accessors {
-            collect_kotlin_docs(map, source, tree, accessor, out);
-        }
-    }
-    for &child in tree.data(id).body() {
-        collect_kotlin_docs(map, source, tree, child, out);
-    }
-}
-
-/// Collects the doc-comment range of `id` and of every declaration nested in
-/// it (its members and its local class-like declarations), mirroring the item
-/// walk of the IDE's outline (`ide::nav::java::all_items`).
-fn collect_file_docs(
-    map: &AstIdMap,
-    source: &SourceFile,
-    tree: &ItemTree,
-    id: ItemId,
-    out: &mut Vec<(ItemId, TextRange)>,
-) {
-    if let Some(range) = hir_def::java::ranges::item_doc_range(map, source, tree, id) {
-        out.push((id, range));
-    }
-    for &child in tree.data(id).body() {
-        collect_file_docs(map, source, tree, child, out);
-    }
-    for local in tree.local_types_of(id) {
-        collect_file_docs(map, source, tree, local, out);
-    }
 }
 
 /// The doc-comment index of a file (see [`file_docs_query`]).
@@ -1132,9 +867,8 @@ fn source_set_symbol_index_query(
 #[salsa::tracked(returns(clone))]
 fn file_package_query(db: &dyn HirDatabase, file: FileText) -> Name {
     let file_id = *file.file_id(db);
-    java_item_tree(db, file_id)
-        .package
-        .clone()
+    crate::lang::for_file(db, file_id)
+        .and_then(|index| index.file_package(db, file_id))
         .unwrap_or_else(|| Name::new(""))
 }
 
@@ -1302,16 +1036,15 @@ pub fn file_facade_source(
         for file in
             source_set_package_files_query(db, graph, source_set.clone(), package.clone()).iter()
         {
-            let tree = file_item_tree(db, *file);
-            let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
+            let Some(index) = crate::lang::for_file(db, *file) else {
                 continue;
             };
-            let Some(facade) = tree.facade_class() else {
+            let Some(facade) = index.file_facade_class(db, *file) else {
                 continue;
             };
-            let name = match &tree.package {
+            let name = match index.file_package(db, *file) {
                 Some(package) => format!("{package}.{facade}"),
-                None => facade,
+                None => facade.as_str().to_owned(),
             };
             if name == fqn {
                 return Some(*file);

@@ -4,7 +4,10 @@ pub use hir_expand;
 pub mod ct_sym;
 pub mod db;
 pub mod index;
+pub mod java;
 pub mod jvm;
+pub mod kotlin;
+pub mod lang;
 pub mod lib_source;
 pub mod lmdb_store;
 pub mod loader;
@@ -21,7 +24,7 @@ pub use db::{
     LibraryId, LibraryKind, ProjectGraph, ResolutionScope, Resolved, ResolvedClass, SourceClass,
     class_generic_info, class_record, classpath, classpath_libraries, enable_persistent_stub_cache,
     file_body_tree, file_docs, file_facade_source, file_item_tree, file_name, file_package_dir,
-    file_path_segments, file_symbols, fqn_resolve, item_doc, java_item_tree, jdk_builtin_libraries,
+    file_path_segments, file_symbols, fqn_resolve, item_doc, jdk_builtin_libraries,
     language_level_for_file, library_name_index, module_record, package_exists, project_graph,
     prune_stub_cache, registered_libraries, release_for_file, release_for_source_set,
     resolve_in_libraries, set_project_graph, source_class_fqn, source_set_for_file,

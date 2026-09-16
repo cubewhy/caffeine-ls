@@ -2,7 +2,11 @@
 //! ([`JvmMemberSource`], the `FooKt` facade included) and the Kotlin type
 //! layer's own answers ([`LanguageTypes`]).
 
+use triomphe::Arc;
+
 use base_db::LanguageKind;
+use hir_expand::name::Name;
+use rustc_hash::FxHashSet;
 use vfs::FileId;
 
 use crate::{
@@ -53,6 +57,19 @@ impl LanguageTypes for Kotlin {
         item: hir_expand::ids::ItemId,
     ) -> InvocationContext {
         access_context_for_kotlin(db, file, item)
+    }
+
+    /// Kotlin's own dependency index is not built yet: the file depends on
+    /// nothing it does not declare, which is the answer the Java index gave
+    /// over a Kotlin file's (empty) Java model — a recorded gap, not a
+    /// regression.
+    fn file_resolved_deps(&self, _db: &dyn TyDatabase, _file: FileId) -> Arc<FxHashSet<FileId>> {
+        Arc::new(FxHashSet::default())
+    }
+
+    /// See [`Kotlin::file_resolved_deps`](Self::file_resolved_deps).
+    fn file_dependency_refs(&self, _db: &dyn TyDatabase, _file: FileId) -> Arc<FxHashSet<Name>> {
+        Arc::new(FxHashSet::default())
     }
 }
 

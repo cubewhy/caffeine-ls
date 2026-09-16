@@ -776,7 +776,7 @@ fn local_member_type(
     class: hir::SourceClass,
     rest: &str,
 ) -> Option<hir::SourceClass> {
-    let tree = hir::java_item_tree(db, class.file);
+    let tree = hir_def::java::plugin::tree(db, class.file);
     let mut current = class.item;
     for segment in rest.split('.') {
         current = tree.data(current).body().iter().copied().find(|member| {
@@ -1241,7 +1241,7 @@ fn on_demand_candidate_accessible(
         Some(hir::Resolved::Facade { .. }) => true,
         Some(hir::Resolved::Library(class)) => class.entry.flags & 0x0001 != 0,
         Some(hir::Resolved::Source(source)) => {
-            let tree = hir::java_item_tree(db, source.file);
+            let tree = hir_def::java::plugin::tree(db, source.file);
             let Some(data) = crate::java::resolve::item_data(&tree, source.item) else {
                 return false;
             };
@@ -1321,7 +1321,7 @@ pub fn resolve_written_name(
     node: &SyntaxNode<Lang>,
     name: &Name,
 ) -> NameResolution {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let resolver = resolver_at(db, file, &tree, node);
     resolve_name_checked(db, &scope_for_file(db, file), &resolver, name)
 }
@@ -1337,7 +1337,7 @@ pub fn resolve_type_name_at(
     item: Option<ItemId>,
     name: &Name,
 ) -> NameResolution {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let resolver = match item {
         Some(item) => Resolver::for_item(db, file, &tree, item),
         None => Resolver::for_file(&tree),
@@ -1373,7 +1373,7 @@ pub fn type_param_declaration(
     item: ItemId,
     name: &Name,
 ) -> Option<TypeParamDeclaration> {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let param = Resolver::for_item(db, file, &tree, item)
         .type_param(name)?
         .clone();
@@ -1388,7 +1388,7 @@ pub fn type_param_declaration(
         | TypeVarScope::Capture { .. }
         | TypeVarScope::Unnamed { .. } => return None,
     };
-    let decl_tree = hir::java_item_tree(db, decl_file);
+    let decl_tree = hir_def::java::plugin::tree(db, decl_file);
     let (map, source) = range_ctx(db, decl_file, decl_tree.language)?;
     // The parameter's own name token, at the index it occupies in the
     // declaring item's list — the *last* match, as the scope list is read.
@@ -1761,7 +1761,7 @@ pub fn type_argument_arity(
             // A classfile without a `Signature` attribute declares none.
             .or(Some(0)),
         hir::Resolved::Source(source) => {
-            let tree = hir::java_item_tree(db, source.file);
+            let tree = hir_def::java::plugin::tree(db, source.file);
             match tree.data(source.item) {
                 ItemData::Class(d) | ItemData::Interface(d) => Some(d.type_params.len()),
                 ItemData::Record(d) => Some(d.type_params.len()),
@@ -1885,7 +1885,7 @@ pub(crate) fn class_is_generic(
         hir::Resolved::Source(source) if !crate::lang::is_java_file(db, source.file) => false,
         // A source class is generic when its declaration carries them.
         hir::Resolved::Source(source) => {
-            let tree = hir::java_item_tree(db, source.file);
+            let tree = hir_def::java::plugin::tree(db, source.file);
             let type_params = match tree.data(source.item) {
                 ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),
                 ItemData::Record(d) => Some(&d.type_params),
@@ -2007,7 +2007,7 @@ fn class_param_bounds(
             if !crate::lang::is_java_file(db, source.file) {
                 return None;
             }
-            let tree = hir::java_item_tree(db, source.file);
+            let tree = hir_def::java::plugin::tree(db, source.file);
             let params = match tree.data(source.item) {
                 ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),
                 ItemData::Record(d) => Some(&d.type_params),

@@ -28,8 +28,8 @@ use hir_expand::{
     span::{NameRef, SpannedTypeRef},
 };
 
-use crate::java::item_tree::ItemId;
 use crate::java::lower::LowerCtx;
+use crate::jvm::ids::ItemId;
 
 use super::walk::{
     declaration_modifier_lists, lower_local_type, modifier_annotations, source_name, token_is,

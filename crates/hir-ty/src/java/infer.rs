@@ -38,7 +38,7 @@
 
 use triomphe::Arc;
 
-use hir_def::java::item_tree::ItemId;
+use hir_def::jvm::ids::ItemId;
 use hir_expand::{
     body::{BodyId, BodyTree, ExprId, LocalId},
     name::Name,
@@ -179,7 +179,7 @@ pub(crate) fn body_types_impl(
     item: ItemId,
 ) -> Option<BodyTypes> {
     let _scope = BodyScope::new(file, item);
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let bodies = hir::file_body_tree(db, file);
     let item_end = range_ctx(db, file, tree.language)
         .and_then(|(map, source)| hir_def::java::ranges::item_range(map, &source, &tree, item))
@@ -468,7 +468,7 @@ pub(crate) fn body_types_impl(
         // The declaration of each local class-like declaration in scope
         // ([§6.3]) — the positional scope the reference is checked in.
         let file = ctx.file;
-        let items = hir::java_item_tree(ctx.db, file);
+        let items = hir_def::java::plugin::tree(ctx.db, file);
         ctx.resolver.set_local_types_from(locals, file, &items);
         let mut issues = Vec::new();
         crate::java::name_check::check_spanned(

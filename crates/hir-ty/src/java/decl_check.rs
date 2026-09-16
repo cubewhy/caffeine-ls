@@ -1046,7 +1046,7 @@ pub fn module_diagnostics(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnost
 
 /// §7.7.1/[§7.7.2: the module-directive checks of `file`'s `module-info.java`.
 pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnostic> {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let Some(top) = tree
         .top
         .iter()
@@ -1122,7 +1122,7 @@ pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<
 /// Enumerates the class-like declarations of the file in source order and
 /// checks each against its inheritance graph.
 pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnostic> {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let scope = scope_for_file(db, file);
     let mut out = Vec::new();
 
@@ -1180,7 +1180,7 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
         file: FileId,
         scope: &hir::ResolutionScope,
         tree: &hir_def::java::item_tree::ItemTree,
-        id: hir_def::java::item_tree::ItemId,
+        id: hir_def::jvm::ids::ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {
         let data = tree.data(id);
@@ -1207,7 +1207,7 @@ fn check_class(
     scope: &hir::ResolutionScope,
     tree: &hir_def::java::item_tree::ItemTree,
     key: &crate::jvm::member::ClassKey,
-    item: hir_def::java::item_tree::ItemId,
+    item: hir_def::jvm::ids::ItemId,
 ) -> Vec<DeclDiagnostic> {
     // The access-control context of the class itself ([§6.6.1]): the walk is
     // a member enumeration, not an invocation from outside.
@@ -1538,7 +1538,7 @@ fn check_class(
         && let Some(super_ty) = first_concrete_descendant_super(
             db,
             scope,
-            hir::java_item_tree(db, file),
+            hir_def::java::plugin::tree(db, file),
             item,
             &resolver,
             super_ref,
@@ -2385,7 +2385,7 @@ fn class_like_simple_name(data: &ItemData) -> Name {
 /// requirement does not apply.
 fn declaring_interface_item(
     tree: &hir_def::java::item_tree::ItemTree,
-    item: hir_def::java::item_tree::ItemId,
+    item: hir_def::jvm::ids::ItemId,
 ) -> bool {
     matches!(
         tree.data(item),
@@ -2438,7 +2438,7 @@ fn first_concrete_descendant_super(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     tree: Arc<ItemTree>,
-    item: hir_def::java::item_tree::ItemId,
+    item: hir_def::jvm::ids::ItemId,
     resolver: &crate::java::resolve::Resolver,
     super_ref: &ItemTypeRef,
 ) -> Option<Ty> {
@@ -2468,7 +2468,7 @@ fn first_concrete_descendant_super(
         let hir::Resolved::Source(next) = resolved else {
             return None;
         };
-        let next_tree: Arc<ItemTree> = hir::java_item_tree(db, next.file);
+        let next_tree: Arc<ItemTree> = hir_def::java::plugin::tree(db, next.file);
         let Some(ItemData::Class(next_class)) =
             crate::java::resolve::item_data(&next_tree, next.item)
         else {
@@ -2811,7 +2811,7 @@ fn enum_constant_body_implements(
     db: &dyn TyDatabase,
     file: FileId,
     tree: &hir_def::java::item_tree::ItemTree,
-    item: hir_def::java::item_tree::ItemId,
+    item: hir_def::jvm::ids::ItemId,
     method: &MethodData,
 ) -> bool {
     use syntax::java::{SourceFile as JavaSourceFile, SyntaxKind as J};
@@ -2889,7 +2889,7 @@ fn recursive_constructor_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
     tree: &hir_def::java::item_tree::ItemTree,
-    item: hir_def::java::item_tree::ItemId,
+    item: hir_def::jvm::ids::ItemId,
 ) -> Vec<DeclDiagnostic> {
     use hir_def::java::item_tree::ItemData as I;
     use hir_expand::body::{CtorCallTarget, ExprData, StmtData};
@@ -3006,7 +3006,7 @@ fn sealed_permits(
         // A Kotlin file's facade is neither sealed nor a permitted subclass.
         hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
-            let tree = hir::java_item_tree(db, source.file);
+            let tree = hir_def::java::plugin::tree(db, source.file);
             let (permits, sealed) = match tree.data(source.item) {
                 ItemData::Class(d) | ItemData::Interface(d) => {
                     (&d.permits, d.modifiers.is_sealed())
@@ -3073,7 +3073,7 @@ fn sealed_subclass_diagnostics(
     tree: &hir_def::java::item_tree::ItemTree,
     scope: &hir::ResolutionScope,
     resolver: &crate::java::resolve::Resolver,
-    item: hir_def::java::item_tree::ItemId,
+    item: hir_def::jvm::ids::ItemId,
     key: &crate::jvm::member::ClassKey,
     out: &mut Vec<DeclDiagnostic>,
 ) {
@@ -3155,7 +3155,7 @@ fn file_has_direct_subclass(
         file: FileId,
         tree: &hir_def::java::item_tree::ItemTree,
         scope: &hir::ResolutionScope,
-        id: hir_def::java::item_tree::ItemId,
+        id: hir_def::jvm::ids::ItemId,
         fqn: &str,
     ) -> bool {
         let data = tree.data(id);
@@ -3357,7 +3357,7 @@ fn final_field_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
     tree: &hir_def::java::item_tree::ItemTree,
-    item: hir_def::java::item_tree::ItemId,
+    item: hir_def::jvm::ids::ItemId,
 ) -> Vec<DeclDiagnostic> {
     use hir_def::java::item_tree::ItemData as I;
     use hir_expand::body::{CtorCallTarget, ExprData, StmtData};
@@ -4007,7 +4007,7 @@ fn class_is_sealed(db: &dyn TyDatabase, resolved: &hir::Resolved) -> bool {
             false
         }
         hir::Resolved::Source(source) => {
-            let tree = hir::java_item_tree(db, source.file);
+            let tree = hir_def::java::plugin::tree(db, source.file);
             class_like_modifiers(tree.data(source.item)).is_some_and(|m| m.is_sealed())
         }
         hir::Resolved::Library(class) => hir::class_record(db, class)
@@ -4039,7 +4039,7 @@ fn local_decl_kind(data: &ItemData) -> &'static str {
 /// container is javac's separate `already.defined.in.clinit` key).
 fn local_container(
     tree: &hir_def::java::item_tree::ItemTree,
-    earlier: hir_def::java::item_tree::ItemId,
+    earlier: hir_def::jvm::ids::ItemId,
 ) -> DuplicateContainer {
     let Some(owner) = tree.parent_of(earlier) else {
         return DuplicateContainer::Member {
@@ -4083,8 +4083,8 @@ fn local_container(
 /// block as the first are not.
 fn local_redeclaration_is_legal(
     tree: &hir_def::java::item_tree::ItemTree,
-    redeclaring: hir_def::java::item_tree::ItemId,
-    earlier: hir_def::java::item_tree::ItemId,
+    redeclaring: hir_def::jvm::ids::ItemId,
+    earlier: hir_def::jvm::ids::ItemId,
 ) -> bool {
     // The class-like declaration that directly encloses the redeclaration.
     let mut current = tree.parent_of(redeclaring);
@@ -4107,7 +4107,7 @@ fn class_simple_name(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Name {
     match resolved {
         // A facade is named after the file it belongs to.
         hir::Resolved::Facade { fqn, .. } => Name::new(fqn.simple_name()),
-        hir::Resolved::Source(source) => hir::java_item_tree(db, source.file)
+        hir::Resolved::Source(source) => hir_def::java::plugin::tree(db, source.file)
             .data(source.item)
             .name()
             .cloned()
@@ -4119,8 +4119,8 @@ fn class_simple_name(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Name {
 /// Whether the declaration `ancestor` encloses `item` (or is `item`).
 fn encloses(
     tree: &hir_def::java::item_tree::ItemTree,
-    ancestor: hir_def::java::item_tree::ItemId,
-    item: hir_def::java::item_tree::ItemId,
+    ancestor: hir_def::jvm::ids::ItemId,
+    item: hir_def::jvm::ids::ItemId,
 ) -> bool {
     let mut current = Some(item);
     while let Some(id) = current {
@@ -4136,7 +4136,7 @@ fn encloses(
 /// `item` that has the simple name `name`, if any ([§8.1], [§9.1]).
 fn enclosing_class_with_name(
     tree: &hir_def::java::item_tree::ItemTree,
-    item: hir_def::java::item_tree::ItemId,
+    item: hir_def::jvm::ids::ItemId,
     name: &Name,
 ) -> Option<Name> {
     let mut current = tree.parent_of(item);

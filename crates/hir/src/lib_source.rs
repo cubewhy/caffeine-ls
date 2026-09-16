@@ -31,7 +31,7 @@ use camino::Utf8Path;
 use crate::{
     HirDatabase,
     db::{HirState, ProjectGraph, file_symbols},
-    hir_def::java::item_tree::ItemId,
+    hir_def::jvm::ids::ItemId,
     lmdb_store::{self, ParamsBlob, SourceIndexBlob, SourcesStamp, StubStore},
     project::LibrarySources,
     symbol_index::SourceSymbolKind,

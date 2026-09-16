@@ -20,15 +20,15 @@ use super::body_types;
 /// later static, or vice versa) is legal.
 pub(super) fn forward_field_names(
     tree: &hir_def::java::item_tree::ItemTree,
-    field: hir_def::java::item_tree::ItemId,
+    field: hir_def::jvm::ids::ItemId,
     static_field: bool,
 ) -> Vec<Name> {
     // The class-like declaration owning `field`.
     fn owner_of(
         tree: &hir_def::java::item_tree::ItemTree,
-        id: hir_def::java::item_tree::ItemId,
-        target: hir_def::java::item_tree::ItemId,
-    ) -> Option<hir_def::java::item_tree::ItemId> {
+        id: hir_def::jvm::ids::ItemId,
+        target: hir_def::jvm::ids::ItemId,
+    ) -> Option<hir_def::jvm::ids::ItemId> {
         let data = tree.data(id);
         let class_like = data.is_type();
         for &child in data.body() {
@@ -231,7 +231,7 @@ pub(super) fn find_method_item(
     file: FileId,
     method: &crate::jvm::member::MethodData,
 ) -> Option<ItemId> {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     for top in &tree.top {
         if let Some(found) = find_method_rec(&tree, *top, method) {
             return Some(found);

@@ -56,7 +56,7 @@ fn render_docs(db: &TestDatabase, file: FileId) -> String {
         }
     }
 
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let mut lines = Vec::new();
     for &top in &tree.top {
         walk(db, file, &tree, top, &mut lines);

@@ -53,7 +53,7 @@ use crate::{
 /// file.
 pub(crate) fn file_resolved_deps_impl(db: &dyn TyDatabase, file: FileId) -> FxHashSet<FileId> {
     let scope = crate::java::resolve::scope_for_file(db, file);
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
 
     let mut out: FxHashSet<FileId> = FxHashSet::default();
     // Classes still to expand their supertype chains; `visited` keys on the
@@ -198,7 +198,7 @@ fn record_source(
 /// index — a change in a file cannot alter `file`'s resolution without either
 /// appearing in this set or being reachable through [`file_resolved_deps`].
 pub(crate) fn file_dependency_refs_impl(db: &dyn TyDatabase, file: FileId) -> FxHashSet<Name> {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let bodies = hir::file_body_tree(db, file);
     let mut out: FxHashSet<Name> = FxHashSet::default();
 

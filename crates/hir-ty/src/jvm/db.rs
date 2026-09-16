@@ -9,7 +9,7 @@
 //! values themselves.
 
 use base_db::salsa;
-use hir_def::java::item_tree::ItemId;
+use hir_def::jvm::ids::ItemId;
 use hir_expand::name::Name;
 use vfs::FileId;
 

@@ -239,7 +239,7 @@ impl Lub<'_> {
             hir::Resolved::Library(_) => hir::class_generic_info(self.db, &resolved)
                 .is_some_and(|info| !info.type_params.is_empty()),
             hir::Resolved::Source(source) => {
-                let tree = hir::java_item_tree(self.db, source.file);
+                let tree = hir_def::java::plugin::tree(self.db, source.file);
                 match tree.data(source.item) {
                     hir_def::java::item_tree::ItemData::Class(data)
                     | hir_def::java::item_tree::ItemData::Interface(data) => {

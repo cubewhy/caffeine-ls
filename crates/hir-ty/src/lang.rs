@@ -10,7 +10,11 @@
 //! language's own — a Java caller reads a Kotlin class's supertypes in Java's
 //! shapes, and never by naming the Kotlin layer.
 
+use triomphe::Arc;
+
 use base_db::LanguageKind;
+use hir_expand::name::Name;
+use rustc_hash::FxHashSet;
 use vfs::FileId;
 
 use crate::jvm::db::TyDatabase;
@@ -92,6 +96,14 @@ pub trait LanguageTypes: Sync {
         file: FileId,
         item: hir_expand::ids::ItemId,
     ) -> InvocationContext;
+
+    /// The workspace files the file's type outputs resolve against, for the
+    /// cross-file dependency index.
+    fn file_resolved_deps(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<FileId>>;
+
+    /// The resolution-relevant names of the file, the sound name-level fallback
+    /// of the cross-file dependency index.
+    fn file_dependency_refs(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<Name>>;
 }
 
 /// Every registered language, in lookup order.
@@ -138,6 +150,24 @@ pub fn member_source(
 /// codec.
 pub fn classfile() -> &'static dyn LanguageTypes {
     &crate::java::plugin::JAVA
+}
+
+/// The file dependencies of `file`, answered by the language that declares it:
+/// the workspace files its type outputs resolve against, and the names it
+/// mentions.
+pub fn file_resolved_deps(db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<FileId>> {
+    for_file(db, file).map_or_else(
+        || Arc::new(FxHashSet::default()),
+        |language| language.file_resolved_deps(db, file),
+    )
+}
+
+/// The resolution-relevant names of `file` (see [`file_resolved_deps`]).
+pub fn file_dependency_refs(db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<Name>> {
+    for_file(db, file).map_or_else(
+        || Arc::new(FxHashSet::default()),
+        |language| language.file_dependency_refs(db, file),
+    )
 }
 
 /// Whether the Java language declares `file` — the Java layer's own question at

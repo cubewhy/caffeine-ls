@@ -526,7 +526,7 @@ fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<
 fn java_member_resolution(
     db: &RootDatabase,
     file: Option<FileId>,
-    item: Option<hir::hir_def::java::item_tree::ItemId>,
+    item: Option<hir::hir_def::jvm::ids::ItemId>,
 ) -> Vec<Resolution> {
     let (Some(file), Some(item)) = (file, item) else {
         return Vec::new();
@@ -542,7 +542,7 @@ fn java_member_resolution(
             })
             .unwrap_or_default();
     }
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir::hir_def::java::plugin::tree(db, file);
     let language = hir::file_item_tree(db, file).language();
     let parse = parse(db, file, language);
     let source = parse.syntax_node(language);
@@ -865,7 +865,7 @@ impl Ctx {
 fn declaration_name_range(
     db: &RootDatabase,
     file: FileId,
-    item: hir::hir_def::java::item_tree::ItemId,
+    item: hir::hir_def::jvm::ids::ItemId,
 ) -> Option<TextRange> {
     let language = hir::file_item_tree(db, file).language();
     match hir::file_item_tree(db, file) {
@@ -875,7 +875,7 @@ fn declaration_name_range(
             ctx.name_range(item)
         }
         _ => {
-            let tree = hir::java_item_tree(db, file);
+            let tree = hir::hir_def::java::plugin::tree(db, file);
             let parse = parse(db, file, language);
             let source = parse.syntax_node(language);
             let map = hir::hir_def::db::ast_id_map(db, file, language);

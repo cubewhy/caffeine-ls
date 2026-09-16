@@ -47,8 +47,8 @@ impl InferCtx<'_> {
     /// in the scope in force ([§6.3]): it is in scope in its own body and for
     /// the rest of the enclosing block, so inference pushes it where the
     /// statement declaring it is reached.
-    pub(super) fn declare_local_type(&mut self, item: hir_def::java::item_tree::ItemId) {
-        let tree = hir::java_item_tree(self.db, self.file);
+    pub(super) fn declare_local_type(&mut self, item: hir_def::jvm::ids::ItemId) {
+        let tree = hir_def::java::plugin::tree(self.db, self.file);
         let Some(name) = tree.data(item).name().cloned() else {
             return;
         };

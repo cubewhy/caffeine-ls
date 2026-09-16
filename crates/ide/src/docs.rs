@@ -10,7 +10,7 @@
 mod javadoc;
 mod kdoc;
 
-use hir::hir_def::java::item_tree::ItemId;
+use hir::hir_def::jvm::ids::ItemId;
 use ide_db::base_db::LanguageKind;
 use vfs::FileId;
 
@@ -43,7 +43,7 @@ pub(crate) fn hover_docs(db: &RootDatabase, file: FileId, item: ItemId) -> Optio
             (!rendered.trim().is_empty()).then_some(rendered)
         }
         _ => {
-            let tree = hir::java_item_tree(db, file);
+            let tree = hir::hir_def::java::plugin::tree(db, file);
             let raw = hir::item_doc(db, file, item)?;
             let owner = tree.data(item).name().map(|name| name.simple_name());
             let rendered = javadoc::render(raw, owner);

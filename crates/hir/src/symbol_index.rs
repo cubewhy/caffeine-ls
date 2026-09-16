@@ -36,11 +36,10 @@
 use rustc_hash::FxHashMap;
 use vfs::FileId;
 
-use hir_def::java::item_tree::{ItemData, ItemId};
-use hir_def::kotlin::item_tree::{KotlinClassKind, KotlinItemData};
-use hir_expand::name::Name;
+use hir_expand::{ids::ItemId, name::Name};
 
-/// The kind of a source symbol, mapped from the lowered [`ItemData`].
+/// The kind of a source symbol, mapped from the language's lowered item
+/// model by that language's file index ([`crate::lang`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SourceSymbolKind {
     /// A class declaration ([JLS §8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1)).
@@ -85,50 +84,6 @@ pub enum SourceSymbolKind {
 }
 
 impl SourceSymbolKind {
-    /// The symbol kind of a lowered item, or `None` for the nameless
-    /// declarations (instance/static initializers) that the index skips.
-    pub fn of(data: &ItemData) -> Option<SourceSymbolKind> {
-        match data {
-            ItemData::Class(_) => Some(SourceSymbolKind::Class),
-            ItemData::Interface(_) => Some(SourceSymbolKind::Interface),
-            ItemData::Enum(_) => Some(SourceSymbolKind::Enum),
-            ItemData::Record(_) => Some(SourceSymbolKind::Record),
-            ItemData::Annotation(_) => Some(SourceSymbolKind::Annotation),
-            ItemData::Module(_) => Some(SourceSymbolKind::Module),
-            ItemData::Method(_) => Some(SourceSymbolKind::Method),
-            ItemData::Field(_) => Some(SourceSymbolKind::Field),
-            ItemData::EnumConstant(_) => Some(SourceSymbolKind::EnumConstant),
-            ItemData::StaticInit(_) | ItemData::InstanceInit(_) => None,
-        }
-    }
-
-    /// The symbol kind of a lowered Kotlin item, or `None` for the nameless
-    /// declarations (`init` blocks, property accessors) the index skips.
-    ///
-    /// A property's accessors are skipped deliberately: the source declares no
-    /// name for them (the JVM name is synthesized from the property), so they
-    /// are not nameable from another file. They stay reachable through
-    /// [`hir_def::kotlin::item_tree::PropertyData::accessors`].
-    pub fn of_kotlin(data: &KotlinItemData) -> Option<SourceSymbolKind> {
-        match data {
-            KotlinItemData::Class(data) => Some(match data.kind {
-                KotlinClassKind::Class => SourceSymbolKind::Class,
-                KotlinClassKind::Interface => SourceSymbolKind::Interface,
-                KotlinClassKind::Enum => SourceSymbolKind::Enum,
-                KotlinClassKind::Annotation => SourceSymbolKind::Annotation,
-                KotlinClassKind::Object | KotlinClassKind::CompanionObject => {
-                    SourceSymbolKind::Object
-                }
-            }),
-            KotlinItemData::Constructor(_) => Some(SourceSymbolKind::Constructor),
-            KotlinItemData::Function(_) => Some(SourceSymbolKind::Function),
-            KotlinItemData::Property(_) => Some(SourceSymbolKind::Property),
-            KotlinItemData::EnumEntry(_) => Some(SourceSymbolKind::EnumConstant),
-            KotlinItemData::TypeAlias(_) => Some(SourceSymbolKind::TypeAlias),
-            KotlinItemData::Accessor(_) | KotlinItemData::AnonymousInitializer(_) => None,
-        }
-    }
-
     /// The display label of the kind.
     pub fn label(&self) -> &'static str {
         match self {

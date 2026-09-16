@@ -153,7 +153,7 @@ impl InferCtx<'_> {
             // A Kotlin file's facade declares no record.
             hir::Resolved::Facade { .. } => None,
             hir::Resolved::Source(source) => {
-                let tree = hir::java_item_tree(self.db, source.file);
+                let tree = hir_def::java::plugin::tree(self.db, source.file);
                 match tree.data(source.item) {
                     ItemData::Record(record) => Some(record.components.len()),
                     _ => None,

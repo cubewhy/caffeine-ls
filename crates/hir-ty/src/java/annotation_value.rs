@@ -717,7 +717,7 @@ fn field_constant(
     if !visited.insert((file, item)) || visited.len() > MAX_FIELD_DEPTH {
         return FieldValue::Unreadable;
     }
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let ItemData::Field(data) = tree.data(item) else {
         return FieldValue::Unreadable;
     };
@@ -934,7 +934,7 @@ pub fn suppress_warnings_values(
     file: FileId,
     node: &SyntaxNode<Lang>,
 ) -> Option<Vec<String>> {
-    let tree = hir::java_item_tree(db, file);
+    let tree = hir_def::java::plugin::tree(db, file);
     let (map, source) = range_ctx(db, file, tree.language)?;
     let list = node
         .children()

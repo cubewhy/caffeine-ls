@@ -32,7 +32,7 @@ use vfs::FileId;
 use crate::RootDatabase;
 
 use hir_expand::arena::ArenaId;
-type ItemId = hir::hir_def::java::item_tree::ItemId;
+type ItemId = hir::hir_def::jvm::ids::ItemId;
 
 /// A source symbol as seen by the IDE.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +59,7 @@ pub struct DocumentSymbol {
     pub detail: Option<String>,
     /// The lowered item, for later HIR queries (e.g. [`crate::Analysis::item_ty`]).
     /// `None` for synthesized symbols (the file's package).
-    pub item: Option<hir::hir_def::java::item_tree::ItemId>,
+    pub item: Option<hir::hir_def::jvm::ids::ItemId>,
 }
 
 /// A workspace symbol picker row: the three fields a client renders before
@@ -106,7 +106,7 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
     }
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
-    let tree = hir::java_item_tree(db, file_id);
+    let tree = hir::hir_def::java::plugin::tree(db, file_id);
     let ctx = range_ctx(db, file_id, tree.language);
     let mut out = Vec::with_capacity(symbols.len() + 1);
     if !symbols.is_empty() {
@@ -170,7 +170,7 @@ fn record_members(
         return Vec::new();
     };
     let mut members = Vec::with_capacity(record.components.len() + 1);
-    let tree = hir::java_item_tree(db, file_id);
+    let tree = hir::hir_def::java::plugin::tree(db, file_id);
     let ctx = range_ctx(db, file_id, tree.language);
     let component_tys: Arc<Vec<String>> = Arc::new(
         hir_ty::record_component_types(db, file_id, symbol.item.unwrap())
@@ -342,12 +342,12 @@ fn symbol_detail(symbol: &hir::SourceSymbol, top_level: bool) -> Option<String> 
 pub fn method_signature(
     db: &RootDatabase,
     file_id: FileId,
-    item: hir::hir_def::java::item_tree::ItemId,
+    item: hir::hir_def::jvm::ids::ItemId,
     simple: &str,
     include_return: bool,
 ) -> String {
     let is_constructor = matches!(
-        hir::java_item_tree(db, file_id).data(item),
+        hir::hir_def::java::plugin::tree(db, file_id).data(item),
         ItemData::Method(method) if method.is_constructor()
     );
     let ret = if include_return && !is_constructor {
@@ -364,9 +364,9 @@ pub fn method_signature(
 fn render_params(
     db: &RootDatabase,
     file_id: FileId,
-    item: hir::hir_def::java::item_tree::ItemId,
+    item: hir::hir_def::jvm::ids::ItemId,
 ) -> String {
-    let tree = hir::java_item_tree(db, file_id);
+    let tree = hir::hir_def::java::plugin::tree(db, file_id);
     let varargs = matches!(
         tree.data(item),
         ItemData::Method(method) if method.sig.params.last().is_some_and(|param| param.varargs)
@@ -476,7 +476,7 @@ pub fn workspace_symbol_summaries(
 /// `workspaceSymbol/resolve` half of the flow. Returns `None` for a stale
 /// `(file, item)` (file rewritten or deleted since the row was served).
 pub fn source_symbol_range(db: &RootDatabase, file_id: FileId, item: u32) -> Option<TextRange> {
-    let item = hir::hir_def::java::item_tree::ItemId(ArenaId(item));
+    let item = hir::hir_def::jvm::ids::ItemId(ArenaId(item));
     // The id indexes into this revision's item tree; re-validate before
     // touching the arena — `Arena::get` panics out of bounds and a rewritten
     // file's tree can shrink.
@@ -494,7 +494,7 @@ pub fn source_symbol_range(db: &RootDatabase, file_id: FileId, item: u32) -> Opt
     if hir::hir_def::java::plugin::model(&file_tree).is_none() {
         return None;
     }
-    let tree = hir::java_item_tree(db, file_id);
+    let tree = hir::hir_def::java::plugin::tree(db, file_id);
     let (map, source) = range_ctx(db, file_id, tree.language)?;
     hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)
 }
@@ -612,11 +612,7 @@ fn registered_source_sets(db: &RootDatabase) -> Vec<hir::SourceSetId> {
 /// The declared type of an item — a field's type, a method's return type, or
 /// the type of a class-like declaration — rendered from the HIR type layer
 /// with the *simple* class name (the last `.`-segment).
-pub fn item_ty(
-    db: &RootDatabase,
-    file_id: FileId,
-    item: hir::hir_def::java::item_tree::ItemId,
-) -> String {
+pub fn item_ty(db: &RootDatabase, file_id: FileId, item: hir::hir_def::jvm::ids::ItemId) -> String {
     hir_ty::item_ty(db, file_id, item)
         .display_simple(db)
         .to_string()
@@ -627,7 +623,7 @@ pub fn item_ty(
 pub fn method_params(
     db: &RootDatabase,
     file_id: FileId,
-    item: hir::hir_def::java::item_tree::ItemId,
+    item: hir::hir_def::jvm::ids::ItemId,
 ) -> Arc<[String]> {
     Arc::from(
         hir_ty::method_params(db, file_id, item)

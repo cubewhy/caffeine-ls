@@ -166,7 +166,7 @@ pub(crate) fn collect_type_diagnostics(
     }
     // Every other file — a Java one, and one no language lowered, which declares
     // no item at all — is walked as Java.
-    let tree = hir::java_item_tree(db, file_id);
+    let tree = hir::hir_def::java::plugin::tree(db, file_id);
     for (item_id, _) in all_items(&tree) {
         for diagnostic in item_diagnostics_impl(db, file_id, item_id) {
             sink.push(file_id, diagnostic);
@@ -249,7 +249,7 @@ pub(crate) fn collect_declaration_diagnostics(
             // defaults, missing `@Override`) are keyed to the declaring method
             // name; point at the whole declaration when no reference range is
             // recorded.
-            let tree = hir::java_item_tree(db, file_id);
+            let tree = hir::hir_def::java::plugin::tree(db, file_id);
             let method_name = diagnostic.method_name();
             let item = tree
                 .top
