@@ -286,7 +286,11 @@ fn annotation_keys(
 #[salsa::tracked(returns(ref))]
 pub(crate) fn warning_scopes_query(db: &dyn TyDatabase, file: FileText) -> Arc<[SuppressionScope]> {
     let file_id = *file.file_id(db);
-    suppression_scopes(db, file_id).into()
+    crate::lang::for_file(db, file_id)
+        .map_or_else(Vec::new, |language| {
+            language.suppression_scopes(db, file_id)
+        })
+        .into()
 }
 
 /// Whether a warning of `key` reported at `range` is suppressed in `file`

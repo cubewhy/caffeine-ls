@@ -34,6 +34,9 @@ use vfs::FileId;
 use triomphe::Arc;
 
 mod handlers;
+mod java;
+mod kotlin;
+pub(crate) mod lang;
 mod lint;
 pub use handlers::body::{code as body_code, message as body_message, related as body_related};
 pub use handlers::decl::{code as decl_code, message as decl_message};
@@ -141,40 +144,12 @@ pub(crate) fn collect_type_diagnostics(
     db: &dyn hir_ty::TyDatabase,
     file_id: FileId,
 ) {
-    // A Kotlin file's findings are the Kotlin type layer's: it walks the
-    // file's items and reports each with its own severity.
-    if let Some(tree) = hir::hir_def::kotlin::plugin::model(&hir::file_item_tree(db, file_id)) {
-        for (id, _) in tree.items.iter() {
-            let types = hir_ty::kotlin_body_types(db, file_id, hir_expand::ids::ItemId(id));
-            for diagnostic in &types.diagnostics {
-                let Some(range) = diagnostic.range() else {
-                    continue;
-                };
-                sink.push(
-                    file_id,
-                    make_diagnostic(
-                        file_id,
-                        &diagnostic.message(db),
-                        range,
-                        Some(DiagnosticCode::Kotlin(diagnostic.code())),
-                        Severity::Error,
-                    ),
-                );
-            }
-        }
-        return;
-    }
-    // Every other file — a Java one, and one no language lowered, which declares
-    // no item at all — is walked as Java.
-    let tree = hir::hir_def::java::plugin::tree(db, file_id);
-    for (item_id, _) in all_items(&tree) {
-        for diagnostic in item_diagnostics_impl(db, file_id, item_id) {
-            sink.push(file_id, diagnostic);
-        }
+    if let Some(language) = lang::for_file(db, file_id) {
+        language.body_diagnostics(sink, db, file_id);
     }
 }
 
-fn item_diagnostics_impl(
+pub(crate) fn item_diagnostics_impl(
     db: &dyn hir_ty::TyDatabase,
     file_id: FileId,
     item_id: ItemId,
@@ -238,93 +213,8 @@ pub(crate) fn collect_declaration_diagnostics(
     db: &dyn hir_ty::TyDatabase,
     file_id: FileId,
 ) {
-    for diagnostic in hir_ty::class_diagnostics(db, file_id) {
-        // §9.6.4.5: a warning named by an enclosing `@SuppressWarnings` is not
-        // reported at all.
-        if !lint::keeps_decl_diagnostic(db, file_id, &diagnostic) {
-            continue;
-        }
-        let Some(range) = diagnostic.range().or_else(|| {
-            // The hierarchy checks (incompatible override, conflicting
-            // defaults, missing `@Override`) are keyed to the declaring method
-            // name; point at the whole declaration when no reference range is
-            // recorded.
-            let tree = hir::hir_def::java::plugin::tree(db, file_id);
-            let method_name = diagnostic.method_name();
-            let item = tree
-                .top
-                .iter()
-                .copied()
-                .find_map(|top| find_method(&tree, top, method_name));
-            item.and_then(|item| {
-                // The item tree carries no offsets; resolve the declaration
-                // range from the file's parse.
-                let language = tree.language;
-                if language == base_db::LanguageKind::Unknown {
-                    return None;
-                }
-                let source = base_db::parse(db, file_id, language).syntax_node(language);
-                let map = hir::hir_def::db::ast_id_map(db, file_id, language);
-                hir::hir_def::java::ranges::item_range(map, &source, &tree, item)
-            })
-        }) else {
-            continue;
-        };
-        sink.push(
-            file_id,
-            make_diagnostic(
-                file_id,
-                &decl_message(db, &diagnostic),
-                range,
-                Some(decl_code(&diagnostic)),
-                // A raw-type or deprecation declaration report is a warning
-                // ([JLS §4.12.2], [§9.6.4.6]): a legal program, flagged for
-                // its unsoundness or its use of a deprecated API.
-                lint::severity_of_decl(&diagnostic),
-            ),
-        );
-    }
-    // §7.7: the module-directive checks (`requires` of an unknown module,
-    // `exports`/`opens` of an empty package, a `provides` implementation not
-    // a subtype of its service) of a `module-info.java`. Every module
-    // diagnostic carries its own range.
-    for diagnostic in hir_ty::module_diagnostics(db, file_id) {
-        if !lint::keeps_decl_diagnostic(db, file_id, &diagnostic) {
-            continue;
-        }
-        let Some(range) = diagnostic.range() else {
-            continue;
-        };
-        sink.push(
-            file_id,
-            make_diagnostic(
-                file_id,
-                &decl_message(db, &diagnostic),
-                range,
-                Some(decl_code(&diagnostic)),
-                Severity::Error,
-            ),
-        );
-    }
-    // A construct newer than the file's project source level (e.g. a record in
-    // a `-source 11` module). Always an error: javac rejects it too.
-    for diagnostic in hir_ty::level_diagnostics(db, file_id) {
-        if !lint::keeps_decl_diagnostic(db, file_id, &diagnostic) {
-            continue;
-        }
-        let Some(range) = diagnostic.range() else {
-            continue;
-        };
-        sink.push(
-            file_id,
-            make_diagnostic(
-                file_id,
-                &decl_message(db, &diagnostic),
-                range,
-                Some(decl_code(&diagnostic)),
-                Severity::Error,
-            ),
-        );
+    if let Some(language) = lang::for_file(db, file_id) {
+        language.declaration_diagnostics(sink, db, file_id);
     }
 }
 
@@ -393,7 +283,7 @@ pub fn file_report(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<[Diagnos
     file_report_query(db, db.file_text(file_id))
 }
 
-fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {
+pub(crate) fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {
     match tree.data(id) {
         ItemData::Method(method) if method.name.as_str() == name => return Some(id),
         _ => {}
@@ -407,7 +297,7 @@ fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {
 }
 
 /// Every `(ItemId, &ItemData)` in the tree, parents before children.
-fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
+pub(crate) fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
     fn walk<'a>(tree: &'a ItemTree, id: ItemId, out: &mut Vec<(ItemId, &'a ItemData)>) {
         let data = tree.data(id);
         out.push((id, data));
@@ -429,7 +319,7 @@ fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
     out
 }
 
-fn make_diagnostic(
+pub(crate) fn make_diagnostic(
     file_id: FileId,
     message: &str,
     range: TextRange,
