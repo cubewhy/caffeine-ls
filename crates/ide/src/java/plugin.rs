@@ -26,7 +26,10 @@ fn source(db: &RootDatabase, file: FileId) -> syntax::SourceFile {
 
 impl LanguageIde for Java {
     fn kinds(&self) -> &'static [LanguageKind] {
-        &[LanguageKind::Java]
+        // `Unknown` is answered here because this is the path a file no
+        // language lowered runs through: its item tree is empty, so every
+        // feature finds nothing.
+        &[LanguageKind::Java, LanguageKind::Unknown]
     }
 
     fn definition(

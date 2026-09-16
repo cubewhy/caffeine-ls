@@ -93,6 +93,13 @@ impl DiagnosticSink {
     }
 }
 
+/// The kinds the diagnostics registry answers for — the coverage the
+/// registration check of `ide`'s `language_registration` test asserts, which is
+/// why it is public although the registry itself is not.
+pub fn registered_language_kinds() -> Vec<ide_db::base_db::LanguageKind> {
+    lang::kinds()
+}
+
 pub fn syntax_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
     let mut sink = DiagnosticSink::new();
     collect_syntax(&mut sink, db, file_id);

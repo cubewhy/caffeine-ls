@@ -4,6 +4,10 @@
 
 The next-gen LSP for JVM family languages
 
+Each layer answers per *file kind* through a registry, so a JVM language can be
+added by adding one module per layer plus one registration row each — see
+[docs/adding-a-language.md](docs/adding-a-language.md).
+
 ## Usage
 
 ### Language server
