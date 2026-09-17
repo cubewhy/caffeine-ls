@@ -64,6 +64,10 @@ class Lits {
     static void m() {
         Class<Integer> i = int.class;
         Class<Long> l = long.class;
+        // §15.8.2: `void.class` is `Class<Void>`; the fixture's classpath has
+        // no `java.lang.Void` to declare, so the boxed type is pinned through
+        // the expression's own type.
+        Object v = void.class;
         TAF a = newFactory(long.class, Long.class, longAdapter());
         TAF b = newFactory(int.class, Integer.class, null);
     }

@@ -57,10 +57,14 @@ package com.example;
 
 class Base {
     int f() { return 1; }
+    int g() { return 1; }
+    void h() {}
 }
 
 class Derived extends Base {
     String f() { return \"\"; }
+    void g() {}
+    int h() { return 1; }
 }
 ",
     )])

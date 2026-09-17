@@ -21,6 +21,10 @@ class Lits {
     static void m() {
         Class<Integer> i = int.class;
         Class<Long> l = long.class;
+        // §15.8.2: `void.class` is `Class<Void>`; the fixture's classpath has
+        // no `java.lang.Void` to declare, so the boxed type is pinned through
+        // the expression's own type.
+        Object v = void.class;
         TAF a = newFactory(long.class, Long.class, longAdapter());
         TAF b = newFactory(int.class, Integer.class, null);
     }
@@ -33,5 +37,5 @@ method longAdapter(): com.example.Lits.TA<java.lang.Long>
   locals: 
   exprs: e1: null
 method m(): void
-  locals: l3: java.lang.Class<java.lang.Integer> | l4: java.lang.Class<java.lang.Long> | l5: com.example.Lits.TAF | l6: com.example.Lits.TAF
-  exprs: e2: java.lang.Class<java.lang.Integer> | e3: java.lang.Class<java.lang.Long> | e4: java.lang.Class<java.lang.Long> | e5: java.lang.Class<java.lang.Long> | e6: com.example.Lits.TA<java.lang.Long> | e7: com.example.Lits.TAF | e8: java.lang.Class<java.lang.Integer> | e9: java.lang.Class<java.lang.Integer> | e10: null | e11: com.example.Lits.TAF
+  locals: l3: java.lang.Class<java.lang.Integer> | l4: java.lang.Class<java.lang.Long> | l5: java.lang.Object | l6: com.example.Lits.TAF | l7: com.example.Lits.TAF
+  exprs: e2: java.lang.Class<java.lang.Integer> | e3: java.lang.Class<java.lang.Long> | e4: java.lang.Class<java.lang.Void> | e5: java.lang.Class<java.lang.Long> | e6: java.lang.Class<java.lang.Long> | e7: com.example.Lits.TA<java.lang.Long> | e8: com.example.Lits.TAF | e9: java.lang.Class<java.lang.Integer> | e10: java.lang.Class<java.lang.Integer> | e11: null | e12: com.example.Lits.TAF
