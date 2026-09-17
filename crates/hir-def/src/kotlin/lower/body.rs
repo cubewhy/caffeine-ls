@@ -196,6 +196,17 @@ fn lower_body(
     Some(alloc_body(ctx, owner, params, vec![stmt]))
 }
 
+/// Whether the body a declaration node writes is the *expression* form
+/// (`fun f() = expr`, `get() = expr`) rather than a block
+/// ([spec: grammar-rule-functionBody]). A block-bodied declaration that writes no
+/// return type returns `Unit`; an expression-bodied one is typed by its
+/// expression — the two are indistinguishable from the lowered statements
+/// alone, since a one-expression block lowers to the same single
+/// `StmtData::Expr`.
+pub(super) fn expression_body_form(node: &SyntaxNode<Lang>) -> bool {
+    expression_body(node).is_some()
+}
+
 /// The expression of an `= expr` body, if the declaration writes one
 /// ([spec: grammar-rule-functionBody]).
 fn expression_body(node: &SyntaxNode<Lang>) -> Option<SyntaxNode<Lang>> {

@@ -44,7 +44,7 @@ pub(crate) fn hints(
         if tree.data(item).body_id().is_none() {
             continue;
         }
-        let types = hir_ty::kotlin_body_types(db, file, item);
+        let types = hir_ty::kotlin_declaration_types(db, file, item);
         for (local, _) in bodies.locals.iter() {
             let local = hir_expand::body::LocalId(local);
             // Only a local this item's body declares.
@@ -109,7 +109,7 @@ pub(crate) fn resolve(
         if tree.data(item).body_id().is_none() {
             continue;
         }
-        let types = hir_ty::kotlin_body_types(db, file, item);
+        let types = hir_ty::kotlin_declaration_types(db, file, item);
         for (local, _) in bodies.locals.iter() {
             let local = hir_expand::body::LocalId(local);
             let Some(name_range) = bodies.local_name_range(local) else {

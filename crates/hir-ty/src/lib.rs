@@ -121,7 +121,10 @@ pub use jvm::member_set::{InvocationContext, InvocationMode};
 pub use jvm::member_set::{abstract_methods, member_set, pick_field, single_abstract_method};
 pub use kotlin::db::body_types as kotlin_body_types;
 pub use kotlin::db::type_params as kotlin_type_params;
-pub use kotlin::db::{item_ty as kotlin_item_ty, supertypes as kotlin_supertypes};
+pub use kotlin::db::{
+    declaration_types as kotlin_declaration_types, initializer_types as kotlin_initializer_types,
+    item_ty as kotlin_item_ty, supertypes as kotlin_supertypes,
+};
 pub use kotlin::diagnostics::KotlinTypeError;
 pub use kotlin::infer::KotlinResolvedMember;
 pub use kotlin::resolve::KotlinResolver;

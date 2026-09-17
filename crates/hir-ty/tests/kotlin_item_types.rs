@@ -1086,3 +1086,122 @@ fn this_and_super_are_the_enclosing_classifiers() {
         "`super` is its first supertype: {rendered}"
     );
 }
+
+// -- declaration types inferred from the body ---------------------------------
+
+/// The declarations kotlinc 2.4.20 types without a written type, which is what
+/// the inference is asked for: a `val` takes its initializer's type, a function
+/// with an expression body that expression's, and every other declaration
+/// `kotlin.Unit`. `TODO()` is the standard library's and stays unresolved
+/// without a classpath (a recorded gap).
+const INFERRED_TYPES: &str = r#"
+class Holder(val value: Int) {
+    val double = value + value
+    val label: String = "x"
+    fun read() = double
+}
+
+val top = 1
+val written: String = "a"
+fun expression() = "a"
+fun block() { val unused = 1 }
+fun unitReturn(): Unit { }
+
+interface Declared {
+    fun none()
+}
+
+fun <T> lazy(initializer: () -> T): Lazy<T> = TODO()
+
+val delegated by lazy { 1 }
+"#;
+
+/// A declaration without a written type is typed by its body: a property by its
+/// initializer ([KLS
+/// `type-inference.html#local-type-inference`](https://kotlinlang.org/spec/type-inference.html#local-type-inference)),
+/// a function with an *expression* body by that expression, and a property by
+/// nothing less than the rule the compiler documents for delegation
+/// (<https://kotlinlang.org/docs/delegated-properties.html>): `by lazy { 1 }` is
+/// an `Int`, because the standard library's `Lazy<T>` contributes its type
+/// argument.
+///
+/// The two shapes the *block* form covers are the ones the item tree has to
+/// record: `fun block() { val unused = 1 }` is a `Unit` function although its
+/// block's last statement is an expression, and `fun none()` of an interface
+/// writes neither body nor type and is `Unit` all the same — kotlinc types both
+/// `Unit`.
+#[test]
+fn declaration_types_are_inferred_from_the_body() {
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", INFERRED_TYPES)]);
+    let rendered = render_types(&db, file);
+    for expected in [
+        "val double: Int",
+        "val label: String",
+        "val top: Int",
+        "val written: String",
+        // The inferred *member* type is what a read on it resolves to.
+        "fun read: Int",
+        "fun expression: String",
+        "fun block: Unit",
+        "fun unitReturn: Unit",
+        "fun none: Unit",
+        "val delegated: Int",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "expected {expected:?} in:
+{rendered}"
+        );
+    }
+}
+
+/// A declaration that refers to itself — directly, or through a second one — is
+/// the error type rather than a panic: the item-type query reaches the
+/// inference, the inference resolves the name back to the declaration, and the
+/// re-entry is what [`hir_ty`]'s in-flight guard answers `Ty::error` for. Salsa
+/// 0.28.2 panics on an unrecovered dependency cycle, so the case is pinned.
+#[test]
+fn a_self_referential_declaration_is_the_error_type() {
+    let source = "val x = x\nval a = b\nval b = a\n";
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_types(&db, file);
+    for expected in ["val x: <error>", "val a: <error>", "val b: <error>"] {
+        assert!(
+            rendered.contains(expected),
+            "expected {expected:?} in:\n{rendered}"
+        );
+    }
+}
+
+/// A delegate that is not `Lazy` contributes the return type of the `getValue`
+/// operator it declares, with the property's owner as the `thisRef` parameter
+/// (<https://kotlinlang.org/docs/delegated-properties.html>) — the fixture is
+/// the canonical delegate shape, which kotlinc 2.4.20 compiles clean.
+#[test]
+fn a_delegate_contributes_its_getvalue_return_type() {
+    let source = r#"
+import kotlin.reflect.KProperty
+
+class Source {
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): String = "s"
+}
+
+class Holder {
+    val bySource by Source()
+}
+
+fun use(): String = Holder().bySource
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_types(&db, file);
+    assert!(
+        rendered.contains("val bySource: String"),
+        "the delegate's `getValue` return type is the property's: {rendered}"
+    );
+    // The read of it, through the same rule.
+    let bodies = render_bodies(&db, file);
+    assert!(
+        !bodies.contains("kotlin."),
+        "nothing of the fixture is unresolved: {bodies}"
+    );
+}

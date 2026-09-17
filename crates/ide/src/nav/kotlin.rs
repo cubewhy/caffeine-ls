@@ -211,10 +211,9 @@ fn expression_hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
     let bodies = hir::file_body_tree(db, file);
     for (id, _) in ctx.tree.items.iter() {
         let item = hir_expand::ids::ItemId(id);
-        if ctx.tree.data(item).body_id().is_none() {
-            continue;
-        }
-        let types = hir_ty::kotlin_body_types(db, file, item);
+        // A declaration's *initializer* expressions carry types too — a property
+        // writes one in place of a body — so every item is asked.
+        let types = hir_ty::kotlin_declaration_types(db, file, item);
         let innermost = bodies
             .exprs
             .iter()
@@ -475,7 +474,7 @@ fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<
             })
             .collect();
         candidates.sort_by_key(|(len, _)| *len);
-        let types = hir_ty::kotlin_body_types(db, file, item);
+        let types = hir_ty::kotlin_declaration_types(db, file, item);
         let Some(resolved) = candidates
             .into_iter()
             .find_map(|(_, expr)| types.resolved.get(&expr))

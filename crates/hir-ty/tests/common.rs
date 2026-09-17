@@ -482,8 +482,20 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
         // `interface List<out E>` — an interface, hence `ACC_INTERFACE |
         // ACC_ABSTRACT`.
         class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601),
-        // `interface Function1<in P1, out R>`.
+        // `interface Function0<out R>`, `Function1<in P1, out R>`,
+        // `Function2<in P1, in P2, out R>` — the classifiers a function type
+        // `() -> R`, `(P1) -> R`, `(P1, P2) -> R` is.
+        class("kotlin/Function0", Some("kotlin/Any"), &[], 0x0601),
         class("kotlin/Function1", Some("kotlin/Any"), &[], 0x0601),
+        class("kotlin/Function2", Some("kotlin/Any"), &[], 0x0601),
+        // `interface Lazy<out T>`, the classifier a `by lazy { … }` delegate is
+        // ([KLS `declarations.html#delegated-property-declaration`] names the
+        // form; the classifier rule is the compiler's).
+        class("kotlin/Lazy", Some("kotlin/Any"), &[], 0x0601),
+        // `abstract class KProperty<V>` (where `kotlin.reflect`'s whole
+        // hierarchy is collapsed to the one type a delegated property's
+        // `getValue` names).
+        class("kotlin/reflect/KProperty", Some("kotlin/Any"), &[], 0x0421),
         // `abstract class Enum<E>`, the implicit supertype of an `enum class`.
         class("kotlin/Enum", Some("kotlin/Any"), &[], 0x0421),
         // `interface Iterable<out T>` with `iterator()`.

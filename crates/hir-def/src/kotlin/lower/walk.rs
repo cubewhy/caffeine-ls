@@ -421,6 +421,7 @@ fn lower_function(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         defaults: Vec::new(),
         ret: declared_type(ctx, node),
         body: None,
+        expression_body: body::expression_body_form(node),
         ast: ast_id_of::<FunctionDeclNode, _>(ctx.map, node),
     }));
     let annotations = annotations_of(ctx, node);
@@ -550,6 +551,7 @@ fn lower_accessor(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>, is_setter: bo
             .map(|parameter| lower_param(ctx, &parameter))
             .collect(),
         body: None,
+        expression_body: body::expression_body_form(node),
         ast: ast_id_of(ctx.map, node),
     }));
     let annotations = annotations_of(ctx, node);

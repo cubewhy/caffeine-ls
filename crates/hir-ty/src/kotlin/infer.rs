@@ -113,13 +113,45 @@ pub fn infer_item(
     file: FileId,
     item: hir_expand::ids::ItemId,
 ) -> KotlinBodyTypes {
+    infer(db, file, item, Inferred::Body)
+}
+
+/// Infers the *initializer expressions* of the declaration `item` — the `= expr`
+/// a property writes or the `by expr` it delegates to
+/// ([KLS
+/// `declarations.html#property-declaration`](https://kotlinlang.org/spec/declarations.html#property-declaration)):
+/// what a property without a written type is typed by.
+pub fn infer_initializer(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: hir_expand::ids::ItemId,
+) -> KotlinBodyTypes {
+    infer(db, file, item, Inferred::Initializer)
+}
+
+/// What an inference pass walks: a declaration's body, or the initializer
+/// expressions a property declares in its place. A declaration has one or the
+/// other, never both, so each entry point is asked for what exists.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Inferred {
+    Body,
+    Initializer,
+}
+
+fn infer(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: hir_expand::ids::ItemId,
+    inferred: Inferred,
+) -> KotlinBodyTypes {
     let tree = hir::file_item_tree(db, file);
     let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return KotlinBodyTypes::default();
     };
-    let Some(body) = tree.data(item).body_id() else {
+    let body = tree.data(item).body_id();
+    if inferred == Inferred::Body && body.is_none() {
         return KotlinBodyTypes::default();
-    };
+    }
     let bodies = hir::file_body_tree(db, file);
     let scope = match hir::source_set_for_file(db, file) {
         Some(source_set) => hir::ResolutionScope::SourceSet(source_set),
@@ -135,7 +167,7 @@ pub fn infer_item(
         bodies: &bodies,
         resolver,
         types: KotlinBodyTypes {
-            body: Some(body),
+            body,
             ..Default::default()
         },
         // The narrowed types of locals that an `is` test established, keyed by
@@ -145,20 +177,36 @@ pub fn infer_item(
         assigned: rustc_hash::FxHashSet::default(),
         implicit_its: Vec::new(),
     };
-    for &param in &bodies.body(body).params {
-        // A parameter always carries a value: it is a `val`, and the only
-        // writes it accepts are none.
-        ctx.assigned.insert(param);
-        let ty = bodies
-            .local(param)
-            .ty
-            .as_ref()
-            .map(|ty| super::ty::ty_from_type_ref(db, &ctx.resolver, &ty.ty))
-            .unwrap_or_else(|| Ty::error(db));
-        ctx.types.locals.insert(param, ty);
-    }
-    for &stmt in &bodies.body(body).stmts {
-        ctx.infer_stmt(stmt);
+    match inferred {
+        Inferred::Body => {
+            let body = body.expect("a body-carrying declaration");
+            for &param in &bodies.body(body).params {
+                // A parameter always carries a value: it is a `val`, and the only
+                // writes it accepts are none.
+                ctx.assigned.insert(param);
+                let ty = bodies
+                    .local(param)
+                    .ty
+                    .as_ref()
+                    .map(|ty| super::ty::ty_from_type_ref(db, &ctx.resolver, &ty.ty))
+                    .unwrap_or_else(|| Ty::error(db));
+                ctx.types.locals.insert(param, ty);
+            }
+            for &stmt in &bodies.body(body).stmts {
+                ctx.infer_stmt(stmt);
+            }
+        }
+        Inferred::Initializer => {
+            let KotlinItemData::Property(data) = tree.data(item) else {
+                return ctx.types;
+            };
+            if let Some(expr) = data.initializer_expr {
+                ctx.infer_expr(expr);
+            }
+            if let Some(expr) = data.delegate_expr {
+                ctx.infer_expr(expr);
+            }
+        }
     }
     ctx.types
 }
@@ -400,13 +448,19 @@ impl<'a> InferCtx<'a> {
                     // expression position — `java.util.ArrayList` of
                     // `java.util.ArrayList<String>(16)`, and the receiver of
                     // `java.lang.System.currentTimeMillis()`.
-                    if let Some(path) = self.name_path(expr)
-                        && let Some(fqn) = self.resolver.class_fqn(&path)
-                    {
-                        return Ty::reference(self.db, fqn, Vec::new());
+                    match self.name_path(expr) {
+                        Some(path) => match self.resolver.class_fqn(&path) {
+                            Some(fqn) => Ty::reference(self.db, fqn, Vec::new()),
+                            None => {
+                                let receiver = self.infer_expr(target);
+                                self.member_ty(expr, &receiver, &name)
+                            }
+                        },
+                        None => {
+                            let receiver = self.infer_expr(target);
+                            self.member_ty(expr, &receiver, &name)
+                        }
                     }
-                    let receiver = self.infer_expr(target);
-                    self.member_ty(expr, &receiver, &name)
                 }
                 None => self.infer_name(expr, &name),
             },
@@ -437,31 +491,41 @@ impl<'a> InferCtx<'a> {
                 // lambda's own type is unknown until then — and the lambda's
                 // body is inferred against the parameter type the candidate
                 // declares.
-                if let Some(index) = args
+                match args
                     .iter()
                     .position(|arg| matches!(self.bodies.expr(*arg), ExprData::Lambda { params, .. } if params.is_empty()))
                 {
-                    return self.call_with_expected_lambda(expr, receiver.as_ref(), &name, &args, index);
-                }
-                let arg_types: Vec<Ty> = args.iter().map(|arg| self.infer_expr(*arg)).collect();
-                match receiver {
-                    Some(receiver) => {
-                        // A fully qualified *constructor* call: the lowering
-                        // folds the class's simple name into the member name and
-                        // the rest of the path into the receiver, so
-                        // `a.b.C(1)` is a call of `C` on `a.b`. The *path* is
-                        // what resolves to a classifier, and the call is then a
-                        // constructor invocation on it.
-                        if let Some(path) = self.name_path(receiver)
-                            && let Some(fqn) = self.resolver.class_fqn(&format!("{path}.{name}"))
-                        {
-                            let class = Ty::reference(self.db, fqn, Vec::new());
-                            return self.constructor_ty(expr, &class, &name, &arg_types);
-                        }
-                        let receiver_ty = self.infer_expr(receiver);
-                        self.call_ty(expr, &receiver_ty, &name, &arg_types)
+                    Some(index) => {
+                        self.call_with_expected_lambda(expr, receiver.as_ref(), &name, &args, index)
                     }
-                    None => self.call_without_receiver(expr, &name, &arg_types),
+                    None => {
+                        let arg_types: Vec<Ty> =
+                            args.iter().map(|arg| self.infer_expr(*arg)).collect();
+                        match receiver {
+                            Some(receiver) => {
+                                // A fully qualified *constructor* call: the lowering
+                                // folds the class's simple name into the member name and
+                                // the rest of the path into the receiver, so
+                                // `a.b.C(1)` is a call of `C` on `a.b`. The *path* is
+                                // what resolves to a classifier, and the call is then a
+                                // constructor invocation on it.
+                                let qualified = self
+                                    .name_path(receiver)
+                                    .and_then(|path| self.resolver.class_fqn(&format!("{path}.{name}")));
+                                match qualified {
+                                    Some(fqn) => {
+                                        let class = Ty::reference(self.db, fqn, Vec::new());
+                                        self.constructor_ty(expr, &class, &name, &arg_types)
+                                    }
+                                    None => {
+                                        let receiver_ty = self.infer_expr(receiver);
+                                        self.call_ty(expr, &receiver_ty, &name, &arg_types)
+                                    }
+                                }
+                            }
+                            None => self.call_without_receiver(expr, &name, &arg_types),
+                        }
+                    }
                 }
             }
             ExprData::InfixCall {
@@ -886,7 +950,7 @@ impl<'a> InferCtx<'a> {
             .collect();
         match method::pick_callable(self.db, &self.scope, receiver, name, &args, self.site()) {
             Some(member) => {
-                let ty = member.ty(self.db);
+                let ty = member.call_ty(self.db, arg_tys);
                 self.record_member(expr, &member);
                 // A constructor call's type is the class it constructs — the
                 // receiver, with the arguments the call wrote — not the
@@ -1012,9 +1076,16 @@ impl<'a> InferCtx<'a> {
         if it_ty.is_some() {
             self.implicit_its.pop();
         }
+        // The lambda is inferred *against* the parameter's function type, so its
+        // own type is what that position determines — `lazy { 1 }` is a
+        // `Lazy<Int>`, not a `Lazy<T>`.
+        let mut arg_types = arg_types;
+        if let Some(lambda_ty) = self.types.exprs.get(&args[index]).copied() {
+            arg_types[index] = lambda_ty;
+        }
         match candidate {
             Some(member) => {
-                let ty = member.ty(self.db);
+                let ty = member.call_ty(self.db, &arg_types);
                 self.record_member(expr, &member);
                 ty
             }
@@ -1112,7 +1183,7 @@ impl<'a> InferCtx<'a> {
             if let Some(member) =
                 method::pick_callable(self.db, &self.scope, &receiver, name, &args, self.site())
             {
-                let ty = member.ty(self.db);
+                let ty = member.call_ty(self.db, arg_tys);
                 self.record_member(expr, &member);
                 return ty;
             }
@@ -1120,7 +1191,7 @@ impl<'a> InferCtx<'a> {
         if let Some(member) =
             method::top_level_callable(self.db, &self.scope, self.file, name, &args)
         {
-            let ty = member.ty(self.db);
+            let ty = member.call_ty(self.db, arg_tys);
             self.record_member(expr, &member);
             return ty;
         }
@@ -1130,7 +1201,7 @@ impl<'a> InferCtx<'a> {
             && let Some(member) =
                 method::declaration_callable(self.db, &self.scope, file, item, name, &args)
         {
-            let ty = member.ty(self.db);
+            let ty = member.call_ty(self.db, arg_tys);
             self.record_member(expr, &member);
             return ty;
         }

@@ -116,6 +116,89 @@ impl Member {
             MemberTarget::JavaField(field) => field.owner_file,
         }
     }
+
+    /// The type of a *call* to this member with the written argument types: its
+    /// own type with the type parameters the arguments determine substituted
+    /// ([KLS
+    /// `type-inference.html#call-completion`](https://kotlinlang.org/spec/type-inference.html#call-completion)
+    /// infers a call's type arguments, of which this is the positional
+    /// approximation).
+    ///
+    /// It is exact for the shapes a Kotlin signature writes positionally:
+    /// `fun <T> lazy(initializer: () -> T): Lazy<T>` called as `lazy { 1 }` is a
+    /// `Lazy<Int>`, and `fun <T> id(value: T): T` called as `id(1)` an `Int`.
+    /// A parameter whose type variable the *body* determines rather than an
+    /// argument — `fun <T> empty(): List<T>` — stays a type variable, and a
+    /// candidate reached with no arguments keeps its own type.
+    pub fn call_ty(&self, db: &dyn TyDatabase, args: &[Ty]) -> Ty {
+        let binding = argument_binding(db, &self.params, self.vararg, args);
+        if binding.is_empty() {
+            return self.ty(db);
+        }
+        self.ty(db).substitute(db, &binding)
+    }
+}
+
+/// The unification of a candidate's parameter types against a call's argument
+/// types, as a binding of the type variables the arguments determine.
+fn argument_binding(
+    db: &dyn TyDatabase,
+    params: &[Ty],
+    vararg: bool,
+    args: &[Ty],
+) -> rustc_hash::FxHashMap<crate::ty::TypeVarScope, Ty> {
+    let mut binding = rustc_hash::FxHashMap::default();
+    for (index, arg) in args.iter().enumerate() {
+        let param = match params.get(index) {
+            Some(param) => *param,
+            // Every argument past the declared parameters lands on a `vararg`
+            // parameter, whose *element* type is what they are.
+            None if vararg => match params.last() {
+                Some(array) => match array.kind(db) {
+                    TyKind::Array(inner) => **inner,
+                    _ => *array,
+                },
+                None => continue,
+            },
+            None => continue,
+        };
+        unify(db, &param, arg, &mut binding);
+    }
+    binding
+}
+
+/// Unifies a parameter type with an argument type, recording the type variables
+/// of `param` that `arg` determines: a parameter that *is* a type variable binds
+/// directly, and a reference parameter binds the corresponding positions of its
+/// own arguments — which is what a function type's parameter and return positions
+/// are (`(Int) -> T` against `Function1<Int, Int>`).
+fn unify(
+    db: &dyn TyDatabase,
+    param: &Ty,
+    arg: &Ty,
+    binding: &mut rustc_hash::FxHashMap<crate::ty::TypeVarScope, Ty>,
+) {
+    match (param.kind(db), arg.kind(db)) {
+        (TyKind::TypeVar { scope, .. }, TyKind::Flexible { lower, .. }) => {
+            unify(db, param, lower, binding);
+            let _ = scope;
+        }
+        (TyKind::TypeVar { scope, .. }, _) => {
+            // An unresolved argument determines nothing: it is compatible with
+            // every parameter ([`crate::kotlin::subtyping`]), so binding the
+            // variable to it would erase the type the callee declares.
+            if !matches!(arg.kind(db), TyKind::Error) {
+                binding.entry(scope.clone()).or_insert(*arg);
+            }
+        }
+        (TyKind::Reference { args: params, .. }, TyKind::Reference { args: written, .. }) => {
+            for (param, arg) in params.iter().zip(written.iter()) {
+                unify(db, param, arg, binding);
+            }
+        }
+        (TyKind::Array(param), TyKind::Array(arg)) => unify(db, param, arg, binding),
+        _ => {}
+    }
 }
 
 /// Whether a member is a function, a property or a constructor — the kinds a
@@ -361,10 +444,11 @@ fn kotlin_members(
     // that declares one ([KLS
     // `declarations.html#primary-constructor`](https://kotlinlang.org/spec/declarations.html#primary-constructor)),
     // so it is a candidate beside the secondary constructors the body declares.
-    let primary = match tree.data(item) {
-        KotlinItemData::Class(class) => class.primary_constructor,
+    let class = match tree.data(item) {
+        KotlinItemData::Class(class) => Some(class),
         _ => None,
     };
+    let primary = class.and_then(|class| class.primary_constructor);
     for member in tree.data(item).body().iter().copied().chain(primary) {
         let data = tree.data(member);
         let member_name = data.name();
@@ -408,10 +492,10 @@ fn kotlin_members(
                 });
             }
             KotlinItemData::Property(property) if member_name == Some(name) => {
-                let ty = match &property.ty {
-                    Some(ty) => super::ty::ty_from_type_ref(db, resolver, &ty.ty),
-                    None => Ty::error(db),
-                };
+                // A member's own type is its item's, written or *inferred*: a
+                // `val p = 2` has no written type and is typed by its
+                // initializer ([`super::db::item_ty`]).
+                let ty = super::db::item_ty(db, file, member);
                 // A read resolves to the getter, a write to the setter
                 // ([KLS `declarations.html#getters-and-setters`]); a `val` has
                 // no setter, and a `private set` one is not a member of the
@@ -456,6 +540,30 @@ fn kotlin_members(
             }
             _ => {}
         }
+    }
+    // "If a class does not have neither primary, nor secondary constructors, it
+    // is assumed to implicitly have a default parameterless primary
+    // constructor." ([KLS
+    // `declarations.html#constructor-declaration`](https://kotlinlang.org/spec/declarations.html#constructor-declaration))
+    // The constructor has no declaration of its own, so the member's target is
+    // the class it belongs to — which is also the type it constructs.
+    if constructors
+        && let Some(class) = class
+        && class.kind == hir::hir_def::kotlin::item_tree::KotlinClassKind::Class
+        && primary.is_none()
+        && !class
+            .body
+            .iter()
+            .any(|&member| matches!(tree.data(member), KotlinItemData::Constructor(_)))
+    {
+        out.push(Member {
+            target: MemberTarget::Kotlin { file, item },
+            name: name.clone(),
+            kind: MemberKind::Constructor,
+            params: Vec::new(),
+            vararg: false,
+            defaults: 0,
+        });
     }
 }
 

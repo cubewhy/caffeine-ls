@@ -29,7 +29,10 @@ impl LanguageDiagnostics for Kotlin {
             return;
         };
         for (id, _) in tree.items.iter() {
-            let types = hir_ty::kotlin_body_types(db, file_id, hir_expand::ids::ItemId(id));
+            // A declaration's *initializer* expressions are inferred too — a
+            // property writes one in place of a body — so both are walked
+            // ([`hir_ty::kotlin_declaration_types`]).
+            let types = hir_ty::kotlin_declaration_types(db, file_id, hir_expand::ids::ItemId(id));
             for diagnostic in &types.diagnostics {
                 let Some(range) = diagnostic.range() else {
                     continue;

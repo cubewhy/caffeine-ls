@@ -453,6 +453,14 @@ pub struct FunctionData {
     /// declaration without one (`abstract`, an interface member, `expect`,
     /// `external`).
     pub body: Option<BodyId>,
+    /// Whether the body is the *expression* form (`fun f() = expr`) rather than
+    /// a block. A declaration that writes no return type is typed by that
+    /// expression ([KLS
+    /// `declarations.html#function-declaration`](https://kotlinlang.org/spec/declarations.html#function-declaration)),
+    /// while a block-bodied one returns `Unit` whatever its block's last
+    /// expression is — which is why the shape is recorded here and not derived
+    /// from the statements, whose list is a single expression in both forms.
+    pub expression_body: bool,
     /// The `FUNCTION_DECL` syntax node.
     pub ast: FileAstId<FunctionDeclNode>,
 }
@@ -471,6 +479,9 @@ pub struct AccessorData {
     /// The lowered body: the block, the expression body (`get() = …`), or
     /// nothing for a declaration without one.
     pub body: Option<BodyId>,
+    /// Whether the body is the *expression* form (`get() = expr`), as on
+    /// [`FunctionData::expression_body`].
+    pub expression_body: bool,
     /// The `GETTER` or `SETTER` syntax node.
     pub ast: FileAstId<AccessorNode>,
 }
