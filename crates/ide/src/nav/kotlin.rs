@@ -212,13 +212,14 @@ fn expression_hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
     for (id, _) in ctx.tree.items.iter() {
         let item = hir_expand::ids::ItemId(id);
         // A declaration's *initializer* expressions carry types too — a property
-        // writes one in place of a body — so every item is asked.
+        // writes one in place of a body — so every item is asked, and the
+        // candidates are the expressions *of this item* ([`KotlinBodyTypes::exprs`]
+        // is per declaration, while the body arena's ids are the file's).
         let types = hir_ty::kotlin_declaration_types(db, file, item);
-        let innermost = bodies
+        let innermost = types
             .exprs
-            .iter()
-            .filter_map(|(id, _)| {
-                let expr = hir_expand::body::ExprId(id);
+            .keys()
+            .filter_map(|&expr| {
                 let range = bodies.expr_range(expr)?;
                 range.contains(offset).then_some((range.len(), expr))
             })

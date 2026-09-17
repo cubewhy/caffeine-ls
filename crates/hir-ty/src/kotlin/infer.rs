@@ -107,6 +107,22 @@ impl KotlinBodyTypes {
     }
 }
 
+/// The arguments of a call as the member set reads them: each argument's type
+/// with the *name* it was written under, when it writes one
+/// ([`hir_expand::body::ExprData::MethodCall`]).
+fn call_args<'a>(types: &'a [Ty], names: &'a [Option<Name>]) -> Vec<CallArg<'a>> {
+    types
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| CallArg {
+            name: names
+                .get(index)
+                .and_then(|name| name.as_ref().map(Name::as_str)),
+            ty: *ty,
+        })
+        .collect()
+}
+
 /// Infers the body of the declaration `item` in `file`.
 pub fn infer_item(
     db: &dyn TyDatabase,
@@ -185,6 +201,7 @@ fn infer(
     // and a local declaration sees the bindings of the body that declares it.
     ctx.seed_enclosing_parameters();
     ctx.seed_captures();
+    ctx.seed_extension_receiver();
     match inferred {
         Inferred::Body => {
             ctx.infer_body(body.expect("a body-carrying declaration"));
@@ -365,6 +382,24 @@ impl<'a> InferCtx<'a> {
             let name = self.bodies.local(*local).name.clone();
             self.declare(name, Binding::Local(*local, *ty));
         }
+    }
+
+    /// Seeds the *extension receiver* of the declaration being inferred: inside
+    /// `fun Box.doubled()`, `this` is the box and its members are in scope
+    /// unqualified ([KLS
+    /// `expressions.html#this-expressions`](https://kotlinlang.org/spec/expressions.html#this-expressions)
+    /// makes the receiver the implicit `this` of an extension body).
+    fn seed_extension_receiver(&mut self) {
+        let receiver = match self.tree.data(self.item) {
+            KotlinItemData::Function(data) => data.receiver.as_ref(),
+            KotlinItemData::Property(data) => data.receiver.as_ref(),
+            _ => None,
+        };
+        let Some(receiver) = receiver else {
+            return;
+        };
+        let ty = super::ty::ty_from_type_ref(self.db, &self.resolver, &receiver.ty);
+        self.lambda_receivers.push(ty);
     }
 
     /// Seeds the parameters of the enclosing classifier's *primary* constructor:
@@ -758,6 +793,7 @@ impl<'a> InferCtx<'a> {
                 receiver,
                 name,
                 args,
+                arg_names,
                 ..
             } => {
                 // A lambda literal that declares no parameters takes them from
@@ -772,9 +808,14 @@ impl<'a> InferCtx<'a> {
                     .iter()
                     .position(|arg| matches!(self.bodies.expr(*arg), ExprData::Lambda { params, .. } if params.is_empty()))
                 {
-                    Some(index) => {
-                        self.call_with_expected_lambda(expr, receiver.as_ref(), &name, &args, index)
-                    }
+                    Some(index) => self.call_with_expected_lambda(
+                        expr,
+                        receiver.as_ref(),
+                        &name,
+                        &args,
+                        &arg_names,
+                        index,
+                    ),
                     None => {
                         let arg_types: Vec<Ty> =
                             args.iter().map(|arg| self.infer_expr(*arg)).collect();
@@ -792,15 +833,25 @@ impl<'a> InferCtx<'a> {
                                 match qualified {
                                     Some(fqn) => {
                                         let class = Ty::reference(self.db, fqn, Vec::new());
-                                        self.constructor_ty(expr, &class, &name, &arg_types)
+                                        self.constructor_ty(
+                                            expr, &class, &name, &arg_types, &arg_names,
+                                        )
                                     }
                                     None => {
                                         let receiver_ty = self.infer_expr(receiver);
-                                        self.call_ty(expr, &receiver_ty, &name, &arg_types)
+                                        self.call_ty(
+                                            expr,
+                                            &receiver_ty,
+                                            &name,
+                                            &arg_types,
+                                            &arg_names,
+                                        )
                                     }
                                 }
                             }
-                            None => self.call_without_receiver(expr, &name, &arg_types),
+                            None => {
+                                self.call_without_receiver(expr, &name, &arg_types, &arg_names)
+                            }
                         }
                     }
                 }
@@ -812,7 +863,7 @@ impl<'a> InferCtx<'a> {
             } => {
                 let receiver_ty = self.infer_expr(receiver);
                 let arg_ty = self.infer_expr(arg);
-                self.call_ty(expr, &receiver_ty, &name, &[arg_ty])
+                self.call_ty(expr, &receiver_ty, &name, &[arg_ty], &[])
             }
             ExprData::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.infer_expr(lhs);
@@ -1460,9 +1511,14 @@ impl<'a> InferCtx<'a> {
     fn safe_member_ty(&mut self, member: ExprId, receiver: &Ty) -> Ty {
         let ty = match self.bodies.expr(member).clone() {
             ExprData::FieldAccess { name, .. } => self.member_ty(member, receiver, &name),
-            ExprData::MethodCall { name, args, .. } => {
+            ExprData::MethodCall {
+                name,
+                args,
+                arg_names,
+                ..
+            } => {
                 let arg_tys: Vec<Ty> = args.iter().map(|arg| self.infer_expr(*arg)).collect();
-                self.call_ty(member, receiver, &name, &arg_tys)
+                self.call_ty(member, receiver, &name, &arg_tys, &arg_names)
             }
             _ => self.infer_expr(member),
         };
@@ -1489,14 +1545,15 @@ impl<'a> InferCtx<'a> {
     /// The type of a call: the return type of the candidate the arguments
     /// select, or the error type when the receiver's members declare no such
     /// callable — a call kotlinc reports as `unresolved reference`.
-    fn call_ty(&mut self, expr: ExprId, receiver: &Ty, name: &Name, arg_tys: &[Ty]) -> Ty {
-        let args: Vec<CallArg<'_>> = arg_tys
-            .iter()
-            .map(|ty| CallArg {
-                name: None,
-                ty: *ty,
-            })
-            .collect();
+    fn call_ty(
+        &mut self,
+        expr: ExprId,
+        receiver: &Ty,
+        name: &Name,
+        arg_tys: &[Ty],
+        arg_names: &[Option<Name>],
+    ) -> Ty {
+        let args = call_args(arg_tys, arg_names);
         match method::pick_callable(self.db, &self.scope, receiver, name, &args, self.site()) {
             Some(member) => {
                 let ty = member.call_ty(self.db, arg_tys);
@@ -1525,6 +1582,7 @@ impl<'a> InferCtx<'a> {
         receiver: Option<&ExprId>,
         name: &Name,
         args: &[ExprId],
+        arg_names: &[Option<Name>],
         index: usize,
     ) -> Ty {
         // Every argument but the lambda; the lambda's own type is the error
@@ -1541,13 +1599,7 @@ impl<'a> InferCtx<'a> {
                 }
             })
             .collect();
-        let call_args: Vec<CallArg<'_>> = arg_types
-            .iter()
-            .map(|ty| CallArg {
-                name: None,
-                ty: *ty,
-            })
-            .collect();
+        let call_args = call_args(&arg_types, arg_names);
         let candidate = match receiver {
             Some(receiver) => {
                 let receiver_ty = self.infer_expr(*receiver);
@@ -1733,16 +1785,16 @@ impl<'a> InferCtx<'a> {
     ///   whose candidate set is the class's constructors;
     /// * otherwise the callee is a member of an enclosing classifier (innermost
     ///   first) or a top-level declaration of the file.
-    fn call_without_receiver(&mut self, expr: ExprId, name: &Name, arg_tys: &[Ty]) -> Ty {
-        let args: Vec<CallArg<'_>> = arg_tys
-            .iter()
-            .map(|ty| CallArg {
-                name: None,
-                ty: *ty,
-            })
-            .collect();
+    fn call_without_receiver(
+        &mut self,
+        expr: ExprId,
+        name: &Name,
+        arg_tys: &[Ty],
+        arg_names: &[Option<Name>],
+    ) -> Ty {
+        let args = call_args(arg_tys, arg_names);
         if let Some(class) = self.class_receiver(name) {
-            return self.constructor_ty(expr, &class, name, &arg_tys);
+            return self.constructor_ty(expr, &class, name, &arg_tys, arg_names);
         }
         for receiver in self.implicit_receivers() {
             if let Some(member) =
@@ -1796,14 +1848,15 @@ impl<'a> InferCtx<'a> {
     /// The type of a *constructor* call on the classifier type `class` under
     /// the class's own name: the member set of a class type under that name is
     /// its constructors, and the call's type is the class it constructs.
-    fn constructor_ty(&mut self, expr: ExprId, class: &Ty, name: &Name, arg_tys: &[Ty]) -> Ty {
-        let args: Vec<CallArg<'_>> = arg_tys
-            .iter()
-            .map(|ty| CallArg {
-                name: None,
-                ty: *ty,
-            })
-            .collect();
+    fn constructor_ty(
+        &mut self,
+        expr: ExprId,
+        class: &Ty,
+        name: &Name,
+        arg_tys: &[Ty],
+        arg_names: &[Option<Name>],
+    ) -> Ty {
+        let args = call_args(arg_tys, arg_names);
         match method::pick_callable(self.db, &self.scope, class, name, &args, self.site()) {
             Some(member) => {
                 self.record_member(expr, &member);

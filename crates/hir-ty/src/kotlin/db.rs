@@ -359,6 +359,50 @@ pub fn type_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Arc
     kotlin_type_params_query(db, KotlinItemKey::new(db, file_id, item_id))
 }
 
+/// The workspace declarations named `name` of one package, as the *extension*
+/// candidates a receiver's member set looks through: the `Function` and
+/// `Property` symbols whose fully qualified name is `<package>.<name>`.
+///
+/// Tracked per (source set, package, name), so a star import of a package holding
+/// a hundred extensions is scanned once per revision rather than once per call
+/// site — the extension lookup is the one name resolution that has no name to
+/// index by ([KLS
+/// `overload-resolution.html#receivers`](https://kotlinlang.org/spec/overload-resolution.html#receivers)
+/// resolves a call against the extensions *in scope*).
+#[salsa::tracked(returns(clone))]
+pub(crate) fn kotlin_extension_candidates_query<'db>(
+    db: &'db dyn TyDatabase,
+    source_set: hir::SourceSetId,
+    package: Name,
+    name: Name,
+) -> Arc<[(FileId, ItemId)]> {
+    let fqn = Name::new(&format!("{package}.{name}"));
+    let symbols = hir::source_set_fqn_symbols(db, source_set, &package, &fqn);
+    Arc::from(
+        symbols
+            .iter()
+            .filter(|reference| {
+                matches!(
+                    reference.symbol.kind,
+                    hir::SourceSymbolKind::Function | hir::SourceSymbolKind::Property
+                )
+            })
+            .map(|reference| (reference.file, reference.symbol.item))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The extension declarations named `name` in `package`, from the workspace's
+/// source symbol index. See [`kotlin_extension_candidates_query`].
+pub fn extension_candidates(
+    db: &dyn TyDatabase,
+    source_set: hir::SourceSetId,
+    package: &Name,
+    name: &Name,
+) -> Arc<[(FileId, ItemId)]> {
+    kotlin_extension_candidates_query(db, source_set, package.clone(), name.clone())
+}
+
 /// The inferred types of a declaration's body, memoized per `(file, item)`.
 ///
 /// SAFETY: the value holds `Ty` (interned handles) and `KotlinTypeError`s over

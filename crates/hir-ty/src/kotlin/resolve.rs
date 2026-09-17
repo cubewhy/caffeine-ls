@@ -410,6 +410,35 @@ impl<'a> KotlinResolver<'a> {
         None
     }
 
+    /// The packages a *top-level* declaration of this file's scope may live in,
+    /// in KLS's scope order ([KLS
+    /// `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)):
+    /// the file's own package, the package each explicit import names, the
+    /// package each star import names, then the default imports.
+    ///
+    /// The *declaring* package of a top-level declaration is not always the
+    /// import's own path: `import a.b.ext` names the declaration `a.b.ext`,
+    /// whose package is `a.b` — the path without its last segment — which is
+    /// what a candidate fqn is built from.
+    pub fn packages_in_scope(&self) -> Vec<Name> {
+        let mut out = Vec::new();
+        if let Some(package) = &self.tree.package {
+            out.push(package.clone());
+        }
+        for import in &self.tree.imports {
+            let path = import.path.as_str();
+            let package = match import.is_asterisk {
+                true => Some(path.to_owned()),
+                false => path.rsplit_once('.').map(|(package, _)| package.to_owned()),
+            };
+            if let Some(package) = package {
+                out.push(Name::new(&package));
+            }
+        }
+        out.extend(DEFAULT_IMPORTS.iter().map(|package| Name::new(package)));
+        out
+    }
+
     /// The candidate fully qualified names a written name may denote, in scope
     /// order: a dotted name as written, an import binding, the file's own
     /// package, the star imports, then the default imports.

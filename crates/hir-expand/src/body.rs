@@ -508,6 +508,11 @@ pub enum ExprData {
         name: Name,
         type_args: Vec<SpannedTypeRef>,
         args: Vec<ExprId>,
+        /// The name each written argument carries, parallel to `args` — the
+        /// `a` of `f(a = 1)` ([KLS
+        /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+        /// A Java call writes none, so its lowering leaves this empty.
+        arg_names: Vec<Option<Name>>,
     },
     /// A class instance creation `new Type(args)` ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)).
     New {

@@ -160,7 +160,12 @@ pub(super) fn lower_value_arguments(
     owner: ItemId,
     node: &SyntaxNode<Lang>,
 ) -> Vec<ExprId> {
+    // The written *names* are the call's concern ([`ExprData::MethodCall`]);
+    // the supertype and enum-entry argument lists carry values only.
     value_arguments(ctx, owner, node)
+        .into_iter()
+        .map(|(value, _)| value)
+        .collect()
 }
 
 /// Lowers the constructor arguments of an enum entry ([KLS
@@ -174,6 +179,9 @@ pub(super) fn lower_enum_entry_arguments(
         return Vec::new();
     };
     value_arguments(ctx, owner, &arguments)
+        .into_iter()
+        .map(|(value, _)| value)
+        .collect()
 }
 
 /// The `BLOCK`, expression body or nothing at all of a declaration that has a
@@ -1156,17 +1164,21 @@ fn call(
     callee: ExprId,
     suffix: &SyntaxNode<Lang>,
 ) -> ExprData {
-    let args = match suffix
+    let (args, arg_names): (Vec<ExprId>, Vec<Option<Name>>) = match suffix
         .children()
         .find(|child| is(child, K::VALUE_ARGUMENTS))
     {
-        Some(arguments) => value_arguments(ctx, owner, &arguments),
-        // A trailing lambda: the argument is the lambda literal itself.
-        None => suffix
-            .children()
-            .filter(|child| is_expression(child.kind()))
-            .map(|child| expr(ctx, owner, &child))
-            .collect(),
+        Some(arguments) => value_arguments(ctx, owner, &arguments).into_iter().unzip(),
+        // A trailing lambda: the argument is the lambda literal itself, and it
+        // is never named.
+        None => (
+            suffix
+                .children()
+                .filter(|child| is_expression(child.kind()))
+                .map(|child| expr(ctx, owner, &child))
+                .collect(),
+            Vec::new(),
+        ),
     };
     match ctx.bodies.expr(callee).clone() {
         ExprData::FieldAccess { target, name } => ExprData::MethodCall {
@@ -1174,6 +1186,7 @@ fn call(
             name,
             type_args: Vec::new(),
             args,
+            arg_names,
         },
         // `receiver?.member(args)`: the member call happens only when the
         // receiver is not null, so the call lives *inside* the safe access.
@@ -1189,6 +1202,7 @@ fn call(
                     name,
                     type_args: Vec::new(),
                     args,
+                    arg_names,
                 },
                 suffix.text_range(),
             );
@@ -1202,6 +1216,7 @@ fn call(
             name,
             type_args: Vec::new(),
             args,
+            arg_names,
         },
         // A call of a *value* (`f { }` on a function-typed local, `(x)(y)`):
         // Kotlin invokes the value, which is `invoke` on it.
@@ -1210,6 +1225,7 @@ fn call(
             name: Name::new("invoke"),
             type_args: Vec::new(),
             args,
+            arg_names,
         },
     }
 }
@@ -1796,7 +1812,11 @@ fn assign_op(kind: K) -> Option<AssignOp> {
 
 /// The lowered arguments of a `VALUE_ARGUMENTS` node: one expression per
 /// `VALUE_ARGUMENT`, a `*` spread wrapped in [`ExprData::Spread`].
-fn value_arguments(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Vec<ExprId> {
+fn value_arguments(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    node: &SyntaxNode<Lang>,
+) -> Vec<(ExprId, Option<Name>)> {
     node.children()
         .filter(|child| is(child, K::VALUE_ARGUMENT))
         .filter_map(|argument| {
@@ -1804,16 +1824,29 @@ fn value_arguments(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang
                 .children_with_tokens()
                 .filter_map(NodeOrToken::into_token)
                 .any(|token| is_token(&token, K::STAR));
+            // A named argument writes `name = value`
+            // ([spec: grammar-rule-valueArgument]): the name is the argument's
+            // first identifier, and only when an `=` follows it.
+            let name = argument
+                .children_with_tokens()
+                .filter_map(NodeOrToken::into_token)
+                .take_while(|token| !is_token(token, K::EQUAL))
+                .find(|token| is_token(token, K::IDENTIFIER))
+                .map(|token| Name::new(token.text()));
+            let named = argument
+                .children_with_tokens()
+                .filter_map(NodeOrToken::into_token)
+                .any(|token| is_token(&token, K::EQUAL));
             let value = argument
                 .children()
                 .filter(|child| is_expression(child.kind()))
                 .last()?;
             let value = expr(ctx, owner, &value);
-            Some(if spread {
-                alloc_expr(ctx, ExprData::Spread { expr: value }, argument.text_range())
-            } else {
-                value
-            })
+            let value = match spread {
+                true => alloc_expr(ctx, ExprData::Spread { expr: value }, argument.text_range()),
+                false => value,
+            };
+            Some((value, named.then_some(name).flatten()))
         })
         .collect()
 }

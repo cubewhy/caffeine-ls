@@ -127,6 +127,7 @@ impl InferCtx<'_> {
                 name,
                 type_args,
                 args,
+                arg_names: _,
             } => {
                 // §15.12.1/[§15.12.2.2]: explicit type arguments
                 // (`obj.<String>m(...)`) instantiate the method's type

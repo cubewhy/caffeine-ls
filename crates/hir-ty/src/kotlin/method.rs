@@ -35,6 +35,8 @@
 //! members, and every candidate that survives applicability has the *same*
 //! parameter types in the tests that pin them.
 
+use triomphe::Arc;
+
 use hir::hir_def::kotlin::item_tree::{KotlinItemData, KotlinItemTree};
 use hir_expand::name::Name;
 use vfs::FileId;
@@ -70,11 +72,25 @@ pub struct Member {
     pub kind: MemberKind,
     /// The declared parameter types of a function (empty for a property).
     pub params: Vec<Ty>,
+    /// The declared parameter *names*, in parameter order — what a named
+    /// argument is matched against ([KLS
+    /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+    /// Empty for a member whose names the declaration does not carry (a
+    /// classfile method without a `MethodParameters` attribute).
+    pub param_names: Arc<[Name]>,
+    /// One flag per parameter, in parameter order: whether it declares a default
+    /// value, which a call may therefore omit ([KLS
+    /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+    /// All `false` for a classfile member, which records no defaults.
+    pub defaulted: Arc<[bool]>,
     /// Whether the last parameter is a `vararg`.
     pub vararg: bool,
-    /// The number of parameters that declare a default value, counted from the
-    /// end of the parameter list — the arity a call may omit.
-    pub defaults: usize,
+    /// Whether the declaration is an *extension* — written with a receiver
+    /// (`fun String.twice()`) — rather than a member of the receiver's class
+    /// ([KLS
+    /// `overload-resolution.html#receivers`](https://kotlinlang.org/spec/overload-resolution.html#receivers)
+    /// resolves a member first and an extension in scope only after it).
+    pub extension: bool,
 }
 
 impl Member {
@@ -117,6 +133,21 @@ impl Member {
         }
     }
 
+    /// The element type a `vararg` parameter takes its arguments as: the
+    /// parameter's own type, or the element of the array type it compiles to
+    /// ([KLS
+    /// `declarations.html#variable-length-parameters`](https://kotlinlang.org/spec/declarations.html#variable-length-parameters)).
+    fn varargs_element(&self, db: &dyn TyDatabase) -> Option<Ty> {
+        if !self.vararg {
+            return None;
+        }
+        let param = self.params.last().copied()?;
+        Some(match param.kind(db) {
+            TyKind::Array(inner) => **inner,
+            _ => param,
+        })
+    }
+
     /// The type of a *call* to this member with the written argument types: its
     /// own type with the type parameters the arguments determine substituted
     /// ([KLS
@@ -131,7 +162,14 @@ impl Member {
     /// argument — `fun <T> empty(): List<T>` — stays a type variable, and a
     /// candidate reached with no arguments keeps its own type.
     pub fn call_ty(&self, db: &dyn TyDatabase, args: &[Ty]) -> Ty {
-        let binding = argument_binding(db, &self.params, self.vararg, args);
+        let call_args: Vec<CallArg<'_>> = args
+            .iter()
+            .map(|ty| CallArg {
+                name: None,
+                ty: *ty,
+            })
+            .collect();
+        let binding = argument_binding(db, self, &call_args);
         if binding.is_empty() {
             return self.ty(db);
         }
@@ -143,26 +181,24 @@ impl Member {
 /// types, as a binding of the type variables the arguments determine.
 fn argument_binding(
     db: &dyn TyDatabase,
-    params: &[Ty],
-    vararg: bool,
-    args: &[Ty],
+    member: &Member,
+    args: &[CallArg<'_>],
 ) -> rustc_hash::FxHashMap<crate::ty::TypeVarScope, Ty> {
     let mut binding = rustc_hash::FxHashMap::default();
-    for (index, arg) in args.iter().enumerate() {
-        let param = match params.get(index) {
-            Some(param) => *param,
-            // Every argument past the declared parameters lands on a `vararg`
-            // parameter, whose *element* type is what they are.
-            None if vararg => match params.last() {
-                Some(array) => match array.kind(db) {
-                    TyKind::Array(inner) => **inner,
-                    _ => *array,
-                },
+    let Some(landing) = argument_parameters(member, args) else {
+        return binding;
+    };
+    for (arg, index) in args.iter().zip(&landing) {
+        let param = match index {
+            Some(index) => member.params[*index],
+            // An argument past the last parameter is a `vararg`'s, whose
+            // *element* type is what it is.
+            None => match member.varargs_element(db) {
+                Some(element) => element,
                 None => continue,
             },
-            None => continue,
         };
-        unify(db, &param, arg, &mut binding);
+        unify(db, &param, &arg.ty, &mut binding);
     }
     binding
 }
@@ -270,7 +306,150 @@ pub fn member_set(
         &mut out,
         true,
     );
+    // An extension of the same name is a candidate only *after* every declared
+    // member ([`select`] prefers the declared ones, which is KLS's own order).
+    collect_extension_members(db, scope, site, receiver, name, &mut out);
     out
+}
+
+/// The extensions `name` names that are *in scope* for a call written on
+/// `receiver` ([KLS
+/// `overload-resolution.html#receivers`](https://kotlinlang.org/spec/overload-resolution.html#receivers)
+/// resolves a call against the extensions in scope when no member of the same
+/// name applies), in scope order:
+///
+/// 1. the extensions the enclosing classifiers declare, innermost first;
+/// 2. the file's own top-level extensions;
+/// 3. the top-level extensions of every package in scope
+///    ([`KotlinResolver::packages_in_scope`]) — read from the workspace's symbol
+///    index ([`super::db::extension_candidates`]) and confirmed against the
+///    receiver type there.
+///
+/// A declaration that is not an extension is skipped: it is a member, and the
+/// member walk already has it.
+fn collect_extension_members(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    site: CallSite,
+    receiver: &Ty,
+    name: &Name,
+    out: &mut Vec<Member>,
+) {
+    let outer = hir::file_item_tree(db, site.file);
+    let Some(tree) = hir_def::kotlin::plugin::model(&outer) else {
+        return;
+    };
+    // 1. The enclosing classifiers' own extensions, innermost first.
+    let mut current = Some(site.item);
+    while let Some(item) = current {
+        if tree.as_class(item).is_some() {
+            let resolver = KotlinResolver::for_item(db, site.file, tree, item);
+            for &member in tree.data(item).body() {
+                if let Some(extension) = extension_of(
+                    db, scope, site.file, tree, member, name, &resolver, receiver,
+                ) {
+                    out.push(extension);
+                }
+            }
+        }
+        current = tree.parent_of(item);
+    }
+    // 2. The file's own top-level extensions.
+    let resolver = KotlinResolver::for_item(db, site.file, tree, site.item);
+    for &top in &tree.top {
+        if let Some(extension) =
+            extension_of(db, scope, site.file, tree, top, name, &resolver, receiver)
+        {
+            out.push(extension);
+        }
+    }
+    // 3. Another file's: only a *source set* has a symbol index, and only a
+    // source-set receiver can reach one.
+    let hir::ResolutionScope::SourceSet(source_set) = scope else {
+        return;
+    };
+    for package in resolver.packages_in_scope() {
+        for (file, item) in
+            super::db::extension_candidates(db, source_set.clone(), &package, name).iter()
+        {
+            let outer = hir::file_item_tree(db, *file);
+            let Some(tree) = hir_def::kotlin::plugin::model(&outer) else {
+                continue;
+            };
+            let resolver = KotlinResolver::for_item(db, *file, tree, *item);
+            if let Some(extension) =
+                extension_of(db, scope, *file, tree, *item, name, &resolver, receiver)
+            {
+                out.push(extension);
+            }
+        }
+    }
+}
+
+/// The member an *extension* declaration is, when its name is `name` and the
+/// receiver type it declares accepts the receiver the call is written on
+/// ([KLS
+/// `overload-resolution.html#receivers`](https://kotlinlang.org/spec/overload-resolution.html#receivers)):
+/// its parameters are the declared ones — the extension receiver is written
+/// before the `.` of the declaration and is not a call parameter.
+fn extension_of(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    file: FileId,
+    tree: &KotlinItemTree,
+    item: hir_expand::ids::ItemId,
+    name: &Name,
+    resolver: &KotlinResolver<'_>,
+    receiver: &Ty,
+) -> Option<Member> {
+    let data = tree.data(item);
+    if data.name() != Some(name) {
+        return None;
+    }
+    let receiver_ref = match data {
+        KotlinItemData::Function(function) => function.receiver.as_ref(),
+        KotlinItemData::Property(property) => property.receiver.as_ref(),
+        _ => return None,
+    }?;
+    let extended = super::ty::ty_from_type_ref(db, resolver, &receiver_ref.ty);
+    if !super::subtyping::is_assignable(db, scope, receiver, &extended) {
+        return None;
+    }
+    match data {
+        KotlinItemData::Function(function) => Some(kotlin_function_member(
+            db, file, item, name, resolver, function,
+        )),
+        KotlinItemData::Property(property) => {
+            let ty = super::db::item_ty(db, file, item);
+            let declared_setter = property.accessors.iter().any(|&accessor| {
+                matches!(tree.data(accessor), KotlinItemData::Accessor(data) if data.is_setter)
+            });
+            let writes = property.is_var && !declared_setter;
+            Some(Member {
+                target: MemberTarget::Kotlin { file, item },
+                name: name.clone(),
+                kind: match writes {
+                    true => MemberKind::Setter,
+                    false => MemberKind::Getter,
+                },
+                params: match writes {
+                    true => vec![ty],
+                    false => Vec::new(),
+                },
+                param_names: match writes {
+                    true => Arc::from(vec![Name::new("value")]),
+                    false => Arc::from(Vec::new()),
+                },
+                defaulted: match writes {
+                    true => Arc::from(vec![false]),
+                    false => Arc::from(Vec::new()),
+                },
+                vararg: false,
+                extension: true,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// The identity of a receiver's classifier, for the member walk: the canonical
@@ -454,24 +633,9 @@ fn kotlin_members(
         let member_name = data.name();
         match data {
             KotlinItemData::Function(function) if member_name == Some(name) => {
-                out.push(Member {
-                    target: MemberTarget::Kotlin { file, item: member },
-                    name: name.clone(),
-                    kind: MemberKind::Function,
-                    params: function
-                        .params
-                        .iter()
-                        .map(|param| super::ty::ty_from_type_ref(db, resolver, &param.param.ty.ty))
-                        .collect(),
-                    vararg: function
-                        .params
-                        .last()
-                        .is_some_and(|param| param.param.varargs),
-                    // A call may omit the trailing arguments whose parameter
-                    // declares a default ([KLS
-                    // `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
-                    defaults: trailing_defaults(&function.defaults),
-                });
+                out.push(kotlin_function_member(
+                    db, file, member, name, resolver, function,
+                ));
             }
             // `Foo(1)`: the constructors of the class the receiver denotes.
             KotlinItemData::Constructor(constructor) if constructors => {
@@ -484,11 +648,22 @@ fn kotlin_members(
                         .iter()
                         .map(|param| super::ty::ty_from_type_ref(db, resolver, &param.param.ty.ty))
                         .collect(),
+                    param_names: constructor
+                        .params
+                        .iter()
+                        .map(|param| param.param.name.clone())
+                        .collect(),
+                    defaulted: constructor
+                        .defaults
+                        .iter()
+                        .map(|default| default.is_some())
+                        .collect(),
                     vararg: constructor
                         .params
                         .last()
                         .is_some_and(|param| param.param.varargs),
-                    defaults: trailing_defaults(&constructor.defaults),
+                    // A constructor is a member of the class it constructs.
+                    extension: false,
                 });
             }
             KotlinItemData::Property(property) if member_name == Some(name) => {
@@ -516,8 +691,19 @@ fn kotlin_members(
                     } else {
                         Vec::new()
                     },
+                    // A setter's parameter is the property's own `value`; a
+                    // getter takes none.
+                    param_names: if property.is_var && !declared_setter {
+                        Arc::from(vec![Name::new("value")])
+                    } else {
+                        Arc::from(Vec::new())
+                    },
+                    defaulted: match property.is_var && !declared_setter {
+                        true => Arc::from(vec![false]),
+                        false => Arc::from(Vec::new()),
+                    },
                     vararg: false,
-                    defaults: 0,
+                    extension: property.receiver.is_some(),
                 });
             }
             // An enum entry is a *value* of its enum's type, not a classifier
@@ -527,13 +713,13 @@ fn kotlin_members(
             KotlinItemData::EnumEntry(_) if member_name == Some(name) => {
                 out.push(Member {
                     target: MemberTarget::Kotlin { file, item: member },
-                    // The entry's own item type is the enum's, which the class
-                    // the walk started from declares.
                     name: name.clone(),
                     kind: MemberKind::Getter,
                     params: Vec::new(),
+                    param_names: Arc::from(Vec::new()),
+                    defaulted: Arc::from(Vec::new()),
                     vararg: false,
-                    defaults: 0,
+                    extension: false,
                 });
             }
             KotlinItemData::Class(class)
@@ -577,8 +763,10 @@ fn kotlin_members(
             name: name.clone(),
             kind: MemberKind::Constructor,
             params: Vec::new(),
+            param_names: Arc::from(Vec::new()),
+            defaulted: Arc::from(Vec::new()),
             vararg: false,
-            defaults: 0,
+            extension: false,
         });
     }
 }
@@ -654,8 +842,10 @@ fn java_members(
             name: name.clone(),
             kind: MemberKind::Property,
             params: Vec::new(),
+            param_names: Arc::from(Vec::new()),
+            defaulted: Arc::from(Vec::new()),
             vararg: false,
-            defaults: 0,
+            extension: false,
         });
     }
     for method in crate::jvm::member_set::member_set(db, scope, receiver, name.as_str(), ctx) {
@@ -726,11 +916,61 @@ fn member_of_method(
             .iter()
             .map(|param| ty_from_java(db, *param))
             .collect(),
+        // A classfile records no parameter names without a `MethodParameters`
+        // attribute and no default values at all: a Java member answers with the
+        // names it carries and all-`false` defaults.
+        param_names: method
+            .param_names
+            .as_ref()
+            .map(|names| names.iter().map(|name| Name::new(name)).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into(),
+        defaulted: vec![false; method.params.len()].into(),
         vararg: method.varargs,
-        defaults: 0,
         target: MemberTarget::Java(Box::new(method)),
         name,
         kind,
+        // A Java member is never an extension: the static-extension convention
+        // (<https://kotlinlang.org/docs/java-interop.html#static-methods>) is
+        // the *library* half's, which reads the first parameter as the receiver.
+        extension: false,
+    }
+}
+
+/// One Kotlin function declaration as a member, with the parameter names a named
+/// argument is matched against and the defaults a call may omit.
+fn kotlin_function_member(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: hir_expand::ids::ItemId,
+    name: &Name,
+    resolver: &KotlinResolver<'_>,
+    function: &hir::hir_def::kotlin::item_tree::FunctionData,
+) -> Member {
+    Member {
+        target: MemberTarget::Kotlin { file, item },
+        name: name.clone(),
+        kind: MemberKind::Function,
+        params: function
+            .params
+            .iter()
+            .map(|param| super::ty::ty_from_type_ref(db, resolver, &param.param.ty.ty))
+            .collect(),
+        param_names: function
+            .params
+            .iter()
+            .map(|param| param.param.name.clone())
+            .collect(),
+        defaulted: function
+            .defaults
+            .iter()
+            .map(|default| default.is_some())
+            .collect(),
+        vararg: function
+            .params
+            .last()
+            .is_some_and(|param| param.param.varargs),
+        extension: function.receiver.is_some(),
     }
 }
 
@@ -775,18 +1015,6 @@ fn capitalize(name: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
     }
-}
-
-/// The number of trailing parameters of a declaration that declare a default
-/// value ([KLS
-/// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)):
-/// the arity a call may omit.
-fn trailing_defaults(defaults: &[Option<hir_expand::body::ExprId>]) -> usize {
-    defaults
-        .iter()
-        .rev()
-        .take_while(|default| default.is_some())
-        .count()
 }
 
 /// The access-control context of a Kotlin call site, for a *Java* member
@@ -931,21 +1159,7 @@ pub fn declaration_callable(
         return None;
     }
     let resolver = KotlinResolver::for_item(db, file, tree, item);
-    let member = Member {
-        target: MemberTarget::Kotlin { file, item },
-        name: name.clone(),
-        kind: MemberKind::Function,
-        params: function
-            .params
-            .iter()
-            .map(|param| super::ty::ty_from_type_ref(db, &resolver, &param.param.ty.ty))
-            .collect(),
-        vararg: function
-            .params
-            .last()
-            .is_some_and(|param| param.param.varargs),
-        defaults: trailing_defaults(&function.defaults),
-    };
+    let member = kotlin_function_member(db, file, item, name, &resolver, function);
     applies(db, scope, &member, args).then_some(member)
 }
 
@@ -958,13 +1172,27 @@ fn select(
     candidates: Vec<Member>,
     args: &[CallArg<'_>],
 ) -> Option<Member> {
-    let mut applicable: Vec<Member> = candidates
-        .into_iter()
-        .filter(|member| {
-            matches!(member.kind, MemberKind::Function | MemberKind::Constructor)
-                && applies(db, scope, member, args)
-        })
-        .collect();
+    let mut declared = Vec::new();
+    let mut extensions = Vec::new();
+    for member in candidates {
+        if !matches!(member.kind, MemberKind::Function | MemberKind::Constructor)
+            || !applies(db, scope, &member, args)
+        {
+            continue;
+        }
+        // KLS resolves a *member* before an extension of the same name
+        // ([`overload-resolution.html#receivers`](https://kotlinlang.org/spec/overload-resolution.html#receivers)),
+        // so the two sets are selected separately and the extensions are only
+        // reached when no member applies.
+        match member.extension {
+            true => extensions.push(member),
+            false => declared.push(member),
+        }
+    }
+    let mut applicable = match declared.is_empty() {
+        true => extensions,
+        false => declared,
+    };
     if applicable.is_empty() {
         return None;
     }
@@ -996,25 +1224,80 @@ fn applies(
     member: &Member,
     args: &[CallArg<'_>],
 ) -> bool {
-    let required = member.params.len().saturating_sub(member.defaults);
-    if member.vararg {
-        if args.len() < required.saturating_sub(1) {
+    let Some(landing) = argument_parameters(member, args) else {
+        // A written name that matches no parameter: the candidate does not
+        // apply ([KLS
+        // `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+        return false;
+    };
+    let mut filled = vec![false; member.params.len()];
+    for (arg, index) in args.iter().zip(&landing) {
+        let Some(index) = *index else {
+            // Past the last parameter: only a `vararg` absorbs it, as its
+            // element type — which the classfile cannot tell apart from the
+            // array type it compiles to, so the array type is accepted too.
+            let Some(param) = member.varargs_element(db) else {
+                return false;
+            };
+            if !crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &param) {
+                return false;
+            }
+            continue;
+        };
+        if filled[index] {
+            // The same parameter twice: a named argument a positional one
+            // already took, or a name written twice.
             return false;
         }
-    } else if args.len() < required || args.len() > member.params.len() {
-        return false;
+        filled[index] = true;
+        if !crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &member.params[index]) {
+            return false;
+        }
     }
-    let _ = (db, scope);
-    // Positional arguments are checked against the parameters in order; a
-    // `vararg` parameter takes the remaining ones as its element type, which
-    // the classfile cannot tell apart from the array type it compiles to — so
-    // an element of the array type is accepted there.
-    args.iter()
-        .enumerate()
-        .all(|(index, arg)| match member.params.get(index) {
-            Some(param) => crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, param),
-            None => member.vararg,
-        })
+    // Every parameter the call leaves unfilled must declare a default
+    // ([KLS
+    // `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters));
+    // a `vararg` may be empty.
+    let last = member.params.len().saturating_sub(1);
+    filled.iter().enumerate().all(|(index, filled)| {
+        *filled
+            || member.defaulted.get(index).copied().unwrap_or(false)
+            || (member.vararg && index == last)
+    })
+}
+
+/// Which parameter each written argument lands on: by *name* when it writes one,
+/// and by position otherwise, from the first parameter no earlier argument took
+/// ([KLS
+/// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+///
+/// `None` for the whole call when a written name matches no parameter; `None` for
+/// one argument when it lands past the last parameter, which only a `vararg`
+/// accepts.
+fn argument_parameters(member: &Member, args: &[CallArg<'_>]) -> Option<Vec<Option<usize>>> {
+    let mut filled = vec![false; member.params.len()];
+    let mut landing = Vec::with_capacity(args.len());
+    for arg in args {
+        let index = match arg.name {
+            Some(written) => match member
+                .param_names
+                .iter()
+                .position(|name| name.as_str() == written)
+            {
+                Some(index) => Some(index),
+                None => return None,
+            },
+            None => filled.iter().position(|filled| !*filled),
+        };
+        match index {
+            Some(index) if index < member.params.len() => {
+                filled[index] = true;
+                landing.push(Some(index));
+            }
+            _ => landing.push(None),
+        }
+    }
+    Some(landing)
 }
 
 /// The canonical name of a reference type, for a classpath lookup.

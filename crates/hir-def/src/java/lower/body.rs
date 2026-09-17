@@ -1444,6 +1444,7 @@ fn method_call(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
             name,
             type_args,
             args,
+            arg_names: Vec::new(),
         };
     }
 
@@ -1460,6 +1461,7 @@ fn method_call(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
                     name,
                     type_args,
                     args,
+                    arg_names: Vec::new(),
                 };
             }
             ExprData::This { .. } => {
@@ -1487,6 +1489,7 @@ fn method_call(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
         name: missing_name(),
         type_args,
         args,
+        arg_names: Vec::new(),
     }
 }
 

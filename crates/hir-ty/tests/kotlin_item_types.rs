@@ -1391,3 +1391,134 @@ fun probe(): Int {
         "a `return` of the wrong type is reported: {rendered}"
     );
 }
+
+// -- extension members and named arguments ------------------------------------
+
+/// A top-level extension is resolved on a receiver of the type it extends as
+/// long as no *member* of that name applies, a member wins where both exist
+/// ([KLS
+/// `overload-resolution.html#receivers`](https://kotlinlang.org/spec/overload-resolution.html#receivers)),
+/// and a *member extension* — one a class declares — is in scope inside it.
+///
+/// kotlinc 2.4.20 reports exactly the two `initializer type mismatch` errors the
+/// fixture writes deliberately — `expected 'String', actual 'Int'.` for `doubled`
+/// and `withOffset` — which is what proves the extensions resolved, since a call
+/// that resolves to nothing is the error type and no check reports it.
+#[test]
+fn a_source_extension_resolves_on_its_receiver() {
+    let source = r#"
+class Box(val value: Int) {
+    fun describe(): String = "member"
+
+    fun own(): Int = doubled()
+
+    fun withOffset(): Int = offBy(1)
+
+    fun Box.offBy(offset: Int): Int = value + offset
+}
+
+fun Box.doubled(): Int = value * 2
+
+fun Box.describe(): Int = 1
+
+fun probe() {
+    val member: String = Box(1).describe()
+    val own: Int = Box(4).own()
+    val wrong: String = Box(2).doubled()
+    val wrong2: String = Box(4).withOffset()
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    let mismatches = rendered
+        .lines()
+        .filter(|line| line.contains("kotlin.type-mismatch"))
+        .count();
+    assert_eq!(
+        mismatches, 2,
+        "the member's `String describe` is chosen over the extension's `Int`, and both extensions resolve: {rendered}"
+    );
+}
+
+/// An extension another *file* declares is in scope through the file's own
+/// package, a star import and an explicit import — the three ways a top-level
+/// declaration of the workspace is reached ([KLS
+/// `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)).
+#[test]
+fn an_extension_another_file_declares_is_in_scope() {
+    const DECLARATION: &str = r#"
+package p
+
+class Box(val value: Int)
+
+fun Box.doubled(): Int = value * 2
+"#;
+    let cases = [
+        // The file's own package.
+        (
+            "/src/main/kotlin/p/SamePackage.kt",
+            "\npackage p\n\nfun probe(): Int = Box(2).doubled()\n",
+        ),
+        // A star import.
+        (
+            "/src/main/kotlin/q/Star.kt",
+            "\npackage q\n\nimport p.*\n\nfun probe(): Int = Box(2).doubled()\n",
+        ),
+        // An explicit import of the extension itself.
+        (
+            "/src/main/kotlin/q/Explicit.kt",
+            "\npackage q\n\nimport p.Box\nimport p.doubled\n\nfun probe(): Int = Box(2).doubled()\n",
+        ),
+    ];
+    for (path, use_site) in cases {
+        let (db, file) = kotlin_fixture(&[
+            ("/src/main/kotlin/p/Declaration.kt", DECLARATION),
+            (path, use_site),
+        ]);
+        // File 1 is the declaration, file 2 the call site.
+        let rendered = render_bodies(&db, FileId::from_raw(2));
+        assert!(
+            !rendered.contains("kotlin."),
+            "{path} resolves the extension: {rendered}"
+        );
+    }
+}
+
+/// Named arguments and default values decide applicability ([KLS
+/// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)):
+/// each written name lands on its parameter, an omitted one must declare a
+/// default, and a call that names nothing it can fill is not applicable.
+///
+/// The oracle is the declared type of each read: a call that resolves to the
+/// `Int`-returning `describe` is a mismatch against a `String`, and one that
+/// resolves to nothing is the error type, which no check reports — so the count
+/// of mismatches is the count of calls that resolved.
+#[test]
+fn named_arguments_land_on_their_parameters() {
+    let source = r#"
+class Holder(val value: Int)
+
+fun describe(a: Int, b: String = ""): Int = a
+
+fun probe() {
+    val byName: String = describe(a = 1)
+    val reordered: String = describe(b = "x", a = 1)
+    val omitted: String = describe(2)
+    val supplied: String = describe(2, "x")
+    val constructed: String = Holder(value = 3)
+    val tooMany: String = describe(1, "x", 2)
+    val unknownName: String = describe(c = 1)
+    val twice: String = describe(a = 1, a = 2)
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    let mismatches = rendered
+        .lines()
+        .filter(|line| line.contains("kotlin.type-mismatch"))
+        .count();
+    assert_eq!(
+        mismatches, 5,
+        "the four `describe` calls that resolve by name, position or default and the named constructor do: {rendered}"
+    );
+}

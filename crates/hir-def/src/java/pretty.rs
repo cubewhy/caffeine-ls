@@ -820,6 +820,7 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
             name,
             args,
             type_args: _,
+            arg_names: _,
         } => out.push_str(&format!(
             "{id}: call {}{name}({})",
             receiver.map(|e| format!("{e}.")).unwrap_or_default(),
