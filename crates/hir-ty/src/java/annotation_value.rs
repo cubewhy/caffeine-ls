@@ -764,8 +764,7 @@ fn library_int(value: &ClassfileValue<hir::Symbol>) -> Option<i64> {
         PrimitiveValue::Long(_)
         | PrimitiveValue::Float(_)
         | PrimitiveValue::Double(_)
-        | PrimitiveValue::Boolean(_)
-        | PrimitiveValue::Void => None,
+        | PrimitiveValue::Boolean(_) => None,
     }
 }
 

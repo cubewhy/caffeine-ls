@@ -94,6 +94,12 @@ pub struct AnnotationSig<N> {
     pub arguments: Vec<(N, AnnotationValue<N>)>,
 }
 
+/// A primitive constant value ([JVMS §4.4]): the kind the classfile records
+/// for a `ConstantValue` attribute or an annotation's `element_value`.
+///
+/// `void` is absent — it is not a primitive ([JLS §4.2]), no constant of it
+/// exists, and an annotation interface element's return type may not be it
+/// ([§9.6.1]).
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
 pub enum PrimitiveValue {
     Int(i32),
@@ -104,7 +110,6 @@ pub enum PrimitiveValue {
     Byte(i8),
     Char(u16),
     Short(i16),
-    Void,
 }
 
 impl PrimitiveValue {
