@@ -429,6 +429,10 @@ impl<'a> InferCtx<'a> {
     /// `declarations.html#constructor-declaration-scopes`](https://kotlinlang.org/spec/declarations.html#constructor-declaration-scopes)),
     /// which are bodies of their own and would otherwise not see them.
     fn seed_enclosing_parameters(&mut self) {
+        // A property *setter* without a written parameter has the implicit
+        // `value`, whose type is the property's ([KLS
+        // `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)
+        // gives the accessor forms; the parameter is the compiler's).
         let Some(item) = self.tree.parent_of(self.item) else {
             return;
         };
@@ -458,13 +462,18 @@ impl<'a> InferCtx<'a> {
                 // A parameter always carries a value: it is a `val`, and the only
                 // writes it accepts are none.
                 ctx.assigned.insert(param);
-                let ty = ctx
-                    .bodies
-                    .local(param)
-                    .ty
-                    .as_ref()
-                    .map(|ty| super::ty::ty_from_type_ref(ctx.db, &ctx.resolver, &ty.ty))
-                    .unwrap_or_else(|| Ty::error(ctx.db));
+                // A *setter* parameter may be written without a type: its type
+                // is the property's ([KLS
+                // `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)
+                // gives the accessor forms; the parameter's type is the
+                // property's by construction).
+                let ty = match ctx.bodies.local(param).ty.as_ref() {
+                    Some(ty) => super::ty::ty_from_type_ref(ctx.db, &ctx.resolver, &ty.ty),
+                    None => ctx
+                        .accessor_setter_property()
+                        .map(|property| super::db::item_ty(ctx.db, ctx.file, property))
+                        .unwrap_or_else(|| Ty::error(ctx.db)),
+                };
                 ctx.declare(
                     ctx.bodies.local(param).name.clone(),
                     Binding::Local(param, ty),
@@ -1503,6 +1512,17 @@ impl<'a> InferCtx<'a> {
             }
             return binding.ty();
         }
+        // `field` — the *backing field* of the property whose accessor this
+        // body is ([KLS
+        // `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)
+        // gives the accessor forms; the backing field is the compiler's). Only
+        // an accessor can name it, and its type is the property's, which is
+        // what makes `set(value) { field = value.trim() }` type.
+        if name.as_str() == "field"
+            && let Some(property) = self.enclosing_accessor_property()
+        {
+            return super::db::item_ty(self.db, self.file, property);
+        }
         // A member of an enclosing classifier, without a written receiver —
         // the innermost first ([KLS
         // `type-inference.html#call-without-an-explicit-receiver`](https://kotlinlang.org/spec/type-inference.html#call-without-an-explicit-receiver)).
@@ -1590,6 +1610,40 @@ impl<'a> InferCtx<'a> {
             method::MemberTarget::Builtin { .. } => return,
         };
         self.types.resolved.insert(expr, resolved);
+    }
+
+    /// The property a *setter* accessor's body writes, when the body being
+    /// inferred is one: the type of the parameter the setter may leave untyped.
+    fn accessor_setter_property(&self) -> Option<hir_expand::ids::ItemId> {
+        match self.tree.data(self.item) {
+            KotlinItemData::Accessor(data) if data.is_setter => self.enclosing_accessor_property(),
+            _ => None,
+        }
+    }
+
+    /// The property whose accessor declares the body being inferred, when that
+    /// is what the body belongs to: what `field` names inside it.
+    fn enclosing_accessor_property(&self) -> Option<hir_expand::ids::ItemId> {
+        let mut accessor = false;
+        let mut current = self.item;
+        loop {
+            match self.tree.data(current) {
+                hir_def::kotlin::item_tree::KotlinItemData::Accessor(_) => accessor = true,
+                // The declaration the accessor belongs to: its own item, when
+                // the body *is* the accessor's, or the enclosing property a
+                // property-body's accessor list holds it in.
+                hir_def::kotlin::item_tree::KotlinItemData::Property(data)
+                    if data.accessors.contains(&self.item) =>
+                {
+                    return Some(current);
+                }
+                hir_def::kotlin::item_tree::KotlinItemData::Property(_) if accessor => {
+                    return Some(current);
+                }
+                _ => {}
+            }
+            current = self.tree.parent_of(current)?;
+        }
     }
 
     /// The call site every member lookup is attributed to.

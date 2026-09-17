@@ -1814,3 +1814,34 @@ class Holder {
         "`Double.toInt()` is a member the language declares, and is `Int`"
     );
 }
+
+/// The `field` of a property's accessor is its *backing field*, and its type is
+/// the property's; a setter's untyped `value` parameter is that type too. Both
+/// are compiler-made declarations no classfile carries, so a `set(value) { field
+/// = value }` pair is where a model that reads only written types breaks.
+#[test]
+fn a_property_accessor_writes_its_own_backing_field() {
+    let source = r#"
+class Holder {
+    var text: String = ""
+        set(value) {
+            field = value
+        }
+        get() = field
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let bodies = render_bodies(&db, file);
+    assert!(
+        !bodies.contains("<error>") && !bodies.contains("kotlin."),
+        "`field` and `value` are the property's own type in both accessors: {bodies}"
+    );
+    assert_eq!(
+        bodies
+            .lines()
+            .filter(|line| line.ends_with(": String"))
+            .count(),
+        3,
+        "the field read, the field write and the setter's value are `String`: {bodies}"
+    );
+}
