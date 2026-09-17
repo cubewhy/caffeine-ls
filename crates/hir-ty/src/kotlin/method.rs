@@ -233,6 +233,19 @@ fn unify(
             }
         }
         (TyKind::Array(param), TyKind::Array(arg)) => unify(db, param, arg, binding),
+        // A source-written `Array<T>` is the classifier the JVM spells `T[]`
+        // (<https://kotlinlang.org/docs/java-interop.html#mapped-types>): the two
+        // are one type, and either side stands for the other.
+        (TyKind::Array(param), TyKind::Reference { args, .. }) => {
+            if let Some(arg) = args.first() {
+                unify(db, param, arg, binding);
+            }
+        }
+        (TyKind::Reference { args, .. }, TyKind::Array(arg)) => {
+            if let Some(param) = args.first() {
+                unify(db, param, arg, binding);
+            }
+        }
         _ => {}
     }
 }
@@ -291,6 +304,27 @@ pub fn member_set(
     name: &Name,
     site: CallSite,
 ) -> Vec<Member> {
+    let mut out = declared_members(db, scope, receiver, name, site);
+    // An extension of the same name is a candidate only *after* every declared
+    // member ([`select`] prefers the declared ones, which is KLS's own order) —
+    // and only when the receiver's own classes declare none of that name, or the
+    // caller says the declared ones do not apply ([`pick_callable`]).
+    if out.is_empty() {
+        collect_extension_members(db, scope, site, receiver, name, &mut out);
+    }
+    out
+}
+
+/// The members the receiver's own classes declare under `name`, inherited
+/// members included — everything [`member_set`] answers without the extension
+/// scopes, which are a scan of the classpath and the workspace.
+pub fn declared_members(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    name: &Name,
+    site: CallSite,
+) -> Vec<Member> {
     let ctx = access_context_for_kotlin(db, site.file, site.item);
     let mut out = Vec::new();
     let mut seen = rustc_hash::FxHashSet::default();
@@ -306,8 +340,20 @@ pub fn member_set(
         &mut out,
         true,
     );
-    // An extension of the same name is a candidate only *after* every declared
-    // member ([`select`] prefers the declared ones, which is KLS's own order).
+    out
+}
+
+/// The *extensions* `name` names that are in scope for the receiver — the
+/// scanned half of [`member_set`], asked for only when the declared members do
+/// not answer.
+pub fn extension_members(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    name: &Name,
+    site: CallSite,
+) -> Vec<Member> {
+    let mut out = Vec::new();
     collect_extension_members(db, scope, site, receiver, name, &mut out);
     out
 }
@@ -354,7 +400,12 @@ fn collect_extension_members(
         }
         current = tree.parent_of(item);
     }
-    // 2. The file's own top-level extensions.
+    // 2. The library's extensions: the classpath's facades carry them as static
+    //    members whose first parameter is the receiver.
+    if std::env::var_os("CAFFEINE_KT_NO_LIBRARY_EXT").is_none() {
+        library_extension_members(db, scope, site.file, receiver, name, out);
+    }
+    // 3. The file's own top-level extensions.
     let resolver = KotlinResolver::for_item(db, site.file, tree, site.item);
     for &top in &tree.top {
         if let Some(extension) =
@@ -363,7 +414,7 @@ fn collect_extension_members(
             out.push(extension);
         }
     }
-    // 3. Another file's: only a *source set* has a symbol index, and only a
+    // 4. Another file's: only a *source set* has a symbol index, and only a
     // source-set receiver can reach one.
     let hir::ResolutionScope::SourceSet(source_set) = scope else {
         return;
@@ -1077,6 +1128,237 @@ pub fn access_context_for_kotlin(
     }
 }
 
+/// The callable a call written *without a receiver* selects among the library's
+/// top-level declarations ([KLS
+/// `type-inference.html#call-without-an-explicit-receiver`](https://kotlinlang.org/spec/type-inference.html#call-without-an-explicit-receiver)):
+/// a Kotlin library compiles a file's top-level callables into the `<File>Kt`
+/// facade class of its package
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>), so
+/// the candidates are those facades' *static members* named `name` — a static
+/// field or a static getter being the property form, exactly as a Java static
+/// member is.
+///
+/// The packages searched are the ones in scope
+/// ([`KotlinResolver::packages_in_scope`]), in their order, and the facades of a
+/// package are memoized ([`super::db::facade_classes`]).
+pub fn library_top_level_callable(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    file: FileId,
+    name: &Name,
+    args: &[CallArg<'_>],
+) -> Option<Member> {
+    let tree = hir::file_item_tree(db, file);
+    let tree = hir_def::kotlin::plugin::model(&tree)?;
+    // The resolver only needs an item for the *declaring* context of the names
+    // it resolves; a file-level package list is the same for every item of the
+    // file, and the file's first item is one.
+    let Some(&item) = tree.top.first() else {
+        return None;
+    };
+    let resolver = KotlinResolver::for_item(db, file, tree, item);
+    let mut out = Vec::new();
+    for package in resolver.packages_in_scope() {
+        facade_members(db, scope, &package, name, &mut out);
+    }
+    select(db, scope, out, args)
+}
+
+/// The members `name` names on the facade classes of one package, as *members of
+/// the facade class* — the Kotlin form of a top-level declaration of that
+/// package. Memoized per (scope, package, name) by the query.
+fn facade_members(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    package: &Name,
+    name: &Name,
+    out: &mut Vec<Member>,
+) {
+    for facade in facades_declaring(db, scope, package, name) {
+        let fqn = facade.fqn(db).as_name().clone();
+        let ty = Ty::reference(db, fqn, Vec::new());
+        out.extend(facade_class_members(db, scope, &ty, name));
+    }
+}
+
+/// The facades of `package` that declare a static member named `name`, or an
+/// accessor a Kotlin *property* read stands for (`getFoo`/`isFoo` for `foo`)
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+///
+/// The package's facades are dozens of classes and a file asks for hundreds of
+/// names, so the *names* they declare are indexed once
+/// ([`super::db::facade_name_index`]) and a lookup reads the one or two that
+/// could answer.
+fn facades_declaring(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    package: &Name,
+    name: &Name,
+) -> Vec<hir::Resolved> {
+    let index = super::db::facade_name_index(db, scope, package);
+    let mut out = Vec::new();
+    for candidate in std::iter::once(name.as_str().to_owned()).chain(property_getters(name)) {
+        if let Some(facades) = index.get(&Name::new(&candidate)) {
+            for facade in facades {
+                if !out.contains(facade) {
+                    out.push(facade.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The members `name` names on one facade class, in the Kotlin shapes a
+/// top-level declaration has: a static method is a *function*, a static getter
+/// its property, and a static field a property of its own name.
+pub(crate) fn facade_class_members(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    facade: &Ty,
+    name: &Name,
+) -> Vec<Member> {
+    // Kotlin draws no static/instance distinction at a class receiver, and the
+    // facade is reached by its *class*, so the mode that filters nothing is the
+    // one a Kotlin access site has.
+    let ctx = InvocationContext {
+        mode: InvocationMode::TypeQualified,
+        enclosing_class: None,
+        package: None,
+        subclass_of: None,
+    };
+    let mut out = Vec::new();
+    for accessor in property_getters(name) {
+        for method in
+            crate::jvm::member_set::member_set_ignoring_access(db, scope, facade, &accessor, &ctx)
+        {
+            if !method.is_static {
+                continue;
+            }
+            let mut member = member_of_method(db, name.clone(), MemberKind::Getter, method);
+            member.params = Vec::new();
+            out.push(member);
+        }
+    }
+    if let Some(field) =
+        crate::jvm::member_set::pick_field_ignoring_access(db, scope, facade, name.as_str(), &ctx)
+    {
+        out.push(Member {
+            target: MemberTarget::JavaField(Box::new(field)),
+            name: name.clone(),
+            kind: MemberKind::Property,
+            params: Vec::new(),
+            param_names: Arc::from(Vec::new()),
+            defaulted: Arc::from(Vec::new()),
+            vararg: false,
+            extension: false,
+        });
+    }
+    for method in
+        crate::jvm::member_set::member_set_ignoring_access(db, scope, facade, name.as_str(), &ctx)
+    {
+        if !method.is_static {
+            continue;
+        }
+        out.push(member_of_method(
+            db,
+            name.clone(),
+            MemberKind::Function,
+            method.clone(),
+        ));
+    }
+    out
+}
+
+/// The *extension* members a library declares for `name` and a receiver
+/// (`"a".isBlank()`): the Kotlin compiler compiles `fun String.isBlank()` into a
+/// static method of the file's facade whose **first parameter is the receiver**
+/// (<https://kotlinlang.org/docs/java-interop.html#static-methods>), and a
+/// static `getFoo(first)` is the extension-property form.
+///
+/// The first parameter is *not* a call parameter: it is the receiver the call is
+/// written on, so the member's `params` are the declared parameters after it.
+pub fn library_extension_members(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    file: FileId,
+    receiver: &Ty,
+    name: &Name,
+    out: &mut Vec<Member>,
+) {
+    let tree = hir::file_item_tree(db, file);
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
+        return;
+    };
+    let Some(&item) = tree.top.first() else {
+        return;
+    };
+    let resolver = KotlinResolver::for_item(db, file, tree, item);
+    for package in resolver.packages_in_scope() {
+        for facade in facades_declaring(db, scope, &package, name) {
+            let fqn = facade.fqn(db).as_name().clone();
+            let ty = Ty::reference(db, fqn, Vec::new());
+            for member in facade_class_members(db, scope, &ty, name) {
+                if let Some(member) = as_extension(db, scope, receiver, member) {
+                    out.push(member);
+                }
+            }
+        }
+    }
+}
+
+/// The extension form of a facade member: one whose **first parameter** accepts
+/// the receiver becomes an extension whose own parameters are the rest
+/// (<https://kotlinlang.org/docs/java-interop.html#static-methods>). `None` for
+/// a member whose first parameter the receiver does not satisfy — it is a
+/// top-level declaration, not an extension of this receiver.
+fn as_extension(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    member: Member,
+) -> Option<Member> {
+    let first = *member.params.first()?;
+    // The declared receiver type is a *parameter* for the purposes of the
+    // declaration's type parameters: `fun <T> Array<T>.forEach(action: (T) -> Unit)`
+    // compiles to `forEach(T[] array, Function1<? super T, Unit>)`, and the
+    // receiver's element type is what `T` is — the positional unification the
+    // call's own type arguments are bound by ([`Member::call_ty`]), applied to
+    // the receiver position.
+    let mut binding = rustc_hash::FxHashMap::default();
+    unify(db, &first, receiver, &mut binding);
+    let first = first.substitute(db, &binding);
+    // The unification *is* the check when it determined anything: the receiver
+    // position was a type variable (`T`, `Array<T>`), and what it stands for is
+    // what the receiver satisfies. Otherwise the position is a concrete class
+    // and the receiver has to be assignable to it.
+    if binding.is_empty() && !super::subtyping::is_assignable(db, scope, receiver, &first) {
+        return None;
+    }
+    let mut member = member;
+    member.params = member
+        .params
+        .iter()
+        .skip(1)
+        .map(|param| param.substitute(db, &binding))
+        .collect();
+    if !member.param_names.is_empty() {
+        let names: Vec<Name> = member.param_names.iter().skip(1).cloned().collect();
+        member.param_names = names.into();
+    }
+    if !member.defaulted.is_empty() {
+        let defaults: Vec<bool> = member.defaulted.iter().skip(1).copied().collect();
+        member.defaulted = defaults.into();
+    }
+    // The *return* type carries the same binding — `T` is the element type, not
+    // a type variable — which the member's own type is read from.
+    if let MemberTarget::Java(method) = &mut member.target {
+        method.ret = method.ret.substitute(db, &binding);
+    }
+    member.extension = true;
+    Some(member)
+}
+
 /// The callable a Kotlin *operator convention* resolves to on `receiver`
 /// ([KLS
 /// `operator-overloading.html`](https://kotlinlang.org/spec/operator-overloading.html)
@@ -1111,8 +1393,16 @@ pub fn pick_callable(
     args: &[CallArg<'_>],
     site: CallSite,
 ) -> Option<Member> {
-    let candidates = member_set(db, scope, receiver, name, site);
-    select(db, scope, candidates, args)
+    // The declared members are tried first — a member beats an extension of the
+    // same name ([KLS
+    // `overload-resolution.html#receivers`](https://kotlinlang.org/spec/overload-resolution.html#receivers))
+    // — and the extension scopes are scanned only when none of them applies.
+    let declared = declared_members(db, scope, receiver, name, site);
+    if let Some(member) = select(db, scope, declared, args) {
+        return Some(member);
+    }
+    let extensions = extension_members(db, scope, receiver, name, site);
+    select(db, scope, extensions, args)
 }
 
 /// The callable a call `name(args)` selects among the file's *top-level*

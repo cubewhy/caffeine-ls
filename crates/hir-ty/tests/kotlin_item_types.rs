@@ -1522,3 +1522,145 @@ fun probe() {
         "the four `describe` calls that resolve by name, position or default and the named constructor do: {rendered}"
     );
 }
+
+// -- library top-level declarations and extensions ----------------------------
+
+/// One facade class of the fixture's library: the class a Kotlin library's
+/// compiler emits for a file's top-level declarations.
+fn facade(
+    fqn: &'static str,
+    methods: &'static [(&'static str, &'static str)],
+    method_sigs: &'static [&'static str],
+    method_access: &'static [u16],
+) -> ClassSpec<'static> {
+    ClassSpec {
+        fqn,
+        super_class: Some("java/lang/Object"),
+        interfaces: &[],
+        access: 0x0031,
+        fields: &[],
+        field_access: &[],
+        methods,
+        method_sigs,
+        method_access,
+        sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
+        method_defaults: &[],
+    }
+}
+
+/// A Kotlin library's top-level declarations are the *static members of the
+/// `<File>Kt` facade class* of their package
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>),
+/// and its extensions are those statics whose **first parameter is the
+/// receiver** (<https://kotlinlang.org/docs/java-interop.html#static-methods>).
+///
+/// kotlinc 2.4.20 compiles the same source clean against the standard library,
+/// whose own facades carry `listOf` and `isBlank`; the fixture hand-encodes the
+/// two shapes so the claim is pinned without a stdlib on the classpath.
+#[test]
+fn library_top_level_declarations_and_extensions_resolve() {
+    let facades = vec![
+        // `public static <T> List<T> listOf(T element)`.
+        facade(
+            "kotlin/collections/CollectionsKt",
+            &[("listOf", "(Ljava/lang/Object;)Ljava/util/List;")],
+            &["<T:Ljava/lang/Object;>(TT;)Ljava/util/List<TT;>;"],
+            &[0x0009],
+        ),
+        // `public static boolean isBlank(String)` — the extension
+        // `fun String.isBlank(): Boolean`.
+        facade(
+            "kotlin/text/StringsKt",
+            &[("isBlank", "(Ljava/lang/String;)Z")],
+            &[""],
+            &[0x0009],
+        ),
+    ];
+    let source = r#"
+fun probe(): Boolean {
+    val list: List<String> = listOf("a")
+    val blank: Boolean = "a".isBlank()
+    return blank && list.isEmpty()
+}
+"#;
+    let (db, file) = kotlin_fixture_with(&[("/src/main/kotlin/Sample.kt", source)], facades);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        !rendered.contains("kotlin."),
+        "the library's top-level function and extension resolve: {rendered}"
+    );
+}
+
+/// A Kotlin library's *extension* is a facade's static method whose first
+/// parameter is the receiver, and the classfile writes the receiver position as
+/// a *class type parameter*, often through a wildcard
+/// (`Function1<? super T, Unit>` for `T.() -> Unit`)
+/// (<https://kotlinlang.org/docs/java-interop.html#static-methods>): the
+/// receiver's own type binds it, so `apply { }`'s `this` is the receiver and
+/// `let { }`'s `it` its type.
+#[test]
+fn a_library_extension_binds_its_receiver() {
+    let facades = vec![
+        // `public static final <T> T apply(T receiver, Function1<? super T, Unit> block)`.
+        facade(
+            "kotlin/StandardKt",
+            &[
+                (
+                    "apply",
+                    "(Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;",
+                ),
+                (
+                    "let",
+                    "(Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;",
+                ),
+            ],
+            &[
+                "<T:Ljava/lang/Object;>(TT;Lkotlin/jvm/functions/Function1<-TT;Lkotlin/Unit;>;)TT;",
+                "<T:Ljava/lang/Object;R:Ljava/lang/Object;>(TT;Lkotlin/jvm/functions/Function1<-TT;+TR;>;)TR;",
+            ],
+            &[0x0009, 0x0009],
+        ),
+        // `public static final boolean isBlank(CharSequence)` — `String`'s
+        // extension, whose receiver position is a *class* the argument satisfies
+        // without any binding. The fixture's `kotlin.String` declares no
+        // `CharSequence` supertype, so the facade takes a `String` there.
+        facade(
+            "kotlin/text/StringsKt",
+            &[
+                ("isBlank", "(Ljava/lang/String;)Z"),
+                (
+                    "forEach",
+                    "([Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)V",
+                ),
+            ],
+            &[
+                "",
+                "<T:Ljava/lang/Object;>([TT;Lkotlin/jvm/functions/Function1<-TT;Lkotlin/Unit;>;)V",
+            ],
+            &[0x0009, 0x0009],
+        ),
+    ];
+    let source = r#"
+fun probe(list: javax.swing.JList, names: Array<String>): Boolean {
+    val applied = list.apply { dragEnabled = true }
+    val read = "a".let { it.length }
+    val blank = "a".isBlank()
+    var found = false
+    names.forEach { found = it.isNotEmpty() }
+    return applied.dragEnabled && blank && found
+}
+"#;
+    // The fixture's own interop classes carry `javax.swing.JList`; the facades
+    // are the library beside them.
+    let mut extra = common::interop_classes();
+    extra.extend(facades);
+    let (db, file) = kotlin_fixture_with(&[("/src/main/kotlin/Sample.kt", source)], extra);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        !rendered.contains("kotlin."),
+        "the extension's receiver binds the receiver position: {rendered}"
+    );
+}

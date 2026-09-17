@@ -492,6 +492,9 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
         // `interface List<out E>` — an interface, hence `ACC_INTERFACE |
         // ACC_ABSTRACT`.
         class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601),
+        // `class Array<T>` — the classifier a Kotlin array type is, which the
+        // library's own `forEach`/`map` extensions are written over.
+        class("kotlin/Array", Some("kotlin/Any"), &[], 0x0031),
         // `interface Function0<out R>`, `Function1<in P1, out R>`,
         // `Function2<in P1, in P2, out R>` — the classifiers a function type
         // `() -> R`, `(P1) -> R`, `(P1, P2) -> R` is.

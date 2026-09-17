@@ -546,7 +546,11 @@ impl Resolved {
 }
 
 /// The set of libraries a resolution query may see.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Hash` so that a query may be *keyed* on a scope: a package scan memoized per
+/// (scope, package) is what keeps a facade lookup off the classpath walk of
+/// every call site.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ResolutionScope {
     /// A workspace source set: its own classes plus its ordered classpath.
     SourceSet(SourceSetId),
@@ -611,6 +615,58 @@ pub(crate) fn fqn_resolve_query(
         }
     }
     None
+}
+
+/// Every class of `package` on `scope`'s classpath, in classpath order — the
+/// enumeration no name-keyed lookup can answer, and what a *package* scan (a
+/// Kotlin file facade, which the compiler synthesizes under the package's own
+/// name) needs.
+///
+/// The project's own source sets are not enumerated: a workspace class is
+/// reached through the source symbol index, which is keyed by name and answers
+/// a package's declarations per file ([`source_set_package_files`]).
+pub fn classes_in_package(
+    db: &dyn HirDatabase,
+    scope: &ResolutionScope,
+    package: &Name,
+) -> Vec<Resolved> {
+    let mut out = Vec::new();
+    let mut push_library = |db: &dyn HirDatabase, library: LibraryId| {
+        let symbol = db.hir_state().interner.get_or_intern(package.as_str());
+        for (entry_idx, entry) in library_name_index(db, library).classes_in_package(symbol) {
+            out.push(Resolved::Library(ResolvedClass {
+                library,
+                entry_idx,
+                entry: entry.clone(),
+            }));
+        }
+    };
+    match scope {
+        ResolutionScope::SourceSet(source_set) => {
+            let Some(graph) = ProjectGraph::try_get(db) else {
+                return out;
+            };
+            let Some(entries) = graph.source_sets(db).get(source_set) else {
+                return out;
+            };
+            for entry in &entries.entries {
+                if let ClasspathEntry::Library(library) = entry {
+                    push_library(db, *library);
+                }
+            }
+        }
+        ResolutionScope::Classpath(libraries) => {
+            for &library in libraries {
+                push_library(db, library);
+            }
+        }
+        ResolutionScope::JdkBuiltins => {
+            for library in jdk_builtin_libraries(db) {
+                push_library(db, library);
+            }
+        }
+    }
+    out
 }
 
 /// Resolves a fully qualified class name within a scope, honoring classpath

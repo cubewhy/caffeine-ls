@@ -255,6 +255,17 @@ fn java_name(name: &Name) -> Name {
 /// is spelled out in <https://kotlinlang.org/docs/java-interop.html#mapped-types>,
 /// which KLS does not cover). A name not in the table is itself.
 pub(crate) fn mapped_type_name(name: &Name) -> Name {
+    // The classfile's spelling of a function type is the Kotlin one:
+    // `kotlin.jvm.functions.FunctionN` *is* `kotlin.FunctionN`
+    // (<https://kotlinlang.org/docs/java-interop.html#mapped-types> names the
+    // mapping for the collections; a function type is the same relation, and the
+    // compiler reads the classfile spelling in every facade signature).
+    if let Some(rest) = name.as_str().strip_prefix("kotlin.jvm.functions.")
+        && let Some(arity) = rest.strip_prefix("Function")
+        && arity.parse::<usize>().is_ok()
+    {
+        return Name::new(&format!("kotlin.{rest}"));
+    }
     MAPPED_TYPES
         .iter()
         .find(|(java, _)| name.as_str() == *java)

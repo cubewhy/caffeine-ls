@@ -107,6 +107,16 @@ impl KotlinBodyTypes {
     }
 }
 
+/// The receiver a call with a lambda argument is written on: the expression a
+/// written receiver is — which the walk infers — a type a caller already has, or
+/// no receiver at all (an unqualified call).
+#[derive(Clone, Copy)]
+enum CallReceiver<'a> {
+    Expr(&'a ExprId),
+    Type(Ty),
+    Implicit,
+}
+
 /// The arguments of a call as the member set reads them: each argument's type
 /// with the *name* it was written under, when it writes one
 /// ([`hir_expand::body::ExprData::MethodCall`]).
@@ -810,7 +820,10 @@ impl<'a> InferCtx<'a> {
                 {
                     Some(index) => self.call_with_expected_lambda(
                         expr,
-                        receiver.as_ref(),
+                        match receiver.as_ref() {
+                            Some(receiver) => CallReceiver::Expr(receiver),
+                            None => CallReceiver::Implicit,
+                        },
                         &name,
                         &args,
                         &arg_names,
@@ -1199,6 +1212,45 @@ impl<'a> InferCtx<'a> {
         body: hir_expand::body::LambdaBody,
     ) -> Ty {
         let expected = self.expected_lambdas.last().copied();
+        // What the position the lambda stands in declares: a function type's
+        // parameters and the receiver that type gives it
+        // ([`Self::lambda_receivers`]), or — where a *Java* functional interface
+        // is expected — the single abstract method's parameters
+        // (<https://kotlinlang.org/docs/java-interop.html#sam-conversions>,
+        // which KLS does not cover: `listFiles { it }`'s `it` is the
+        // `FilenameFilter`'s parameter).
+        let (declared_params, receiver) = match expected {
+            Some(expected) => match self.function_arity(&expected) {
+                Some(arity) => (
+                    // A classfile writes a function type's parameters as
+                    // projections — `Function1<? super T, Unit>` — so the type
+                    // each parameter *is* is what the projection bounds.
+                    (0..arity)
+                        .filter_map(|index| self.function_parameter_ty(&expected, index))
+                        .map(|ty| self.decapture(&ty))
+                        .collect::<Vec<_>>(),
+                    self.function_parameter_ty(&expected, 0)
+                        .map(|ty| self.decapture(&ty)),
+                ),
+                None => match crate::jvm::member_set::single_abstract_method(
+                    self.db,
+                    &self.scope,
+                    &expected,
+                ) {
+                    // A functional interface's parameters are *parameters*: `it`
+                    // is its single one, and `this` stays the enclosing receiver.
+                    Some(sam) => (
+                        sam.params
+                            .iter()
+                            .map(|param| self.decapture(&super::ty::ty_from_java(self.db, *param)))
+                            .collect(),
+                        None,
+                    ),
+                    None => (Vec::new(), None),
+                },
+            },
+            None => (Vec::new(), None),
+        };
         let param_tys: Vec<Ty> = params
             .iter()
             .enumerate()
@@ -1207,9 +1259,7 @@ impl<'a> InferCtx<'a> {
                     .ty
                     .as_ref()
                     .map(|ty| super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty))
-                    .or_else(|| {
-                        expected.and_then(|expected| self.function_parameter_ty(&expected, index))
-                    })
+                    .or_else(|| declared_params.get(index).copied())
                     .unwrap_or_else(|| self.error())
             })
             .collect();
@@ -1217,8 +1267,11 @@ impl<'a> InferCtx<'a> {
         // type is the *receiver* a `T.() -> R` position gives the lambda — the
         // two are one type once the classfile has erased them
         // ([`Self::lambda_receivers`]).
-        let parameter = expected.and_then(|expected| self.function_parameter_ty(&expected, 0));
-        let it = params.is_empty().then_some(parameter).flatten();
+        let parameter = receiver;
+        let it = params
+            .is_empty()
+            .then(|| declared_params.first().copied())
+            .flatten();
         if let Some(receiver) = parameter {
             self.lambda_receivers.push(receiver);
         }
@@ -1246,7 +1299,15 @@ impl<'a> InferCtx<'a> {
         if parameter.is_some() {
             self.lambda_receivers.pop();
         }
-        let mut args = param_tys;
+        // The lambda's own type: the parameters it *declares*, or — for the
+        // parameter-less form the position declares a function type for — that
+        // type's arity, because `T.() -> R` and `(T) -> R` are one type here
+        // ([`Self::lambda_receivers`]) and the call's own type arguments are
+        // bound from what this type is.
+        let mut args = match params.is_empty() {
+            true => declared_params,
+            false => param_tys,
+        };
         args.push(ret);
         let function = self.builtin(&format!("Function{}", args.len().saturating_sub(1)));
         match function.kind(self.db) {
@@ -1461,6 +1522,19 @@ impl<'a> InferCtx<'a> {
                 .insert(expr, KotlinResolvedMember::Kotlin { file, item });
             return super::db::item_ty(self.db, file, item);
         }
+        // A *library* top-level property — a facade's static field or static
+        // getter — which a Kotlin file reads by name.
+        if let Some(member) =
+            method::library_top_level_callable(self.db, &self.scope, self.file, name, &[])
+            && matches!(
+                member.kind,
+                method::MemberKind::Getter | method::MemberKind::Property
+            )
+        {
+            let ty = member.ty(self.db);
+            self.record_member(expr, &member);
+            return ty;
+        }
         // A classifier used as a *receiver*: `Foo.bar()` types its `Foo` as
         // the class.
         if let Some(class) = self.class_receiver(name) {
@@ -1517,8 +1591,26 @@ impl<'a> InferCtx<'a> {
                 arg_names,
                 ..
             } => {
-                let arg_tys: Vec<Ty> = args.iter().map(|arg| self.infer_expr(*arg)).collect();
-                self.call_ty(member, receiver, &name, &arg_tys, &arg_names)
+                // A lambda argument's expected type is the candidate's parameter,
+                // exactly as for a call with a written receiver: `p?.let { it }`
+                // binds `it` from `let`'s function type.
+                match args.iter().position(|arg| {
+                    matches!(self.bodies.expr(*arg), ExprData::Lambda { params, .. } if params.is_empty())
+                }) {
+                    Some(index) => self.expected_lambda_call(
+                        member,
+                        CallReceiver::Type(*receiver),
+                        &name,
+                        &args,
+                        &arg_names,
+                        index,
+                    ),
+                    None => {
+                        let arg_tys: Vec<Ty> =
+                            args.iter().map(|arg| self.infer_expr(*arg)).collect();
+                        self.call_ty(member, receiver, &name, &arg_tys, &arg_names)
+                    }
+                }
             }
             _ => self.infer_expr(member),
         };
@@ -1579,7 +1671,22 @@ impl<'a> InferCtx<'a> {
     fn call_with_expected_lambda(
         &mut self,
         expr: ExprId,
-        receiver: Option<&ExprId>,
+        receiver: CallReceiver<'_>,
+        name: &Name,
+        args: &[ExprId],
+        arg_names: &[Option<Name>],
+        index: usize,
+    ) -> Ty {
+        self.expected_lambda_call(expr, receiver, name, args, arg_names, index)
+    }
+
+    /// [`Self::call_with_expected_lambda`], whose receiver is either the
+    /// expression a written receiver is — which this infers — or a type the
+    /// caller already has (a safe access infers its own receiver).
+    fn expected_lambda_call(
+        &mut self,
+        expr: ExprId,
+        receiver: CallReceiver<'_>,
         name: &Name,
         args: &[ExprId],
         arg_names: &[Option<Name>],
@@ -1601,7 +1708,7 @@ impl<'a> InferCtx<'a> {
             .collect();
         let call_args = call_args(&arg_types, arg_names);
         let candidate = match receiver {
-            Some(receiver) => {
+            CallReceiver::Expr(receiver) => {
                 let receiver_ty = self.infer_expr(*receiver);
                 method::pick_callable(
                     self.db,
@@ -1612,12 +1719,20 @@ impl<'a> InferCtx<'a> {
                     self.site(),
                 )
             }
+            CallReceiver::Type(receiver_ty) => method::pick_callable(
+                self.db,
+                &self.scope,
+                &receiver_ty,
+                name,
+                &call_args,
+                self.site(),
+            ),
             // An unqualified call: a member of an enclosing classifier, a
             // top-level declaration of this file, then the ones an import
             // names — and only then the *class* the name denotes, whose
             // candidate set is its constructors (`Foo { … }`), because one name
             // may declare a function and a class at once.
-            None => {
+            CallReceiver::Implicit => {
                 let mut candidate = None;
                 for receiver_ty in self.implicit_receivers() {
                     if let Some(member) = method::pick_callable(
@@ -1635,6 +1750,17 @@ impl<'a> InferCtx<'a> {
                 candidate
                     .or_else(|| {
                         method::top_level_callable(
+                            self.db,
+                            &self.scope,
+                            self.file,
+                            name,
+                            &call_args,
+                        )
+                    })
+                    .or_else(|| {
+                        // A library's top-level declaration: the same shape, from
+                        // the classpath's facades.
+                        method::library_top_level_callable(
                             self.db,
                             &self.scope,
                             self.file,
@@ -1697,54 +1823,36 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// [`Self::call_with_expected_lambda`] for a *constructor* call: the
-    /// candidate set is the class's constructors.
-    fn constructor_with_lambda(
-        &mut self,
-        expr: ExprId,
-        class: &Ty,
-        name: &Name,
-        args: &[ExprId],
-        index: usize,
-    ) -> Ty {
-        let arg_types: Vec<Ty> = args
-            .iter()
-            .enumerate()
-            .map(|(position, arg)| {
-                if position == index {
-                    self.error()
-                } else {
-                    self.infer_expr(*arg)
-                }
-            })
-            .collect();
-        let call_args: Vec<CallArg<'_>> = arg_types
-            .iter()
-            .map(|ty| CallArg {
-                name: None,
-                ty: *ty,
-            })
-            .collect();
-        let candidate =
-            method::pick_callable(self.db, &self.scope, class, name, &call_args, self.site());
-        // The lambda is inferred *against* the function type the candidate
-        // declares at that index: it is what the lambda's parameters and its
-        // `it` take their types from ([`Self::expected_lambdas`]).
-        let expected = candidate
-            .as_ref()
-            .and_then(|member| member.params.get(index).copied())
-            .map(|param| self.unwrap_flexible(&param));
-        if let Some(expected) = expected {
-            self.expected_lambdas.push(expected);
+    /// The arity of a function type: the `N` of `kotlin.FunctionN` (or its
+    /// classfile spelling, `kotlin.jvm.functions.FunctionN`), or `None` for a
+    /// type that is not one.
+    fn function_arity(&self, ty: &Ty) -> Option<usize> {
+        let ty = match ty.kind(self.db) {
+            TyKind::Flexible { lower, .. } => *lower,
+            _ => *ty,
+        };
+        let TyKind::Reference { name, .. } = ty.kind(self.db) else {
+            return None;
+        };
+        let text = name.as_str();
+        let text = text
+            .strip_prefix("kotlin.Function")
+            .or_else(|| text.strip_prefix("kotlin.jvm.functions.Function"))?;
+        text.parse().ok()
+    }
+
+    /// The *captured* form of a Java type: a wildcard argument is the type it
+    /// bounds, since a use-site projection's own type is that of its bound
+    /// ([JLS §4.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5.1)).
+    /// A classfile writes `Function1<? super T, ? extends R>` for `(T) -> R`, so
+    /// the type argument a lambda's parameter and receiver come from is what the
+    /// projection bounds.
+    fn decapture(&self, ty: &Ty) -> Ty {
+        match ty.kind(self.db) {
+            TyKind::Wildcard(Some(bound)) => bound.ty,
+            TyKind::Nullable(inner) => Ty::nullable(self.db, self.decapture(&inner)),
+            _ => *ty,
         }
-        self.infer_expr(args[index]);
-        if expected.is_some() {
-            self.expected_lambdas.pop();
-        }
-        if let Some(member) = candidate {
-            self.record_member(expr, &member);
-        }
-        class.clone()
     }
 
     /// The type of the `index`th *parameter* of a function type: the classifier
@@ -1760,8 +1868,15 @@ impl<'a> InferCtx<'a> {
         let TyKind::Reference { name, args, .. } = ty.kind(self.db) else {
             return None;
         };
+        // `kotlin.FunctionN` and the classfile's own spelling of it,
+        // `kotlin.jvm.functions.FunctionN`, are the same classifier
+        // ([`super::ty::mapped_type_name`]); a *declared* name is read as
+        // written.
         let text = name.as_str();
-        let arity: usize = text.strip_prefix("kotlin.Function")?.parse().ok()?;
+        let text = text
+            .strip_prefix("kotlin.Function")
+            .or_else(|| text.strip_prefix("kotlin.jvm.functions.Function"))?;
+        let arity: usize = text.parse().ok()?;
         // A `kotlin.FunctionN` carries `N` parameters followed by its result, so
         // an index *within* the arity is a parameter: `Function0<R>`'s single
         // argument is its result, and a lambda of it declares no parameter.
@@ -1807,6 +1922,18 @@ impl<'a> InferCtx<'a> {
         }
         if let Some(member) =
             method::top_level_callable(self.db, &self.scope, self.file, name, &args)
+        {
+            let ty = member.call_ty(self.db, arg_tys);
+            self.record_member(expr, &member);
+            return ty;
+        }
+        // A *library* top-level function: the file's facades of every package in
+        // scope ([KLS
+        // `type-inference.html#call-without-an-explicit-receiver`](https://kotlinlang.org/spec/type-inference.html#call-without-an-explicit-receiver)
+        // resolves the name against the top-level declarations in scope, and a
+        // library's are the `<File>Kt` classes of the classpath).
+        if let Some(member) =
+            method::library_top_level_callable(self.db, &self.scope, self.file, name, &args)
         {
             let ty = member.call_ty(self.db, arg_tys);
             self.record_member(expr, &member);

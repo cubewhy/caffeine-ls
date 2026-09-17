@@ -359,6 +359,185 @@ pub fn type_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Arc
     kotlin_type_params_query(db, KotlinItemKey::new(db, file_id, item_id))
 }
 
+/// One package's facade scan within a scope: the memo key of
+/// [`kotlin_facade_classes_query`].
+#[salsa::interned(debug)]
+pub struct FacadeKey<'db> {
+    /// The scope whose classpath is scanned.
+    #[returns(ref)]
+    pub scope: hir::ResolutionScope,
+    #[returns(ref)]
+    pub package: Name,
+}
+
+/// The *Kotlin file facades* of one package: the classes the compiler emits for
+/// the package's top-level declarations
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+///
+/// A Kotlin library compiles a file's top-level callables into a class of the
+/// package named after the file — `CollectionsKt`, or whatever `@file:JvmName`
+/// says — and marks it with `@Metadata(k = 2)`; a *multi-file* facade (`k = 4` or
+/// `5`) holds several files' declarations. A class whose simple name ends in `Kt`
+/// is a facade as well, so one whose metadata the stub reader dropped still
+/// resolves. The scan is bounded by one package's classes and memoized per
+/// (scope, package), so it runs once per revision.
+#[salsa::tracked(returns(clone))]
+pub(crate) fn kotlin_facade_classes_query<'db>(
+    db: &'db dyn TyDatabase,
+    key: FacadeKey<'db>,
+) -> Arc<[hir::Resolved]> {
+    let scope = key.scope(db).clone();
+    let package = key.package(db).clone();
+    Arc::from(
+        hir::classes_in_package(db, &scope, &package)
+            .into_iter()
+            .filter(|class| is_kotlin_facade(db, class))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// Whether a class of a package is one the Kotlin compiler synthesizes for the
+/// package's top-level declarations: a class of the package itself — not the
+/// nested type of a class declaration — whose simple name ends in `Kt` or that
+/// carries a `@Metadata` annotation whose `k` is a file (`2`) or multi-file
+/// (`4`, `5`) facade
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+///
+/// The name rule is the compiler's own: a facade is named after the file it
+/// holds — `CollectionsKt` — or after the `@file:JvmName` the file writes. The
+/// metadata check is what accepts a facade whose name the file chose freely;
+/// this model reads the annotation's *presence* only, since the rest of the
+/// payload is not decoded ([`crate::kotlin::ty`] records the same deviation).
+fn is_kotlin_facade(db: &dyn TyDatabase, class: &hir::Resolved) -> bool {
+    let hir::Resolved::Library(entry) = class else {
+        // A *source* file's facades are reached by name through the source
+        // symbol index ([`super::resolve::KotlinResolver::source_declaration`]),
+        // and a facade is not a declaration of its own there.
+        return false;
+    };
+    let interner = &db.hir_state().interner;
+    let fqn = interner.resolve(&entry.entry.fqn);
+    if fqn.contains('$') || fqn.contains('/') {
+        return false;
+    }
+    fqn.rsplit('.')
+        .next()
+        .is_some_and(|simple| simple.ends_with("Kt"))
+        || class_is_kotlin_facade_metadata(db, entry)
+}
+
+/// Whether a class's `@Metadata` annotation marks it a *file facade*: its `k`
+/// argument is `2` (a file's top-level declarations), `4` or `5` (a multi-file
+/// facade of several files')
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+///
+/// `k = 1` is an ordinary class, which every Kotlin *declaration* compiles to —
+/// which is why the annotation alone is not enough.
+fn class_is_kotlin_facade_metadata(db: &dyn TyDatabase, entry: &hir::ResolvedClass) -> bool {
+    let interner = &db.hir_state().interner;
+    let Some(record) = hir::class_record(db, entry) else {
+        return false;
+    };
+    let hir::ClassOrModuleRecord::Class(class) = &*record else {
+        return false;
+    };
+    class.annotations.iter().any(|annotation| {
+        annotation
+            .annotation_type
+            .as_reference_name()
+            .is_some_and(|name| interner.resolve(name) == "kotlin.Metadata")
+            && annotation.arguments.iter().any(|(name, value)| {
+                interner.resolve(name) == "k"
+                    && matches!(
+                        value,
+                        syntax::stub::AnnotationValue::Primitive(
+                            syntax::stub::PrimitiveValue::Int(2 | 4 | 5)
+                        )
+                    )
+            })
+    })
+}
+
+/// The facades of one package that declare a static member of each *name*: the
+/// index that keeps a top-level lookup off the member table of every facade of
+/// the package.
+///
+/// A package's facades are dozens of classes (`kotlin.collections` alone holds
+/// one per standard-library file) and a Kotlin file asks for hundreds of names,
+/// so reading each facade's members per name is quadratic in the package's size;
+/// the index is built once per (scope, package) and answers a name with the one
+/// or two facades that could declare it.
+#[salsa::tracked(returns(clone))]
+pub(crate) fn kotlin_facade_name_index_query<'db>(
+    db: &'db dyn TyDatabase,
+    key: FacadeKey<'db>,
+) -> Arc<rustc_hash::FxHashMap<Name, Vec<hir::Resolved>>> {
+    let scope = key.scope(db).clone();
+    let package = key.package(db).clone();
+    let mut index: rustc_hash::FxHashMap<Name, Vec<hir::Resolved>> = Default::default();
+    if std::env::var_os("CAFFEINE_KT_TRACE").is_some() {
+        eprintln!(
+            "facade index {:?}: {} classes",
+            package,
+            facade_classes(db, &scope, &package).len()
+        );
+    }
+    for facade in facade_classes(db, &scope, &package).iter() {
+        let hir::Resolved::Library(facade) = facade else {
+            continue;
+        };
+        let Some(record) = hir::class_record(db, facade) else {
+            continue;
+        };
+        let hir::ClassOrModuleRecord::Class(class) = &*record else {
+            continue;
+        };
+        let interner = &db.hir_state().interner;
+        for method in &class.methods {
+            // A *static* method is a top-level declaration of the file the
+            // facade holds; an instance method is the facade's own (there is
+            // none the compiler emits).
+            if !hir_def::jvm::access::JvmAccessFlags::from_bits_retain(method.flags).is_static() {
+                continue;
+            }
+            index
+                .entry(Name::new(interner.resolve(&method.name)))
+                .or_default()
+                .push(hir::Resolved::Library(facade.clone()));
+        }
+        for field in &class.fields {
+            if !hir_def::jvm::access::JvmAccessFlags::from_bits_retain(field.flags).is_static() {
+                continue;
+            }
+            index
+                .entry(Name::new(interner.resolve(&field.name)))
+                .or_default()
+                .push(hir::Resolved::Library(facade.clone()));
+        }
+    }
+    Arc::new(index)
+}
+
+/// The facades of `package` that declare a static member named `name`, from
+/// [`kotlin_facade_name_index_query`].
+pub fn facade_name_index(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    package: &Name,
+) -> Arc<rustc_hash::FxHashMap<Name, Vec<hir::Resolved>>> {
+    kotlin_facade_name_index_query(db, FacadeKey::new(db, scope.clone(), package.clone()))
+}
+
+/// The Kotlin file facades of `package` on `scope`'s classpath. See
+/// [`kotlin_facade_classes_query`].
+pub fn facade_classes(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    package: &Name,
+) -> Arc<[hir::Resolved]> {
+    kotlin_facade_classes_query(db, FacadeKey::new(db, scope.clone(), package.clone()))
+}
+
 /// The workspace declarations named `name` of one package, as the *extension*
 /// candidates a receiver's member set looks through: the `Function` and
 /// `Property` symbols whose fully qualified name is `<package>.<name>`.
