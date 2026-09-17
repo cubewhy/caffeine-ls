@@ -96,6 +96,8 @@ impl<'a> StubStringTable<'a> {
             TypeRef::DefinitelyNonNull(inner) => {
                 TypeRef::DefinitelyNonNull(Box::new(self.type_ref(inner)))
             }
+            // `void` names no class, so it carries no string-table index.
+            TypeRef::Void => TypeRef::Void,
         }
     }
 
@@ -314,6 +316,8 @@ impl<'a> DiskResolver<'a> {
             TypeRef::DefinitelyNonNull(inner) => {
                 TypeRef::DefinitelyNonNull(Box::new(self.type_ref(inner)))
             }
+            // `void` names no class, so it carries no string-table index.
+            TypeRef::Void => TypeRef::Void,
         }
     }
 

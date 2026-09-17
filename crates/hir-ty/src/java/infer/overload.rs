@@ -848,8 +848,8 @@ impl InferCtx<'_> {
                             .first()
                             .is_some_and(|first| first.contains_infer_var(self.db));
                     if !ref_ret.is_error(self.db)
-                        && !ref_ret.is_void_like(self.db)
-                        && !sam.ret.is_void_like(self.db)
+                        && !ref_ret.is_void(self.db)
+                        && !sam.ret.is_void(self.db)
                         && !unbound_var_receiver
                     {
                         // §5.1.10: constrain the wildcard bounds the SAM's
@@ -906,7 +906,7 @@ impl InferCtx<'_> {
                         }
                         LambdaBody::Block(_) => false,
                     };
-                    let potentially_compatible = if sam.ret.is_void_like(self.db) {
+                    let potentially_compatible = if sam.ret.is_void(self.db) {
                         statement_expression || !valued_returns
                     } else {
                         matches!(body, LambdaBody::Expr(_))
@@ -1174,7 +1174,7 @@ impl InferCtx<'_> {
         // gives the expression body no target — a statement expression may
         // produce a value that is simply discarded, and constraining it
         // against `void` would wrongly reject the candidate.
-        let ret_is_void = sam.ret.is_void_like(self.db);
+        let ret_is_void = sam.ret.is_void(self.db);
         // §5.1.10: the SAM was extracted from a *captured* formal, so its
         // return type may be a bare capture variable standing for the
         // formal's wildcard. The body infers against the wildcard bound the

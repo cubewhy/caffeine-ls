@@ -870,6 +870,8 @@ fn resolve_type_ref_impl(
 ) -> Ty {
     match tyref {
         TypeRef::Primitive(p) => Ty::primitive(db, *p),
+        // `void` is a type ([JLS §4.3]) but not a primitive ([§4.2]).
+        TypeRef::Void => Ty::void(db),
         TypeRef::Reference { name, generic_args } => {
             let args = generic_args
                 .iter()

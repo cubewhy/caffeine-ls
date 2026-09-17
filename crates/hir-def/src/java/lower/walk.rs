@@ -332,9 +332,9 @@ fn lower_method(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemI
     let name = decl_identifier(node)?;
     let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let ret = if token_is_direct(node, J::VOID_KW) {
-        Some(ItemTypeRef::synthetic(TypeRef::Primitive(
-            PrimitiveType::Void,
-        )))
+        // §8.4.5: the result type is `void` — a type ([JLS §4.3]) but not a
+        // primitive ([§4.2]).
+        Some(ItemTypeRef::synthetic(TypeRef::Void))
     } else {
         node.children()
             .find(|child| is(child, J::TYPE))
@@ -1160,11 +1160,10 @@ fn class_literal_type(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
     }
     if name.is_empty() {
         // A primitive class literal (`void.class`, `int[].class`).
-        if let Some(prim) = node
+        if let Some(mut ty) = node
             .children_with_tokens()
-            .find_map(|element| element.as_token().and_then(primitive_from_token))
+            .find_map(|element| element.as_token().and_then(primitive_type_ref))
         {
-            let mut ty = TypeRef::Primitive(prim);
             for _ in 0..dimension_count(node) {
                 ty = TypeRef::Array(Box::new(ty));
             }
@@ -1467,15 +1466,14 @@ pub(crate) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
     // primitive: the keyword is a direct token in most positions
     // (`int x`), but arrives wrapped in a `PRIMITIVE_TYPE_EXPR` node inside
     // a class literal's `TYPE` (`int[].class`).
-    if let Some(prim) = node
+    if let Some(mut ty) = node
         .children_with_tokens()
-        .find_map(|element| element.as_token().and_then(primitive_from_token))
+        .find_map(|element| element.as_token().and_then(primitive_type_ref))
         .or_else(|| {
             node.children()
                 .find_map(|child| primitive_from_node(&child))
         })
     {
-        let mut ty = TypeRef::Primitive(prim);
         for _ in 0..dimension_count(node) {
             ty = TypeRef::Array(Box::new(ty));
         }
@@ -1687,13 +1685,23 @@ fn wrap_dims(mut ty: ItemTypeRef, dims: &SyntaxNode<Lang>) -> ItemTypeRef {
     ty
 }
 
-/// The keyword of a `PRIMITIVE_TYPE_EXPR` child node.
-fn primitive_from_node(node: &SyntaxNode<Lang>) -> Option<PrimitiveType> {
+/// The type of a `PRIMITIVE_TYPE_EXPR` child node.
+fn primitive_from_node(node: &SyntaxNode<Lang>) -> Option<TypeRef<Name>> {
     if !is(node, J::PRIMITIVE_TYPE_EXPR) {
         return None;
     }
     node.children_with_tokens()
-        .find_map(|element| element.as_token().and_then(primitive_from_token))
+        .find_map(|element| element.as_token().and_then(primitive_type_ref))
+}
+
+/// The type a primitive keyword token names: one of the eight primitive types,
+/// or `void` — a type ([JLS §4.3]) but not a primitive ([§4.2]), and so its
+/// own [`TypeRef::Void`].
+fn primitive_type_ref(token: &SyntaxToken<Lang>) -> Option<TypeRef<Name>> {
+    match token.text() {
+        "void" => Some(TypeRef::Void),
+        _ => primitive_from_token(token).map(TypeRef::Primitive),
+    }
 }
 
 fn primitive_from_token(token: &SyntaxToken<Lang>) -> Option<PrimitiveType> {
@@ -1706,7 +1714,6 @@ fn primitive_from_token(token: &SyntaxToken<Lang>) -> Option<PrimitiveType> {
         "byte" => PrimitiveType::Byte,
         "char" => PrimitiveType::Char,
         "short" => PrimitiveType::Short,
-        "void" => PrimitiveType::Void,
         _ => return None,
     };
     Some(prim)

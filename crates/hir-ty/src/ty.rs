@@ -72,7 +72,11 @@ pub struct TyData {
 /// The kind of a [`Ty`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TyKind {
-    /// The `void` type ([JLS §4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.3)).
+    /// The `void` type ([JLS §4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.3)):
+    /// the result type of a `void` method. It is *not* a primitive type
+    /// ([§4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.2)
+    /// lists `boolean` and the numeric types), so it is its own kind rather
+    /// than a [`TyKind::Primitive`]: no `void` value exists.
     Void,
     /// The null type ([JLS §4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.1),
     /// [§3.10.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.10.8)):
@@ -578,18 +582,11 @@ impl Ty {
         self.id.kind(db)
     }
 
+    /// Whether the type is `void` ([JLS §4.3]) — the result type of a `void`
+    /// method, of a `void` functional interface's method, or the operand of
+    /// `void.class`.
     pub fn is_void(&self, db: &dyn TyDatabase) -> bool {
         matches!(self.kind(db), TyKind::Void)
-    }
-
-    /// Whether the type is `void` in either representation: the dedicated
-    /// [`TyKind::Void`] or the `void` primitive (the declared return type of
-    /// a `void` method lowers to the primitive).
-    pub fn is_void_like(&self, db: &dyn TyDatabase) -> bool {
-        matches!(
-            self.kind(db),
-            TyKind::Void | TyKind::Primitive(PrimitiveType::Void)
-        )
     }
 
     pub fn is_null(&self, db: &dyn TyDatabase) -> bool {

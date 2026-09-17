@@ -131,7 +131,7 @@ impl InferCtx<'_> {
             // void-compatible the body is *not* a poly expression: it is a
             // statement expression whose value is discarded, so it infers
             // standalone ([§15.2], [§15.27.3]).
-            LambdaBody::Expr(expr) if !sam.ret.is_void_like(self.db) => {
+            LambdaBody::Expr(expr) if !sam.ret.is_void(self.db) => {
                 let _ =
                     self.with_target(Some(self.decapture(&sam.ret)), |this| this.infer_expr(expr));
                 // §15.27.3: the expression body's value must be assignable to
@@ -220,7 +220,7 @@ impl InferCtx<'_> {
                 // `exited` (set by the final `return`/`throw`) tells whether
                 // the block can complete normally, exactly as for a method
                 // body ([§8.4.7]).
-                if !sam.ret.is_void_like(self.db) && !self.exited {
+                if !sam.ret.is_void(self.db) && !self.exited {
                     self.report(TypeError::MissingReturnValue {
                         range: self.tree.expr_range(expr),
                     });
@@ -298,8 +298,8 @@ impl InferCtx<'_> {
         let decaptured = self.decapture(&sam.ret);
         if !ret.is_error(self.db)
             && !sam.ret.is_error(self.db)
-            && !ret.is_void_like(self.db)
-            && !decaptured.is_void_like(self.db)
+            && !ret.is_void(self.db)
+            && !decaptured.is_void(self.db)
             && !self.method_ref_result_converts(
                 qualifier,
                 type_name,

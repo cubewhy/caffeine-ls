@@ -1439,13 +1439,13 @@ fn functional_interface_specificity(
     // for a lambda that is value-compatible with both — the value-returning
     // overload beats the void one. Otherwise `RS <: RT` (m1's return a subtype
     // of m2's) makes `S` more specific.
-    if t_ret.is_void_like(db) && !s_ret.is_void_like(db) {
+    if t_ret.is_void(db) && !s_ret.is_void(db) {
         return Some(true);
     }
-    if s_ret.is_void_like(db) && !t_ret.is_void_like(db) {
+    if s_ret.is_void(db) && !t_ret.is_void(db) {
         return Some(false);
     }
-    if !s_ret.is_void_like(db) && !t_ret.is_void_like(db) {
+    if !s_ret.is_void(db) && !t_ret.is_void(db) {
         let s_cap = crate::java::ty::capture_conversion(db, scope, s_ret);
         if crate::java::subtyping::is_subtype(db, scope, &s_cap, &t_ret) {
             return Some(true);

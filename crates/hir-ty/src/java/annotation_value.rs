@@ -1146,8 +1146,9 @@ fn literal_kind(db: &dyn TyDatabase, literal: &Literal) -> ConstKind {
 /// Whether `ty` is a constant expression's *type*: a primitive type or
 /// `String` ([§9.7.1]'s commensurability requirement).
 pub(crate) fn is_primitive_or_string(ty: &Ty, db: &dyn TyDatabase) -> bool {
-    matches!(ty.kind(db), TyKind::Primitive(primitive) if *primitive != PrimitiveType::Void)
-        || is_string(ty, db)
+    // `void` ([§4.3]) is neither: it is not a primitive ([§4.2]), so the
+    // primitive test alone excludes it.
+    ty.is_primitive(db) || is_string(ty, db)
 }
 
 /// Whether a `final` variable of this type may be a constant variable

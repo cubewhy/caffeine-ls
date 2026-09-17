@@ -52,6 +52,10 @@ pub fn ty_from_type_ref(
         // `kotlin.Int`); a primitive reference reaches here only from a
         // classfile-typed position.
         TypeRef::Primitive(primitive) => Ty::primitive(db, *primitive),
+        // The classfile `V` ([JVMS §4.3.2]): Kotlin's `Unit` is *not* a
+        // primitive of the Kotlin model either, so it lowers to the void kind
+        // [`ty_from_java`] maps onto `kotlin.Unit`.
+        TypeRef::Void => Ty::void(db),
         TypeRef::Wildcard { bound } => Ty::wildcard(
             db,
             bound.as_deref().map(|bound| match bound {
@@ -114,7 +118,6 @@ pub fn ty_from_java(db: &dyn TyDatabase, ty: Ty) -> Ty {
                 PrimitiveType::Long => "Long",
                 PrimitiveType::Float => "Float",
                 PrimitiveType::Double => "Double",
-                PrimitiveType::Void => "Unit",
             };
             Ty::reference(db, format!("kotlin.{name}"), Vec::new())
         }

@@ -17,11 +17,14 @@ pub fn primitive_name(p: PrimitiveType) -> &'static str {
         PrimitiveType::Byte => "byte",
         PrimitiveType::Char => "char",
         PrimitiveType::Short => "short",
-        PrimitiveType::Void => "void",
     }
 }
 
 /// The reference type a primitive boxes to ([JLS §5.1.7], table 5.1-D).
+///
+/// `void` is absent: it is not a primitive ([§4.2]) and has no boxing
+/// conversion of its own — `void.class` is `Class<Void>` ([§15.8.2]) without
+/// one.
 pub fn boxed_type(p: PrimitiveType) -> &'static str {
     match p {
         PrimitiveType::Boolean => "java.lang.Boolean",
@@ -32,7 +35,6 @@ pub fn boxed_type(p: PrimitiveType) -> &'static str {
         PrimitiveType::Long => "java.lang.Long",
         PrimitiveType::Float => "java.lang.Float",
         PrimitiveType::Double => "java.lang.Double",
-        PrimitiveType::Void => "java.lang.Void",
     }
 }
 
@@ -49,7 +51,9 @@ pub fn unboxed_primitive(fqn: &str) -> Option<PrimitiveType> {
         "java.lang.Long" => Some(Long),
         "java.lang.Float" => Some(Float),
         "java.lang.Double" => Some(Double),
-        "java.lang.Void" => Some(Void),
+        // `java.lang.Void` is a reference type with no unboxing conversion
+        // ([§5.1.8] lists none for it) — it is the `Class<Void>` of a
+        // `void.class` literal, not a boxed `void`.
         _ => None,
     }
 }
@@ -75,7 +79,7 @@ mod tests {
     #[test]
     fn primitive_names() {
         assert_eq!(primitive_name(PrimitiveType::Int), "int");
-        assert_eq!(primitive_name(PrimitiveType::Void), "void");
+        assert_eq!(primitive_name(PrimitiveType::Boolean), "boolean");
     }
 
     #[test]

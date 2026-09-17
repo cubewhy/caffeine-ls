@@ -648,6 +648,10 @@ fn render_type(ty: &TypeRef<Name>) -> String {
         },
         TypeRef::TypeVariable(name) => name.to_string(),
         TypeRef::Array(inner) => format!("Array<{}>", render_type(inner)),
+        // Kotlin spells the JVM `void` as its `Unit` classifier (KLS
+        // `built-in-types-and-their-semantics.html`), which is also the type
+        // the Kotlin type layer maps it to.
+        TypeRef::Void => "Unit".to_owned(),
         TypeRef::Error => "<error>".to_owned(),
         TypeRef::Nullable(inner) => format!("{}?", render_type(inner)),
         TypeRef::DefinitelyNonNull(inner) => format!("{} & Any", render_type(inner)),

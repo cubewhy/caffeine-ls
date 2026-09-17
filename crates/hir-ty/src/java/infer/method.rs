@@ -9,7 +9,6 @@ use hir_expand::{
 };
 use rowan::TextRange;
 use rustc_hash::FxHashSet;
-use syntax::stub::PrimitiveType;
 
 use crate::java::{
     diagnostics::{NonStaticThisKind, TypeError},
@@ -163,7 +162,7 @@ impl InferCtx<'_> {
         // (`this(...)`/`super(...)` argument expressions may not reference
         // the un-initialized instance either).
         self.before_super = false;
-        self.primitive(PrimitiveType::Void)
+        Ty::void(self.db)
     }
 
     /// the message with javac's `constructor {Owner}() cannot be applied…`.
@@ -214,7 +213,7 @@ impl InferCtx<'_> {
                     .types
                     .get(&info.id)
                     .copied()
-                    .filter(|ty| !ty.is_error(self.db) && !ty.is_void_like(self.db)),
+                    .filter(|ty| !ty.is_error(self.db) && !ty.is_void(self.db)),
             })
             .collect();
         // The source range of every actual argument ([JLS §15.12.2]): the

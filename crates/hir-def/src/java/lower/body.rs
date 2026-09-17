@@ -900,11 +900,11 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
         LITERAL => literal(node),
         TEMPLATE_EXPR => template(ctx, owner, node),
         PRIMITIVE_TYPE_EXPR => {
-            let prim = node
+            let ty = node
                 .children_with_tokens()
-                .find_map(|e| e.as_token().and_then(primitive_from_token))
-                .unwrap_or(PrimitiveType::Void);
-            ExprData::ClassLit(SpannedTypeRef::synthetic(TypeRef::Primitive(prim)))
+                .find_map(|e| e.as_token().and_then(primitive_type_ref))
+                .unwrap_or(TypeRef::Error);
+            ExprData::ClassLit(SpannedTypeRef::synthetic(ty))
         }
         CLASS_LITERAL => class_literal(node),
         // `Outer.this` — the THIS_EXPR node carries the qualifier identifier
@@ -1384,11 +1384,11 @@ fn class_literal(node: &SyntaxNode<Lang>) -> ExprData {
         return ExprData::ClassLit(type_from(&ty));
     }
     if let Some(prim) = node.children().find(|c| c.kind() == J::PRIMITIVE_TYPE_EXPR) {
-        let p = prim
+        let ty = prim
             .children_with_tokens()
-            .find_map(|e| e.as_token().and_then(primitive_from_token))
-            .unwrap_or(PrimitiveType::Void);
-        return ExprData::ClassLit(SpannedTypeRef::synthetic(TypeRef::Primitive(p)));
+            .find_map(|e| e.as_token().and_then(primitive_type_ref))
+            .unwrap_or(TypeRef::Error);
+        return ExprData::ClassLit(SpannedTypeRef::synthetic(ty));
     }
     // `String.class`, `Foo.Bar.class`: rebuild the qualified name.
     let name = join_identifiers(node);
@@ -1507,11 +1507,11 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
             // type is the primitive keyword or the `QUALIFIED_NAME`, with the
             // `TYPE_ARGUMENTS` of the `new` itself (joining all identifiers
             // would swallow the arguments).
-            if let Some(prim) = node
+            if let Some(ty) = node
                 .children_with_tokens()
-                .find_map(|e| e.as_token().and_then(primitive_from_token))
+                .find_map(|e| e.as_token().and_then(primitive_type_ref))
             {
-                return Some(SpannedTypeRef::synthetic(TypeRef::Primitive(prim)));
+                return Some(SpannedTypeRef::synthetic(ty));
             }
             let qual = node.children().find(|c| c.kind() == QUALIFIED_NAME);
             let name = qual
@@ -2015,10 +2015,19 @@ fn primitive_from_token(token: &SyntaxToken<Lang>) -> Option<PrimitiveType> {
         J::BYTE_KW => PrimitiveType::Byte,
         J::CHAR_KW => PrimitiveType::Char,
         J::SHORT_KW => PrimitiveType::Short,
-        J::VOID_KW => PrimitiveType::Void,
         _ => return None,
     };
     Some(prim)
+}
+
+/// The type a primitive keyword token names: one of the eight primitive types,
+/// or `void` — a type ([JLS §4.3]) but not a primitive ([§4.2]), and so its
+/// own [`TypeRef::Void`].
+fn primitive_type_ref(token: &SyntaxToken<Lang>) -> Option<TypeRef<Name>> {
+    match token.kind() {
+        J::VOID_KW => Some(TypeRef::Void),
+        _ => primitive_from_token(token).map(TypeRef::Primitive),
+    }
 }
 
 fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {

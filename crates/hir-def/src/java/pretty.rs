@@ -470,6 +470,7 @@ pub fn render_type(ty: &TypeRef<Name>) -> String {
         },
         TypeRef::TypeVariable(name) => name.to_string(),
         TypeRef::Array(inner) => format!("{}[]", render_type(inner)),
+        TypeRef::Void => "void".to_owned(),
         TypeRef::Error => "<error>".to_owned(),
         // Kotlin-only ([`TypeRef::Nullable`]): a Java source type is never
         // nullable ([JLS §4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.1)),
@@ -490,7 +491,6 @@ pub fn render_primitive(prim: PrimitiveType) -> &'static str {
         PrimitiveType::Byte => "byte",
         PrimitiveType::Char => "char",
         PrimitiveType::Short => "short",
-        PrimitiveType::Void => "void",
     }
 }
 

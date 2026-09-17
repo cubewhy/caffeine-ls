@@ -389,7 +389,9 @@ impl<'a> ClassParser<'a> {
             Some('J') => TypeRef::Primitive(PrimitiveType::Long),
             Some('S') => TypeRef::Primitive(PrimitiveType::Short),
             Some('Z') => TypeRef::Primitive(PrimitiveType::Boolean),
-            Some('V') => TypeRef::Primitive(PrimitiveType::Void),
+            // JVMS §4.3.2: `V` is the void descriptor — a method's result
+            // type, not a primitive ([JLS §4.2]).
+            Some('V') => TypeRef::Void,
             Some('L') => {
                 let mut name = String::new();
                 while let Some(&c) = chars.peek() {

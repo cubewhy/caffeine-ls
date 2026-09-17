@@ -373,7 +373,7 @@ pub(crate) fn body_types_impl(
                         && ctx
                             .enclosing_ret
                             .as_ref()
-                            .is_some_and(|ret| !ret.is_void_like(db) && !ret.is_error(db))
+                            .is_some_and(|ret| !ret.is_void(db) && !ret.is_error(db))
                         && !ctx.exited
                     {
                         // javac's caret sits on the method's closing

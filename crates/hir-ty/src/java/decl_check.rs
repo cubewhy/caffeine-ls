@@ -1365,10 +1365,13 @@ fn check_class(
                 }
                 // §8.4.8.3: an overriding *instance* method must be
                 // return-type-substitutable — its return type is a subtype of
-                // the overridden return type. A static method hides (§8.4.8.2)
+                // the overridden return type. `void` participates as itself:
+                // `is_subtype` holds only of `void` against `void`, so a
+                // `void` method overriding a value-returning one (or the
+                // reverse) is reported here. A static method hides (§8.4.8.2)
                 // and its result type is unconstrained, so only instance pairs
                 // are checked.
-                if !method.is_static && !method.ret.is_void(db) {
+                if !method.is_static {
                     // §8.4.8.3: the overriding return must be *substitutable*
                     // for the overridden one — `R1 <: R2`, or `R1 <: |R2|`
                     // against its ERASURE when the overridden return is a type

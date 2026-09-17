@@ -45,6 +45,17 @@ pub enum TypeRef<N> {
     /// `type-system.html#intersection-types`](https://kotlinlang.org/spec/type-system.html#intersection-types)).
     /// Kotlin source only, like [`TypeRef::Nullable`].
     DefinitelyNonNull(Box<TypeRef<N>>),
+    /// The `void` type ([JLS §4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.3)).
+    ///
+    /// `void` is a type but *not* a primitive type
+    /// ([§4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.2)
+    /// lists only `boolean` and the numeric types), so it gets its own kind
+    /// rather than a [`PrimitiveType`] variant: no `void` value exists, and
+    /// only a method's result type and the class literal `void.class` name it.
+    /// It is the classfile's `V` ([JVMS §4.3.2]) and, like the other variants
+    /// added after [`TypeRef::Error`], declared last so every persisted
+    /// encoding of the variants before it is unchanged.
+    Void,
 }
 
 impl<N> TypeRef<N> {
@@ -136,7 +147,6 @@ pub enum PrimitiveType {
     Byte,
     Char,
     Short,
-    Void,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]

@@ -110,7 +110,7 @@ impl<'a> SigParser<'a> {
             }
             Some('V') => {
                 self.consume();
-                TypeRef::Primitive(PrimitiveType::Void)
+                TypeRef::Void
             }
             Some('[') | Some('T') | Some('L') => self.parse_reference_type_signature(),
             // Unrecognized signature character: consume it so malformed

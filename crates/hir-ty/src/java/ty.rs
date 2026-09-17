@@ -31,6 +31,9 @@ pub fn ty_from_type_ref<N>(
 ) -> Ty {
     match tyref {
         TypeRef::Primitive(p) => Ty::primitive(db, *p),
+        // `void` is a type ([JLS §4.3]) but not a primitive ([§4.2]), and the
+        // model gives it its own kind.
+        TypeRef::Void => Ty::void(db),
         TypeRef::Reference {
             name: n,
             generic_args,

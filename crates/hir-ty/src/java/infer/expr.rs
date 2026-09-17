@@ -92,6 +92,11 @@ impl InferCtx<'_> {
                 let inner = resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref);
                 let inner = match inner.kind(self.db) {
                     TyKind::Primitive(p) => Ty::reference(self.db, boxed_type(*p), Vec::new()),
+                    // `void` has no boxing conversion of its own ([§5.1.7]),
+                    // but §15.8.2 asks for "the type of an expression of type
+                    // p after boxing conversion": the JLS names `void.class`
+                    // as `Class<Void>`.
+                    TyKind::Void => Ty::reference(self.db, "java.lang.Void", Vec::new()),
                     _ => inner,
                 };
                 Ty::reference(self.db, "java.lang.Class", vec![inner])
