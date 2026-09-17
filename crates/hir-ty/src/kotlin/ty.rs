@@ -182,7 +182,7 @@ pub fn ty_from_kotlin(db: &dyn TyDatabase, ty: Ty) -> Ty {
                 return Ty::primitive(db, primitive);
             }
             if name.as_str() == "kotlin.Unit" {
-                return Ty::reference(db, "void", Vec::new());
+                return Ty::void(db);
             }
             // The JVM name of a nested classifier joins with `$`
             // ([JVMS §4.2]).
@@ -287,7 +287,6 @@ pub const MAPPED_TYPES: &[(&str, &str)] = &[
     ("java.lang.Cloneable", "kotlin.Cloneable"),
     ("java.lang.Number", "kotlin.Number"),
     ("java.lang.Comparable", "kotlin.Comparable"),
-    ("java.lang.Iterable", "kotlin.collections.Iterable"),
     ("java.lang.Enum", "kotlin.Enum"),
     ("java.lang.Annotation", "kotlin.Annotation"),
     ("java.lang.Integer", "kotlin.Int"),
@@ -299,13 +298,40 @@ pub const MAPPED_TYPES: &[(&str, &str)] = &[
     ("java.lang.Short", "kotlin.Short"),
     ("java.lang.Byte", "kotlin.Byte"),
     ("java.lang.Void", "kotlin.Unit"),
+    // The collection interfaces have **two** Kotlin classifiers each — the
+    // read-only view and the mutable one, which share one JVM interface
+    // (<https://kotlinlang.org/docs/java-interop.html#mapped-types> lists both
+    // for every entry). A Java type is read as the read-only view here: the
+    // compiler reads it as the *platform* type `(Mutable)List<T>!`, whose upper
+    // bound is this one, and the mutable entry stays in the table because it is
+    // the JVM view's answer for the classifier the Kotlin side writes
+    // ([`super::builtins::declared_supertypes`] is what makes `MutableList` a
+    // `List` and an `ArrayList` a `MutableList`).
     ("java.util.List", "kotlin.collections.List"),
+    ("java.util.List", "kotlin.collections.MutableList"),
     ("java.util.Set", "kotlin.collections.Set"),
+    ("java.util.Set", "kotlin.collections.MutableSet"),
     ("java.util.Map", "kotlin.collections.Map"),
+    ("java.util.Map", "kotlin.collections.MutableMap"),
     ("java.util.Map$Entry", "kotlin.collections.Map.Entry"),
+    (
+        "java.util.Map$Entry",
+        "kotlin.collections.MutableMap.MutableEntry",
+    ),
     ("java.util.Collection", "kotlin.collections.Collection"),
+    (
+        "java.util.Collection",
+        "kotlin.collections.MutableCollection",
+    ),
     ("java.util.Iterator", "kotlin.collections.Iterator"),
+    ("java.util.Iterator", "kotlin.collections.MutableIterator"),
     ("java.util.ListIterator", "kotlin.collections.ListIterator"),
+    (
+        "java.util.ListIterator",
+        "kotlin.collections.MutableListIterator",
+    ),
+    ("java.lang.Iterable", "kotlin.collections.Iterable"),
+    ("java.lang.Iterable", "kotlin.collections.MutableIterable"),
     ("java.util.ArrayList", "kotlin.collections.ArrayList"),
     ("java.util.HashMap", "kotlin.collections.HashMap"),
     (

@@ -286,7 +286,15 @@ impl<'a> KotlinResolver<'a> {
             return local;
         }
         match self.class_fqn(text) {
-            Some(fqn) => Ty::reference(self.db, fqn, args),
+            // A *classfile* name is rewritten to the Kotlin classifier it
+            // denotes, so the two spellings of one type are one type:
+            // `java.util.List` **is** `kotlin.collections.List`
+            // ([`super::ty::MAPPED_TYPES`], KLS
+            // `built-in-types-and-their-semantics.html`), and `List<Int>` typed
+            // through a Java member compares equal to one written in Kotlin.
+            // A source declaration keeps its own name (the table renames only
+            // the mapped JVM classes).
+            Some(fqn) => Ty::reference(self.db, super::ty::mapped_type_name(&fqn), args),
             None => Ty::error(self.db),
         }
     }
@@ -366,8 +374,19 @@ impl<'a> KotlinResolver<'a> {
             return self.local_fqn(simple);
         }
         for candidate in self.candidates(name) {
+            // A *built-in* Kotlin classifier — `kotlin.Int`, `kotlin.Any`,
+            // `kotlin.collections.List` — is a type of the language and has no
+            // classfile to find; the candidate order still decides it, so a
+            // classpath class of the same simple name (`java.util.List` under a
+            // `java.util.*` star import) wins where Kotlin's own import order
+            // says it does.
             if let Some(fqn) = self.fqn_resolve(&candidate) {
                 return Some(fqn);
+            }
+            if super::builtins::is_builtin(&candidate)
+                || super::builtins::jvm_class(&candidate).is_some()
+            {
+                return Some(Name::new(&candidate));
             }
         }
         None

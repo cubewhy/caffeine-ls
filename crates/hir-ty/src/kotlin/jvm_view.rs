@@ -246,6 +246,8 @@ fn class_key(db: &dyn TyDatabase, source: hir::SourceClass) -> ClassKey {
 /// element carries ([`annotation_name`] reads the element values M2 lowered).
 fn annotation_name(annotations: &[KotlinAnnotationRef]) -> Option<Name> {
     for application in annotations {
+        // FIXME: I consider it is kotlin.jvm.JvmName, like @kotlin.jvm.JvmName("foo1")
+        // don't match "JvmName" directly
         if application.annotation.name.as_str() != "JvmName" {
             continue;
         }
@@ -265,6 +267,7 @@ fn targeted_name(annotations: &[KotlinAnnotationRef], target: &str) -> Option<St
             .target
             .as_ref()
             .is_some_and(|written| written.as_str() == target);
+        // FIXME: for now `@get:kotlin.jvm.JvmName("getExampleVar")` is not recognised
         if applies && application.annotation.name.as_str() == "JvmName" {
             for arg in &application.annotation.args {
                 if let ItemAnnotationValue::Literal(Literal::Str(value)) = &arg.value {
@@ -491,7 +494,7 @@ impl<'a> Shapes<'a> {
             // signature inference is what decides which (KLS
             // `type-inference.html#function-signature-type-inference`), and
             // until it lands the erased answer is `void`.
-            None => Ty::reference(self.db, "void", Vec::new()),
+            None => Ty::void(self.db),
         };
         let varargs = function
             .params
@@ -581,7 +584,7 @@ impl<'a> Shapes<'a> {
                 })
                 .collect(),
             param_names: None,
-            ret: Ty::reference(self.db, "void", Vec::new()),
+            ret: Ty::void(self.db),
             throws: Vec::new(),
             varargs: constructor
                 .params
@@ -623,11 +626,7 @@ impl<'a> Shapes<'a> {
             params: if is_setter { vec![ty] } else { Vec::new() },
             param_names: None,
             // A setter returns `void`; a getter the property's type.
-            ret: if is_setter {
-                Ty::reference(self.db, "void", Vec::new())
-            } else {
-                ty
-            },
+            ret: if is_setter { Ty::void(self.db) } else { ty },
             throws: Vec::new(),
             varargs: false,
             is_static,

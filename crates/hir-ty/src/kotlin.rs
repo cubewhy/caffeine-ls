@@ -27,6 +27,7 @@
 //! * [`diagnostics`] — the Kotlin type errors, with the compiler's wordings;
 //! * [`infer`] — body inference over the lowered body IR.
 
+pub mod builtins;
 pub mod db;
 pub mod diagnostics;
 pub mod infer;

@@ -107,6 +107,11 @@ impl KotlinBodyTypes {
     }
 }
 
+/// A type rendered for a trace.
+fn hir_ty_display(db: &dyn TyDatabase, ty: Ty) -> String {
+    super::ty::display_kotlin(db, ty).to_string()
+}
+
 /// The receiver a call with a lambda argument is written on: the expression a
 /// written receiver is — which the walk infers — a type a caller already has, or
 /// no receiver at all (an unqualified call).
@@ -1579,6 +1584,10 @@ impl<'a> InferCtx<'a> {
             method::MemberTarget::JavaField(field) => {
                 KotlinResolvedMember::JavaField(Box::new(field.as_ref().clone()))
             }
+            // A member the language declares on a built-in classifier has no
+            // declaration to record: there is nothing to name, navigate to or
+            // hint about.
+            method::MemberTarget::Builtin { .. } => return,
         };
         self.types.resolved.insert(expr, resolved);
     }
@@ -2018,7 +2027,17 @@ impl<'a> InferCtx<'a> {
                 self.record_member(expr, &member);
                 class.clone()
             }
-            None => self.error(),
+            None => {
+                eprintln!(
+                    "CTOR-NONE {name} class={} members={:?}",
+                    crate::display_kotlin(self.db, *class),
+                    method::declared_members(self.db, &self.scope, class, name, self.site())
+                        .iter()
+                        .map(|m| format!("{:?}", m.kind))
+                        .collect::<Vec<_>>()
+                );
+                self.error()
+            }
         }
     }
 
@@ -2034,7 +2053,17 @@ impl<'a> InferCtx<'a> {
             return Some(local);
         }
         let fqn = self.resolver.class_fqn(name.as_str())?;
-        Some(Ty::reference(self.db, fqn, Vec::new()))
+        // The *Kotlin* spelling of the classifier: a classfile name is the
+        // mapped JVM class of the Kotlin type it denotes
+        // ([`super::ty::MAPPED_TYPES`]), so `ArrayList()` on a receiver
+        // resolved through `java.util.ArrayList` is the
+        // `kotlin.collections.ArrayList` the member lookup, the supertype walk
+        // and the written type all agree on.
+        Some(Ty::reference(
+            self.db,
+            super::ty::mapped_type_name(&fqn),
+            Vec::new(),
+        ))
     }
 
     /// The type of the receiver `this` denotes inside the declaration whose body

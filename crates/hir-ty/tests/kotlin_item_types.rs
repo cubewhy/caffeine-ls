@@ -1714,112 +1714,103 @@ fun joined(names: List<String>): String =
     );
 }
 
+/// A Kotlin *built-in* classifier has no classfile of its own: the compiler
+/// maps it onto a JVM type (KLS
+/// `built-in-types-and-their-semantics.html`), and this model reads its members
+/// and its supertypes through that JVM type. Three consequences the test pins:
+/// a Kotlin *spelling* of a library class (`ArrayList`, `List`) is the same
+/// classifier as the classfile it resolves to; `MutableList` and `List` are
+/// related by Kotlin's declaration (both erase to `java.util.List`, so the
+/// JVM's own hierarchy cannot tell them apart); and the members the *language*
+/// declares on the built-ins (`Double.toInt()`) have no classfile at all.
 #[test]
-fn zz_probe_trailing() {
+fn a_builtin_classifier_resolves_through_its_jvm_class() {
     let source = r#"
-class Panel {
-    private fun <T> update(configObject: Any, key: String, newValue: T, setter: (T) -> Unit) {
-        setter(newValue)
+import java.util.ArrayList
+
+class Holder {
+    fun sizes(list: List<String>, arrayList: ArrayList<String>): Int {
+        return list.size + arrayList.size
     }
 
-    fun use(config: String) {
-        update(config, "k", "v") { it.length }
-    }
+    fun toInts(value: Double): Int = value.toInt()
+
+    fun asMutable(list: ArrayList<String>): MutableList<String> = list
+
+    fun asReadOnly(list: MutableList<String>): List<String> = list
 }
 "#;
     let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
     let tree = hir::hir_def::kotlin::plugin::tree(&db, file).expect("a Kotlin file");
-    let bodies = hir::file_body_tree(&db, file);
-    println!(
-        "BODY:\n{}",
-        hir_def::kotlin::pretty::pretty_body(&tree, &bodies)
+    let rendered = render_types(&db, file);
+    assert!(
+        !rendered.contains("<error>"),
+        "every written type resolves, built-ins included: {rendered}"
     );
-}
-
-#[test]
-fn zz_probe_bind() {
-    let source = r#"
-class Panel {
-    private fun bind(currentValue: String, key: String, parentObj: Any = this, setter: (String) -> Unit) {
-        setter(currentValue)
-    }
-
-    fun use() {
-        bind("x", "k") { it.length }
-    }
-}
-"#;
-    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
-    let tree = hir::hir_def::kotlin::plugin::tree(&db, file).expect("a Kotlin file");
-    let bodies = hir::file_body_tree(&db, file);
-    println!(
-        "BODY:\n{}",
-        hir_def::kotlin::pretty::pretty_body(&tree, &bodies)
+    let bodies = render_bodies(&db, file);
+    assert!(
+        !bodies.contains("<error>") && !bodies.contains("kotlin."),
+        "every expression of the file types: {bodies}"
     );
-    let scope = hir::ResolutionScope::SourceSet(hir::source_set_for_file(&db, file).unwrap());
-    let panel_item = tree.top[0];
-    let panel = hir_ty::kotlin_item_ty(&db, file, panel_item);
-    let use_item = tree
-        .data(panel_item)
-        .body()
-        .iter()
-        .copied()
-        .find(|&id| {
-            matches!(
-                tree.data(id).name().map(|n| n.to_string()).as_deref(),
-                Some("use")
-            )
-        })
-        .expect("use");
-    let members = hir_ty::kotlin::method::declared_members(
+    let scope = scope(&db, file);
+    let string = Ty::reference(
+        &db,
+        hir_expand::name::Name::new("kotlin.String"),
+        Vec::new(),
+    );
+    let of = |fqn: &str| Ty::reference(&db, hir_expand::name::Name::new(fqn), vec![string]);
+    let list = of("kotlin.collections.List");
+    let mutable_list = of("kotlin.collections.MutableList");
+    let array_list = of("kotlin.collections.ArrayList");
+    // `MutableList<String> <: List<String>` — Kotlin's declaration, in one
+    // direction only.
+    assert!(hir_ty::kotlin_subtype(&db, &scope, &mutable_list, &list));
+    assert!(!hir_ty::kotlin_subtype(&db, &scope, &list, &mutable_list));
+    // `ArrayList<String>` is both: a `MutableList` by Kotlin's declaration of
+    // `ArrayList`, a `List` through the JVM hierarchy of the class it maps
+    // onto.
+    assert!(hir_ty::kotlin_subtype(
         &db,
         &scope,
-        &panel,
-        &hir_expand::name::Name::new("bind"),
+        &array_list,
+        &mutable_list
+    ));
+    assert!(hir_ty::kotlin_subtype(&db, &scope, &array_list, &list));
+    // `java.util.List` read from a classfile is the *same* classifier as the
+    // Kotlin `List` the source writes.
+    let java_list = Ty::reference(
+        &db,
+        hir_expand::name::Name::new("java.util.List"),
+        vec![string],
+    );
+    assert!(hir_ty::kotlin_subtype(&db, &scope, &java_list, &list));
+    assert!(hir_ty::kotlin_subtype(&db, &scope, &list, &java_list));
+    // `Double.toInt()` is a member the *language* declares on the built-in
+    // numeric type: no classfile carries it.
+    let double = Ty::reference(
+        &db,
+        hir_expand::name::Name::new("kotlin.Double"),
+        Vec::new(),
+    );
+    let members = hir_ty::kotlin_declared_members(
+        &db,
+        &scope,
+        &double,
+        &hir_expand::name::Name::new("toInt"),
         hir_ty::kotlin::method::CallSite {
             file,
-            item: use_item,
+            item: hir_expand::ids::ItemId({
+                let mut ids = tree.items.iter().map(|(id, _)| id);
+                ids.next().expect("a declaration")
+            }),
         },
     );
-    println!("MEMBERS={}", members.len());
-    for member in &members {
-        println!(
-            "MEMBER names={:?} defaulted={:?} params={}",
-            member
-                .param_names
-                .iter()
-                .map(|n| n.to_string())
-                .collect::<Vec<_>>(),
-            member.defaulted,
-            member.params.len()
-        );
-        let picked = hir_ty::kotlin::method::pick_callable(
-            &db,
-            &scope,
-            &panel,
-            &hir_expand::name::Name::new("bind"),
-            &[
-                hir_ty::kotlin::method::CallArg {
-                    name: None,
-                    ty: hir_ty::Ty::reference(&db, "kotlin.String", Vec::new()),
-                    trailing: false,
-                },
-                hir_ty::kotlin::method::CallArg {
-                    name: None,
-                    ty: hir_ty::Ty::reference(&db, "kotlin.String", Vec::new()),
-                    trailing: false,
-                },
-                hir_ty::kotlin::method::CallArg {
-                    name: None,
-                    ty: hir_ty::Ty::error(&db),
-                    trailing: true,
-                },
-            ],
-            hir_ty::kotlin::method::CallSite {
-                file,
-                item: use_item,
-            },
-        );
-        println!("MEMBER picked={}", picked.is_some());
-    }
+    assert_eq!(
+        members
+            .iter()
+            .map(|member| hir_ty::display_kotlin(&db, member.ty(&db)).to_string())
+            .collect::<Vec<_>>(),
+        vec!["Int".to_owned()],
+        "`Double.toInt()` is a member the language declares, and is `Int`"
+    );
 }

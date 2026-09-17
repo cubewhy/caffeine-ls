@@ -493,8 +493,16 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
         class("kotlin/Unit", Some("kotlin/Any"), &[], 0x0031),
         class("kotlin/Nothing", Some("kotlin/Any"), &[], 0x0031),
         // `interface List<out E>` — an interface, hence `ACC_INTERFACE |
-        // ACC_ABSTRACT`.
-        class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601),
+        // ACC_ABSTRACT`. `size` stands for the members the *JVM* interface the
+        // classifier maps onto declares: the real standard library carries no
+        // `kotlin/collections/List.class` at all (`List` is one of the
+        // language's built-in classifiers, and the compiler reads it as
+        // `java.util.List`), so this fixture class is the JVM shape and carries
+        // what a Kotlin file reads through it.
+        ClassSpec {
+            methods: &[("size", "()I")],
+            ..class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601)
+        },
         // `class Array<T>` — the classifier a Kotlin array type is, which the
         // library's own `forEach`/`map` extensions are written over.
         class("kotlin/Array", Some("kotlin/Any"), &[], 0x0031),

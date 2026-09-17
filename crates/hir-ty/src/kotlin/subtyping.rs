@@ -60,6 +60,31 @@ pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) ->
         return Vec::new();
     };
     let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
+        // A built-in Kotlin classifier has no classfile: its supertypes are the
+        // mapped JVM type's ([`super::builtins`]), converted back to the Kotlin
+        // names the mapping table pairs them with — `kotlin.collections.List` is
+        // a `kotlin.collections.Collection` because `java.util.List` is a
+        // `java.util.Collection`.
+        if let Some(jvm) = super::builtins::jvm_ty(db, *ty) {
+            // The JVM type's own hierarchy, plus the supertypes Kotlin's
+            // declaration adds where the JVM cannot tell two classifiers apart
+            // ([`super::builtins::declared_supertypes`]: `MutableList` and
+            // `List` share `java.util.List`).
+            let mut supertypes = supertypes_of_another_language(db, scope, &jvm);
+            // The declared supertype takes the receiver's own arguments: every
+            // pair in the table maps its arguments one-to-one (`ArrayList<E>`
+            // is a `MutableList<E>`, `HashMap<K, V>` a `MutableMap<K, V>`).
+            let args: Vec<Ty> = match ty.kind(db) {
+                TyKind::Reference { args, .. } => args.to_vec(),
+                _ => Vec::new(),
+            };
+            supertypes.extend(
+                super::builtins::declared_supertypes(fqn.as_str())
+                    .into_iter()
+                    .map(|name| Ty::reference(db, name, args.clone())),
+            );
+            return supertypes;
+        }
         return Vec::new();
     };
     match &resolved {
@@ -411,6 +436,17 @@ fn arguments_are_subtypes(
     sub_args: &[Ty],
     sup_args: &[Ty],
 ) -> bool {
+    // A reference the model could not instantiate — a constructor call whose
+    // type arguments no source wrote and nothing inferred, so the receiver is
+    // the *class* rather than an instantiation of it — is compatible with every
+    // instantiation: Kotlin has no raw types, so an empty argument list here is
+    // never a written type, and rejecting it would report a mismatch the
+    // compiler does not ([KLS
+    // `type-inference.html#call-with-an-expected-type`](https://kotlinlang.org/spec/type-inference.html#call-with-an-expected-type)
+    // infers a constructor call's type arguments from the expected type).
+    if sub_args.is_empty() && !sup_args.is_empty() {
+        return true;
+    }
     if sub_args.len() != sup_args.len() {
         return false;
     }

@@ -127,6 +127,7 @@ pub use kotlin::db::{
 };
 pub use kotlin::diagnostics::KotlinTypeError;
 pub use kotlin::infer::KotlinResolvedMember;
+pub use kotlin::method::declared_members as kotlin_declared_members;
 pub use kotlin::resolve::KotlinResolver;
 pub use kotlin::subtyping::{is_assignable as kotlin_assignable, is_subtype as kotlin_subtype};
 pub use kotlin::ty::display_kotlin;

@@ -1097,6 +1097,13 @@ fn rewrite_with(
                                 }
                             }
                             TyKind::Array(inner) => stack.push(Frame::Visit(**inner)),
+                            // A nullable or definitely-non-nullable type *is*
+                            // its inner type with one attribute changed, and it
+                            // is built from it — `MutableList<T>?` carries the
+                            // same `T` the plain reference does.
+                            TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => {
+                                stack.push(Frame::Visit(*inner));
+                            }
                             TyKind::Wildcard(bound) => {
                                 if let Some(bound) = bound.as_deref() {
                                     stack.push(Frame::Visit(bound.ty));
@@ -1131,6 +1138,10 @@ fn rewrite_with(
                         ty.with_args(db, args.iter().map(|arg| memo[&arg.id]).collect())
                     }
                     TyKind::Array(inner) => Ty::array(db, memo[&inner.id]),
+                    TyKind::Nullable(inner) => Ty::nullable(db, memo[&inner.id]),
+                    TyKind::DefinitelyNonNull(inner) => {
+                        Ty::definitely_non_null(db, memo[&inner.id])
+                    }
                     TyKind::Wildcard(bound) => Ty::wildcard(
                         db,
                         bound.as_deref().map(|b| {

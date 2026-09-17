@@ -61,6 +61,11 @@ pub enum MemberTarget {
     Java(Box<MethodData>),
     /// A Java source field or a classfile field, or a synthesized property.
     JavaField(Box<FieldData>),
+    /// A member the *language* declares on a built-in classifier: the numeric
+    /// conversion functions (`Double.toInt`) and the properties of an array
+    /// (`Array.size`) are compiler intrinsics, so no declaration carries them
+    /// ([`super::builtins`]).
+    Builtin { ret: Ty },
 }
 
 /// A member reachable on a receiver.
@@ -121,6 +126,8 @@ impl Member {
                 _ => ty_from_java(db, method.ret),
             },
             MemberTarget::JavaField(field) => ty_from_java(db, field.ty),
+            // A built-in member's type is the one the language declares for it.
+            MemberTarget::Builtin { ret } => *ret,
         }
     }
 
@@ -129,6 +136,7 @@ impl Member {
         match &self.target {
             MemberTarget::Kotlin { file, .. } => Some(*file),
             MemberTarget::Java(method) => method.owner_file,
+            MemberTarget::Builtin { .. } => None,
             MemberTarget::JavaField(field) => field.owner_file,
         }
     }
@@ -481,9 +489,9 @@ fn extension_of(
         return None;
     }
     match data {
-        KotlinItemData::Function(function) => Some(kotlin_function_member(
-            db, file, item, name, resolver, function,
-        )),
+        KotlinItemData::Function(function) => {
+            Some(kotlin_function_member(db, file, item, name, tree, function))
+        }
         KotlinItemData::Property(property) => {
             let ty = super::db::item_ty(db, file, item);
             let declared_setter = property.accessors.iter().any(|&accessor| {
@@ -595,7 +603,37 @@ fn collect_members(
             }
         }
         ReceiverKey::Named(fqn) => {
+            // A member the *language* declares on the receiver's built-in
+            // classifier comes first: it has no declaration to look up, and the
+            // classfile the built-in maps to has no method for it.
+            if let Some(ret) = super::builtins::member_return(fqn.as_str(), name.as_str()) {
+                out.push(Member {
+                    target: MemberTarget::Builtin {
+                        ret: Ty::reference(db, ret, Vec::new()),
+                    },
+                    name: name.clone(),
+                    kind: if super::builtins::member_is_property(fqn.as_str(), name.as_str()) {
+                        MemberKind::Property
+                    } else {
+                        MemberKind::Function
+                    },
+                    params: Vec::new(),
+                    param_names: Arc::from(Vec::new()),
+                    defaulted: Arc::from(Vec::new()),
+                    vararg: false,
+                    extension: false,
+                });
+            }
+            // A built-in Kotlin classifier has no classfile of its own — the
+            // compiler maps it onto a JVM type ([`super::builtins`]) — so the
+            // mapped class answers for the members a classfile *does* know
+            // (`List.size` is `java.util.List.size()`, `Int.compareTo` is
+            // `java.lang.Integer.compareTo`), their types converted back to
+            // Kotlin's by [`member_of_method`].
             let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
+                if let Some(jvm) = super::builtins::jvm_ty(db, *receiver) {
+                    java_members(db, scope, &jvm, name, ctx, constructors, out);
+                }
                 return;
             };
             match &resolved {
@@ -664,7 +702,11 @@ fn names_the_class(
     }
     // The written name may be qualified (`a.Util`); the call writes the simple
     // name.
-    hir::fqn_resolve(db, scope, fqn.as_str()).is_some() && fqn.simple_name() == name.as_str()
+    // A Kotlin *spelling* of a library class — `ArrayList` for
+    // `java.util.ArrayList`, `MutableList` for `java.util.List` — classifies
+    // the same way its JVM name does ([`super::builtins::jvm_class`]).
+    let jvm = super::builtins::jvm_class(fqn.as_str()).unwrap_or(fqn.as_str());
+    hir::fqn_resolve(db, scope, jvm).is_some() && fqn.simple_name() == name.as_str()
 }
 
 /// The members of one Kotlin declaration's body, plus its companion's when
@@ -699,7 +741,7 @@ fn kotlin_members(
         match data {
             KotlinItemData::Function(function) if member_name == Some(name) => {
                 out.push(kotlin_function_member(
-                    db, file, member, name, resolver, function,
+                    db, file, member, name, tree, function,
                 ));
             }
             // `Foo(1)`: the constructors of the class the receiver denotes.
@@ -711,7 +753,7 @@ fn kotlin_members(
                     params: constructor
                         .params
                         .iter()
-                        .map(|param| super::ty::ty_from_type_ref(db, resolver, &param.param.ty.ty))
+                        .map(|param| super::ty::ty_from_type_ref(db, &resolver, &param.param.ty.ty))
                         .collect(),
                     param_names: constructor
                         .params
@@ -1009,9 +1051,14 @@ fn kotlin_function_member(
     file: FileId,
     item: hir_expand::ids::ItemId,
     name: &Name,
-    resolver: &KotlinResolver<'_>,
+    tree: &KotlinItemTree,
     function: &hir::hir_def::kotlin::item_tree::FunctionData,
 ) -> Member {
+    // The parameter types are resolved in the *declaring item's* scope: a
+    // function may declare type parameters of its own
+    // (`private fun <T> update(value: T, setter: (T) -> Unit)`), and the class's
+    // scope does not carry them.
+    let resolver = KotlinResolver::for_item(db, file, tree, item);
     Member {
         target: MemberTarget::Kotlin { file, item },
         name: name.clone(),
@@ -1019,7 +1066,7 @@ fn kotlin_function_member(
         params: function
             .params
             .iter()
-            .map(|param| super::ty::ty_from_type_ref(db, resolver, &param.param.ty.ty))
+            .map(|param| super::ty::ty_from_type_ref(db, &resolver, &param.param.ty.ty))
             .collect(),
         param_names: function
             .params
@@ -1274,12 +1321,16 @@ pub(crate) fn facade_class_members(
         if !method.is_static {
             continue;
         }
-        out.push(member_of_method(
-            db,
-            name.clone(),
-            MemberKind::Function,
-            method.clone(),
-        ));
+        let mut member = member_of_method(db, name.clone(), MemberKind::Function, method.clone());
+        // A Kotlin *library*'s default parameter values live in the `@Metadata`
+        // annotation, which this model does not decode, and the compiler's
+        // `$default` overload carries them as a bit mask the classfile reader
+        // would have to interpret. A facade's parameters are therefore read as
+        // all-defaulted: `joinToString(",", … ) { it }` omits five of the six
+        // parameters between its separator and its transform, and kotlinc
+        // accepts the same call.
+        member.defaulted = vec![true; member.params.len()].into();
+        out.push(member);
     }
     out
 }
@@ -1463,8 +1514,7 @@ pub fn declaration_callable(
     if function.name != *name {
         return None;
     }
-    let resolver = KotlinResolver::for_item(db, file, tree, item);
-    let member = kotlin_function_member(db, file, item, name, &resolver, function);
+    let member = kotlin_function_member(db, file, item, name, tree, function);
     applies(db, scope, &member, args).then_some(member)
 }
 
