@@ -1323,7 +1323,18 @@ fn facade_members(
     for facade in facades_declaring(db, scope, package, name) {
         let fqn = facade.fqn(db).as_name().clone();
         let ty = Ty::reference(db, fqn, Vec::new());
-        out.extend(facade_class_members(db, scope, &ty, name));
+        for member in facade_class_members(db, scope, &ty, name) {
+            // A *top-level* property is read with no arguments: the getter's
+            // parameter is the receiver an extension property declares, and a
+            // top-level one has none.
+            let mut member = member;
+            if member.kind == MemberKind::Getter {
+                member.params = Vec::new();
+                member.param_names = Arc::from(Vec::new());
+                member.defaulted = Arc::from(Vec::new());
+            }
+            out.push(member);
+        }
     }
 }
 
@@ -1381,9 +1392,17 @@ pub(crate) fn facade_class_members(
             if !method.is_static {
                 continue;
             }
-            let mut member = member_of_method(db, name.clone(), MemberKind::Getter, method);
-            member.params = Vec::new();
-            out.push(member);
+            // The parameters stay on the member: a getter's first parameter is
+            // the *receiver* of a Kotlin extension property (`val <T : Any>
+            // T.javaClass: Class<T>` compiles to `getJavaClass(Object)`), which
+            // [`as_extension`] is what strips. A *top-level* property read takes
+            // the getter without arguments ([`facade_members`] clears them).
+            out.push(member_of_method(
+                db,
+                name.clone(),
+                MemberKind::Getter,
+                method,
+            ));
         }
     }
     if let Some(field) =
