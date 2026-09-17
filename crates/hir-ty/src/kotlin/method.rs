@@ -246,6 +246,14 @@ fn unify(
             }
         }
         (TyKind::Array(param), TyKind::Array(arg)) => unify(db, param, arg, binding),
+        // A `vararg` parameter is an array in the classfile
+        // ([JVMS §4.3.3](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.3.3))
+        // while the call writes its elements one by one: `mutableListOf("a")`
+        // determines `T` from `"a"` against the *element* type the array
+        // parameter holds.
+        (TyKind::Array(param), TyKind::Reference { .. } | TyKind::TypeVar { .. }) => {
+            unify(db, param, arg, binding);
+        }
         // A *projection* in the parameter position — `Iterable<? extends T>`,
         // which is how a classfile writes `T`'s use site
         // ([JLS §4.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5.1))
@@ -266,6 +274,24 @@ fn unify(
         }
         _ => {}
     }
+}
+
+/// Whether two types have the same *shape* — both arrays, or both non-arrays:
+/// what the permissive arm of [`applies`] needs to keep a `vararg`'s array
+/// parameter from matching a scalar argument.
+fn same_shape(db: &dyn TyDatabase, arg: &Ty, param: &Ty) -> bool {
+    let array = |ty: &Ty| {
+        let mut ty = *ty;
+        loop {
+            match ty.kind(db) {
+                TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => ty = *inner,
+                TyKind::Flexible { lower, .. } => ty = *lower,
+                _ => break,
+            }
+        }
+        matches!(ty.kind(db), TyKind::Array(_))
+    };
+    array(arg) == array(param)
 }
 
 /// Whether a member is a function, a property or a constructor — the kinds a
@@ -606,13 +632,36 @@ fn collect_members(
             // A member the *language* declares on the receiver's built-in
             // classifier comes first: it has no declaration to look up, and the
             // classfile the built-in maps to has no method for it.
-            if let Some(ret) = super::builtins::member_return(fqn.as_str(), name.as_str()) {
+            let receiver_args: Vec<Ty> = match receiver.kind(db) {
+                TyKind::Reference { args, .. } => args.to_vec(),
+                _ => Vec::new(),
+            };
+            let declared = super::builtins::member_return(fqn.as_str(), name.as_str())
+                .map(|ret| Ty::reference(db, ret, Vec::new()))
+                .or_else(|| {
+                    super::builtins::collection_property(
+                        db,
+                        fqn.as_str(),
+                        &receiver_args,
+                        name.as_str(),
+                    )
+                })
+                .or_else(|| {
+                    super::builtins::mutable_iterator(
+                        db,
+                        fqn.as_str(),
+                        &receiver_args,
+                        name.as_str(),
+                    )
+                });
+            let declared_only = declared.is_some();
+            if let Some(ret) = declared {
                 out.push(Member {
-                    target: MemberTarget::Builtin {
-                        ret: Ty::reference(db, ret, Vec::new()),
-                    },
+                    target: MemberTarget::Builtin { ret },
                     name: name.clone(),
-                    kind: if super::builtins::member_is_property(fqn.as_str(), name.as_str()) {
+                    kind: if super::builtins::member_is_property(fqn.as_str(), name.as_str())
+                        || super::builtins::is_collection_property(fqn.as_str(), name.as_str())
+                    {
                         MemberKind::Property
                     } else {
                         MemberKind::Function
@@ -623,6 +672,14 @@ fn collect_members(
                     vararg: false,
                     extension: false,
                 });
+            }
+            // A member the language declares *replaces* the classfile's: the
+            // JVM method of another name is a different declaration, and a
+            // same-named one (`MutableSet.iterator()` against
+            // `java.util.Set.iterator()`) says something else — the mutable
+            // view's iterator, not the read-only one.
+            if declared_only {
+                return;
             }
             // A built-in Kotlin classifier has no classfile of its own — the
             // compiler maps it onto a JVM type ([`super::builtins`]) — so the
@@ -735,6 +792,34 @@ fn kotlin_members(
         _ => None,
     };
     let primary = class.and_then(|class| class.primary_constructor);
+    // An `enum class` declares `entries` through the compiler, not in its body:
+    // `Enum.entries` is a `List` of the enum's own type ([KLS
+    // `declarations.html#enum-class-declaration`](https://kotlinlang.org/spec/declarations.html#enum-class-declaration)
+    // gives the declaration form; the classifier's members are the standard
+    // library's, and `entries` is one of them since Kotlin 1.9).
+    if name.as_str() == "entries"
+        && matches!(class, Some(class) if class.kind == hir::hir_def::kotlin::item_tree::KotlinClassKind::Enum)
+    {
+        out.push(Member {
+            target: MemberTarget::Builtin {
+                ret: Ty::reference(
+                    db,
+                    "kotlin.collections.List",
+                    vec![match reference_fqn(db, receiver) {
+                        Some(fqn) => Ty::reference(db, fqn, Vec::new()),
+                        None => Ty::reference(db, "kotlin.Any", Vec::new()),
+                    }],
+                ),
+            },
+            name: name.clone(),
+            kind: MemberKind::Property,
+            params: Vec::new(),
+            param_names: Arc::from(Vec::new()),
+            defaulted: Arc::from(Vec::new()),
+            vararg: false,
+            extension: false,
+        });
+    }
     for member in tree.data(item).body().iter().copied().chain(primary) {
         let data = tree.data(member);
         let member_name = data.name();
@@ -1605,8 +1690,14 @@ fn applies(
             return false;
         }
         filled[index] = true;
+        // A parameter whose type mentions a variable this model cannot bind is
+        // accepted for any argument — but its *shape* must still correspond: a
+        // `T[]` parameter is the array signature of a `vararg`, and matching it
+        // against a scalar argument (`"a" + "b"` against `Array<T> plus(Array<T>,
+        // Array<out T>)`) would let an inapplicable candidate answer the call.
         if !crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &member.params[index])
-            && !contains_type_var(db, &member.params[index])
+            && !(contains_type_var(db, &member.params[index])
+                && same_shape(db, &arg.ty, &member.params[index]))
         {
             return false;
         }

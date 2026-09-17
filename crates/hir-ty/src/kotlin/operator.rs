@@ -128,9 +128,22 @@ pub fn builtin_binary_ty(db: &dyn TyDatabase, op: BinaryOp, lhs: &Ty, rhs: &Ty) 
     if error(rhs) {
         return Some(*lhs);
     }
-    let name = |ty: &Ty| match ty.kind(db) {
-        TyKind::Reference { name, .. } => Some(super::ty::mapped_type_name(name)),
-        _ => None,
+    // A *platform* type is its lower half's classifier with a nullability
+    // attribute, and `?` changes nothing here: `"a" + b` is a `String` whether
+    // the left operand came from Kotlin source or from a classfile signature.
+    let name = |ty: &Ty| {
+        let mut ty = *ty;
+        loop {
+            match ty.kind(db) {
+                TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => ty = *inner,
+                TyKind::Flexible { lower, .. } => ty = *lower,
+                _ => break,
+            }
+        }
+        match ty.kind(db) {
+            TyKind::Reference { name, .. } => Some(super::ty::mapped_type_name(name)),
+            _ => None,
+        }
     };
     let lhs_name = name(lhs)?;
     let rhs_name = name(rhs)?;

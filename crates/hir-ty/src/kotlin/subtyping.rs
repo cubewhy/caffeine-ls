@@ -300,6 +300,21 @@ pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, s
         return true;
     }
 
+    // A *type variable* on the subtype side — or inside one of its type
+    // arguments — is one the model leaves unbound: Kotlin infers a call's type
+    // arguments from the call and from the *expected type*
+    // ([KLS
+    // `type-inference.html#call-with-an-expected-type`](https://kotlinlang.org/spec/type-inference.html#call-with-an-expected-type)),
+    // so `mutableListOf<File>()` written with no argument, `emptyMap()`'s `K`
+    // and `V`, `withContext(…)`'s `T` and `let { … }`'s `R` are the *callee's*
+    // variables. The caller cannot violate a type nobody determined, so the
+    // variable compares as unknown — the same permissiveness the error type
+    // above gets, and never a false `type mismatch` for an inference this model
+    // does not perform.
+    if mentions_unbound_var(db, *sub) {
+        return true;
+    }
+
     // A flexible type `L..U` is a subtype of `S` when its *lower* bound is, on
     // the sub side, and `S` is a subtype of it when `S <: U` on the sup side
     // ([KLS
@@ -429,6 +444,31 @@ pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, s
 
 /// Whether `sub_args` satisfy `sup_args` positionally, given the variance each
 /// parameter declares (`variances`), or invariant when it is `None`.
+/// Whether `ty` is, or mentions, a type variable the model leaves unbound: the
+/// variables of a declaration whose call site determines them
+/// ([`is_subtype`] treats them as unknown), and no others — a *class's* own
+/// parameters are bound by the receiver's arguments before any comparison.
+fn mentions_unbound_var(db: &dyn TyDatabase, ty: Ty) -> bool {
+    match ty.kind(db) {
+        // A *classfile* declaration's parameter: it is the library's metadata
+        // that a call determines it from, and this model reads the erased
+        // signature alone.
+        TyKind::TypeVar {
+            scope:
+                crate::ty::TypeVarScope::LibraryClass { .. }
+                | crate::ty::TypeVarScope::LibraryMethod { .. },
+            ..
+        } => true,
+        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => {
+            mentions_unbound_var(db, *inner)
+        }
+        TyKind::Array(inner) => mentions_unbound_var(db, **inner),
+        TyKind::Flexible { lower, .. } => mentions_unbound_var(db, *lower),
+        TyKind::Reference { args, .. } => args.iter().any(|arg| mentions_unbound_var(db, *arg)),
+        _ => false,
+    }
+}
+
 fn arguments_are_subtypes(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,

@@ -382,6 +382,110 @@ pub fn member_return(receiver: &str, member: &str) -> Option<&'static str> {
     }
 }
 
+/// The type of a property the *language* declares on a built-in *collection*,
+/// built from the receiver's own arguments: `Map.entries`, `Map.keys` and
+/// `Map.values` are members of the Kotlin interface, while the classfile spells
+/// them `entrySet()`, `keySet()` and `values()` — with the mutable views for a
+/// `MutableMap` ([KLS
+/// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)
+/// names the built-in classifiers; the members are the declarations of the
+/// standard library's own interfaces).
+pub fn collection_property(
+    db: &dyn TyDatabase,
+    receiver: &str,
+    args: &[Ty],
+    member: &str,
+) -> Option<Ty> {
+    let mutable = receiver == "kotlin.collections.MutableMap";
+    if receiver != "kotlin.collections.Map" && !mutable {
+        return None;
+    }
+    let key = args.first().copied();
+    let value = args.get(1).copied();
+    let reference = |name: &str, args: Vec<Ty>| Ty::reference(db, name, args);
+    match member {
+        "entries" => {
+            let entry = if mutable {
+                "kotlin.collections.MutableMap.MutableEntry"
+            } else {
+                "kotlin.collections.Map.Entry"
+            };
+            let entry = reference(entry, vec![key?, value?]);
+            let set = if mutable {
+                "kotlin.collections.MutableSet"
+            } else {
+                "kotlin.collections.Set"
+            };
+            Some(reference(set, vec![entry]))
+        }
+        "keys" => {
+            let set = if mutable {
+                "kotlin.collections.MutableSet"
+            } else {
+                "kotlin.collections.Set"
+            };
+            Some(reference(set, vec![key?]))
+        }
+        // Kotlin declares the iterator of a *mutable* collection as the mutable
+        // one ([`MutableSet.iterator(): MutableIterator<E>`](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-mutable-set/)),
+        // while the JVM interface's says `java.util.Iterator`.
+        "iterator" if mutable => {
+            let _ = member;
+            None
+        }
+        "values" => {
+            let collection = if mutable {
+                "kotlin.collections.MutableCollection"
+            } else {
+                "kotlin.collections.Collection"
+            };
+            Some(reference(collection, vec![value?]))
+        }
+        _ => None,
+    }
+}
+
+/// The `iterator()` a *mutable* collection declares, which Kotlin types as the
+/// mutable iterator — the JVM interface's own method returns `java.util.Iterator`
+/// ([KLS
+/// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)
+/// names the classifiers; the members are the standard library's).
+pub fn mutable_iterator(
+    db: &dyn TyDatabase,
+    receiver: &str,
+    args: &[Ty],
+    member: &str,
+) -> Option<Ty> {
+    if member != "iterator"
+        || !matches!(
+            receiver,
+            "kotlin.collections.MutableSet"
+                | "kotlin.collections.MutableList"
+                | "kotlin.collections.MutableCollection"
+        )
+    {
+        return None;
+    }
+    Some(Ty::reference(
+        db,
+        "kotlin.collections.MutableIterator",
+        vec![*args.first()?],
+    ))
+}
+
+/// Whether `(receiver, member)` is one of the collection properties
+/// [`collection_property`] answers — read with no argument list.
+pub fn is_collection_property(receiver: &str, member: &str) -> bool {
+    matches!(
+        (receiver, member),
+        ("kotlin.collections.Map", "entries" | "keys" | "values")
+            | (
+                "kotlin.collections.MutableMap",
+                "entries" | "keys" | "values"
+            )
+    )
+}
+
 /// Whether the member the *language* declares for `(receiver, member)` is a
 /// *property* (read with no argument list) rather than a function.
 pub fn member_is_property(receiver: &str, member: &str) -> bool {
