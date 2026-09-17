@@ -1512,6 +1512,14 @@ impl<'a> InferCtx<'a> {
             }
             return binding.ty();
         }
+        // An imported *static member* of a Java class: `import
+        // javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED` makes
+        // the constant's own name stand for the field, exactly as the same
+        // import does in Java ([JLS §7.5.3] is the single-static-import form;
+        // the Kotlin one is the same declaration under the same name).
+        if let Some(ty) = self.imported_static_field(name) {
+            return ty;
+        }
         // `field` — the *backing field* of the property whose accessor this
         // body is ([KLS
         // `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)
@@ -1610,6 +1618,50 @@ impl<'a> InferCtx<'a> {
             method::MemberTarget::Builtin { .. } => return,
         };
         self.types.resolved.insert(expr, resolved);
+    }
+
+    /// The type of the imported *static field* of a Java class that `name`
+    /// stands for, when an explicit import binds it: the field's type, read
+    /// through [`ty_from_java`] like every classfile member.
+    fn imported_static_field(&self, name: &Name) -> Option<Ty> {
+        for import in &self.tree.imports {
+            if import.is_asterisk {
+                continue;
+            }
+            let bound = import
+                .alias
+                .clone()
+                .unwrap_or_else(|| Name::new(import.path.simple_name()));
+            if bound != *name {
+                continue;
+            }
+            let owner = import
+                .path
+                .as_str()
+                .rsplit_once('.')
+                .map(|(owner, _)| owner)?;
+            let Some(class) = hir::fqn_resolve(self.db, &self.scope, owner) else {
+                continue;
+            };
+            let owner_ty = Ty::reference(self.db, owner, Vec::new());
+            let ctx = method::access_context_for_kotlin(self.db, self.file, self.item);
+            let field = match &class {
+                hir::Resolved::Library(_) | hir::Resolved::Source(_) => {
+                    crate::jvm::member_set::pick_field(
+                        self.db,
+                        &self.scope,
+                        &owner_ty,
+                        name.as_str(),
+                        &ctx,
+                    )
+                }
+                hir::Resolved::Facade { .. } => None,
+            };
+            if let Some(field) = field {
+                return Some(super::ty::ty_from_java(self.db, field.ty));
+            }
+        }
+        None
     }
 
     /// The property a *setter* accessor's body writes, when the body being
