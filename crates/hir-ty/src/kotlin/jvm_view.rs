@@ -444,6 +444,7 @@ impl<'a> Shapes<'a> {
             // `public <init>()`.
             let empty = ConstructorData {
                 params: Vec::new(),
+                param_locals: Vec::new(),
                 defaults: Vec::new(),
                 modifiers: KotlinModifiers::none(),
                 annotations: Vec::new(),

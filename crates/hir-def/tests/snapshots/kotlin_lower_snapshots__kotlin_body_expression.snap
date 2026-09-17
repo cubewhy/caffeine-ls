@@ -24,6 +24,8 @@ val doubled: Int @83..108
 BODIES:
 fun length body b0:
   s0: expr e6
+  local l0: x: Int
+  local l1: y: Int
   expr e0: var x 
   expr e1: var x 
   expr e2: binary Mul [e0, e1]

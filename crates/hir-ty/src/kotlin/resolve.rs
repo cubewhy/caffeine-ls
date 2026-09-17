@@ -356,7 +356,11 @@ impl<'a> KotlinResolver<'a> {
             // A local declaration has no canonical name — the caller that needs
             // its type asks [`Self::local_class_reference`] — and it shadows any
             // named declaration of the same name.
-            if self.tree.is_local_type(item) {
+            // Neither a local declaration — which has no canonical name — nor a
+            // declaration that is not a classifier answers a *classifier* name:
+            // an enum entry's simple name is a value of its enum's type, and a
+            // function's or property's is not a type at all.
+            if self.tree.is_local_type(item) || !self.tree.data(item).is_class() {
                 return None;
             }
             return self.local_fqn(simple);

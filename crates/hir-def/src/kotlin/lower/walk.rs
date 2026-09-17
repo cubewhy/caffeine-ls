@@ -305,11 +305,19 @@ fn lower_primary_constructor(
         })
         .unwrap_or_default();
 
+    // The parameters as locals too: the class body's initializers and `init`
+    // blocks are separate bodies that see them ([KLS
+    // `declarations.html#constructor-declaration-scopes`](https://kotlinlang.org/spec/declarations.html#constructor-declaration-scopes)).
+    let param_locals: Vec<hir_expand::body::LocalId> = parameters
+        .iter()
+        .map(|parameter| body::lower_param(ctx, parameter))
+        .collect();
     let id = ctx.alloc(KotlinItemData::Constructor(ConstructorData {
         params: parameters
             .iter()
             .map(|parameter| lower_param(ctx, parameter))
             .collect(),
+        param_locals,
         defaults: Vec::new(),
         modifiers,
         annotations: Vec::new(),
@@ -342,6 +350,9 @@ fn lower_secondary_constructor(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) 
     let modifiers = modifiers_of(node);
     let id = ctx.alloc(KotlinItemData::Constructor(ConstructorData {
         params: lower_params(ctx, node),
+        // A secondary constructor's parameters are the parameters of its own
+        // body, bound there ([`body::lower_constructor_body`]).
+        param_locals: Vec::new(),
         defaults: Vec::new(),
         modifiers,
         annotations: Vec::new(),

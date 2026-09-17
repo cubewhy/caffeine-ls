@@ -1683,6 +1683,10 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
             ty,
             annotations,
             range,
+            // Java has no destructuring lambda parameter
+            // ([§15.27.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27.1)
+            // writes one variable declarator per parameter).
+            destructured: Vec::new(),
         }
     }
     fn inferred_params(c: &SyntaxNode<Lang>, out: &mut Vec<LambdaParam>) {
@@ -1695,6 +1699,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
                             ty: None,
                             annotations: Vec::new(),
                             range: token.text_range(),
+                            destructured: Vec::new(),
                         });
                     }
                 }
@@ -1711,6 +1716,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
                         ty: None,
                         annotations: Vec::new(),
                         range: token.text_range(),
+                        destructured: Vec::new(),
                     });
                 }
             }

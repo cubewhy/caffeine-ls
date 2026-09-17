@@ -160,8 +160,9 @@ ROOT@0..122
                   EXPRESSION_STATEMENT@92..103
                     JUMP_EXPRESSION@92..103
                       BREAK_KW@92..97 "break"
-                      AT@97..98 "@"
-                      IDENTIFIER@98..103 "outer"
+                      LABEL@97..103
+                        AT@97..98 "@"
+                        IDENTIFIER@98..103 "outer"
                   NEWLINE@103..104 "\n"
               WHITESPACE@104..112 "        "
               R_BRACE@112..113 "}"

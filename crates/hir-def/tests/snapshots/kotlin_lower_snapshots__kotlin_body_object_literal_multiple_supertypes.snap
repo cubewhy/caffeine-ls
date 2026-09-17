@@ -29,10 +29,11 @@ locals:
 
 BODIES:
 fun multiple body b1:
-  s1: decl l0 = e2
+  s1: decl l1 = e2
 fun b body b0:
   s0: expr e1
-  local l0: obj
+  local l0: n: Int
+  local l1: obj
   expr e0: literal Int(1) 
   expr e1: var n 
   expr e2: object-literal item6

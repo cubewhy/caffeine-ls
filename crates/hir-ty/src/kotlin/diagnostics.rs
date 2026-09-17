@@ -75,6 +75,12 @@ pub enum MismatchTarget {
     Property(hir_expand::ids::ItemId),
     /// An assignment's right-hand side.
     Assignment,
+    /// A `return`'s value ([KLS
+    /// `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)),
+    /// which answers the return type the enclosing declaration writes. kotlinc
+    /// words it as an assignment does: `type mismatch: inferred type is '<S>'
+    /// but '<T>' was expected.`
+    Return,
 }
 
 impl KotlinTypeError {

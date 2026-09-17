@@ -49,7 +49,7 @@ fun scan body b0:
   local l0: items: List<Int>
   local l1: total
   local l2: item
-  local l3: catch: IllegalStateException
+  local l3: e: IllegalStateException
   expr e0: literal Int(0) 
   expr e1: var total 
   expr e2: var item 

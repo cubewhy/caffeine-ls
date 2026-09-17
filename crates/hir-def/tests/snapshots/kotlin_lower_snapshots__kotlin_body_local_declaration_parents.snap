@@ -37,16 +37,17 @@ BODIES:
 fun local body b3:
   s1: local class item1
   s3: local fun item5
-  s4: decl l1 = e6
+  s4: decl l2 = e6
   s5: expr e14
 fun next body b0:
   s0: expr e2
 fun twice body b1:
-  param l0: value: Int
+  param l1: value: Int
   s2: expr e5
 fun run body b2:
-  local l0: value: Int
-  local l1: anonymous
+  local l0: start: Int
+  local l1: value: Int
+  local l2: anonymous
   expr e0: var start 
   expr e1: literal Int(1) 
   expr e2: binary Add [e0, e1]

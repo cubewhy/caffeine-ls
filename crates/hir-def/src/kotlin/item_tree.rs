@@ -32,7 +32,7 @@
 use hir_expand::{
     arena::Arena,
     ast_id_map::{AstIdMap, FileAstId, node_ptr},
-    body::{BodyId, ExprId},
+    body::{BodyId, ExprId, LocalId},
     name::Name,
 };
 
@@ -407,6 +407,15 @@ pub struct ClassData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstructorData {
     pub params: Vec<KotlinParam>,
+    /// The same parameters as body *locals*, one per entry of `params`: a
+    /// primary constructor's parameter scope is in scope in every initializer
+    /// and `init` block of its classifier ("the primary constructor parameter
+    /// scope is downward-linked to the classifier initialization scope", [KLS
+    /// `declarations.html#constructor-declaration-scopes`](https://kotlinlang.org/spec/declarations.html#constructor-declaration-scopes)),
+    /// so the declaration has to be a local of the file's arena for those bodies
+    /// to reach it. A secondary constructor's parameters are the parameters of
+    /// its own body and are bound there instead, so this is empty for it.
+    pub param_locals: Vec<LocalId>,
     /// One entry per parameter, in parameter order: the lowered `= expr` a
     /// parameter declares, or `None` ([KLS
     /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).

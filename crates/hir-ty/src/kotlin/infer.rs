@@ -175,26 +175,19 @@ fn infer(
         // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)).
         narrowed: FxHashMap::default(),
         assigned: rustc_hash::FxHashSet::default(),
-        implicit_its: Vec::new(),
+        scopes: Vec::new(),
+        lambda_receivers: Vec::new(),
+        expected_lambdas: Vec::new(),
     };
+    // The parameters of the enclosing classifier's primary constructor are in
+    // scope in every body of the class body ([KLS
+    // `declarations.html#constructor-declaration-scopes`](https://kotlinlang.org/spec/declarations.html#constructor-declaration-scopes)),
+    // and a local declaration sees the bindings of the body that declares it.
+    ctx.seed_enclosing_parameters();
+    ctx.seed_captures();
     match inferred {
         Inferred::Body => {
-            let body = body.expect("a body-carrying declaration");
-            for &param in &bodies.body(body).params {
-                // A parameter always carries a value: it is a `val`, and the only
-                // writes it accepts are none.
-                ctx.assigned.insert(param);
-                let ty = bodies
-                    .local(param)
-                    .ty
-                    .as_ref()
-                    .map(|ty| super::ty::ty_from_type_ref(db, &ctx.resolver, &ty.ty))
-                    .unwrap_or_else(|| Ty::error(db));
-                ctx.types.locals.insert(param, ty);
-            }
-            for &stmt in &bodies.body(body).stmts {
-                ctx.infer_stmt(stmt);
-            }
+            ctx.infer_body(body.expect("a body-carrying declaration"));
         }
         Inferred::Initializer => {
             let KotlinItemData::Property(data) = tree.data(item) else {
@@ -230,10 +223,52 @@ struct InferCtx<'a> {
     /// ([KLS
     /// `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)).
     assigned: rustc_hash::FxHashSet<LocalId>,
-    /// The `it` of the parameter-less lambdas whose bodies are being inferred,
-    /// innermost last ([KLS
-    /// `expressions.html#lambda-literals`](https://kotlinlang.org/spec/expressions.html#lambda-literals)).
-    implicit_its: Vec<Ty>,
+    /// The lexically visible bindings, innermost scope last: a body's parameters,
+    /// a block's declarations, a `catch` clause's parameter, a loop variable and
+    /// a lambda's parameters each introduce one, and a name resolves to the
+    /// innermost declaration of it that is in scope
+    /// ([KLS
+    /// `scopes-and-identifiers.html#scopes-and-identifiers`](https://kotlinlang.org/spec/scopes-and-identifiers.html#scopes-and-identifiers)).
+    /// A scope is a list, not a map: two declarations of one name in one scope is
+    /// an error kotlinc reports, and the *first* is the one a later read means.
+    scopes: Vec<Vec<(Name, Binding)>>,
+    /// The implicit receivers a lambda contributes, innermost last, *in addition
+    /// to* the enclosing classifiers ([`Self::implicit_receivers`]).
+    ///
+    /// A lambda written where a `T.() -> R` is expected has `T` as its `this` —
+    /// `apply { fill = … }` — and the two forms are the same type by the time the
+    /// classfile has erased them (`T.() -> R` *is* `kotlin.Function1<T, R>`), so
+    /// a parameter-less lambda's expected parameter is taken as a receiver as
+    /// well as as its `it`. That is *permissive*: a member the receiver declares
+    /// resolves inside `also { … }` too, where kotlinc reads `this` as the
+    /// enclosing receiver — never a false `unresolved reference` for the
+    /// receiver forms the model cannot tell apart.
+    lambda_receivers: Vec<Ty>,
+    /// The function type each lambda literal being inferred is inferred
+    /// *against*, innermost last: what its `it` and its untyped parameters take
+    /// their types from ([KLS
+    /// `type-inference.html#function-literals`](https://kotlinlang.org/spec/type-inference.html#function-literals)).
+    expected_lambdas: Vec<Ty>,
+}
+
+/// What a written name resolves to in the scope that declares it.
+#[derive(Clone, Debug)]
+enum Binding {
+    /// A body local — a parameter, a declared local, a loop variable, a catch
+    /// parameter, a pattern binding — which the result records by its id.
+    Local(LocalId, Ty),
+    /// A lambda's parameter, which is not a local of the file's arena: a
+    /// [`hir_expand::body::LambdaParam`] carries a name and a type, not a
+    /// binding. The `it` of a parameter-less lambda is one of these too.
+    Parameter(Ty),
+}
+
+impl Binding {
+    fn ty(&self) -> Ty {
+        match self {
+            Binding::Local(_, ty) | Binding::Parameter(ty) => *ty,
+        }
+    }
 }
 
 impl<'a> InferCtx<'a> {
@@ -247,6 +282,143 @@ impl<'a> InferCtx<'a> {
 
     fn error(&self) -> Ty {
         Ty::error(self.db)
+    }
+
+    /// Runs `f` in a new lexical scope: the declarations it adds are visible
+    /// inside it and gone after — a block, a lambda body and a `catch` clause
+    /// each introduce one.
+    fn in_scope<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.scopes.push(Vec::new());
+        let result = f(self);
+        self.scopes.pop();
+        result
+    }
+
+    /// Declares `name` in the innermost scope, recording a body local in the
+    /// result's local map as well.
+    fn declare(&mut self, name: Name, binding: Binding) {
+        if let Binding::Local(local, ty) = &binding {
+            self.types.locals.insert(*local, *ty);
+        }
+        match self.scopes.last_mut() {
+            Some(scope) => scope.push((name, binding)),
+            // A declaration outside any scope — the walk always opens one for the
+            // body it walks — is visible for the rest of the body.
+            None => self.scopes.push(vec![(name, binding)]),
+        }
+    }
+
+    /// The innermost visible binding of `name`, if any is in scope.
+    fn binding(&self, name: &Name) -> Option<Binding> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| {
+                scope
+                    .iter()
+                    .rev()
+                    .find(|(declared, _)| declared == name)
+                    .map(|(_, binding)| binding)
+            })
+            .cloned()
+    }
+
+    /// The body local the innermost binding of `name` is, when it is one.
+    fn local_binding(&self, name: &Name) -> Option<(LocalId, Ty)> {
+        match self.binding(name)? {
+            Binding::Local(local, ty) => Some((local, ty)),
+            Binding::Parameter(_) => None,
+        }
+    }
+
+    /// Seeds the bindings a *local* declaration captures: a local function's or
+    /// a local class's body is a body of its own, and the bindings of the body
+    /// that declares it are in scope there — a local class may capture the
+    /// locals of the function it is declared in ([KLS
+    /// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration),
+    /// [`#local-function-declaration`](https://kotlinlang.org/spec/declarations.html#local-function-declaration)
+    /// scope a local declaration to the body that declares it).
+    ///
+    /// The outer body's own inference is what knows its locals, and it is
+    /// memoized, so the capture site asks for it — the one-way edge from an
+    /// inner body to the outer one, exactly as the Java layer's `capture_site`.
+    fn seed_captures(&mut self) {
+        // The *outermost* local declaration of this item's ancestry is the one
+        // whose owner declares it: an `init` block of an object literal is a
+        // member of the literal, and it is the literal that the enclosing body
+        // declares.
+        let mut item = self.item;
+        let owner = loop {
+            if self.tree.is_local_type(item) {
+                break self.tree.parent_of(item);
+            }
+            match self.tree.parent_of(item) {
+                Some(parent) => item = parent,
+                None => return,
+            }
+        };
+        let Some(owner) = owner else {
+            return;
+        };
+        let outer = super::db::declaration_types(self.db, self.file, owner);
+        for (local, ty) in outer.locals.iter() {
+            let name = self.bodies.local(*local).name.clone();
+            self.declare(name, Binding::Local(*local, *ty));
+        }
+    }
+
+    /// Seeds the parameters of the enclosing classifier's *primary* constructor:
+    /// they are in scope in every initializer and `init` block of the class
+    /// ("the primary constructor parameter scope is downward-linked to the
+    /// classifier initialization scope", [KLS
+    /// `declarations.html#constructor-declaration-scopes`](https://kotlinlang.org/spec/declarations.html#constructor-declaration-scopes)),
+    /// which are bodies of their own and would otherwise not see them.
+    fn seed_enclosing_parameters(&mut self) {
+        let Some(item) = self.tree.parent_of(self.item) else {
+            return;
+        };
+        let KotlinItemData::Class(class) = self.tree.data(item) else {
+            return;
+        };
+        let Some(constructor) = class.primary_constructor else {
+            return;
+        };
+        let KotlinItemData::Constructor(data) = self.tree.data(constructor) else {
+            return;
+        };
+        for (param, local) in data.params.iter().zip(&data.param_locals) {
+            let ty = super::ty::ty_from_type_ref(self.db, &self.resolver, &param.param.ty.ty);
+            self.assigned.insert(*local);
+            self.declare(param.param.name.clone(), Binding::Local(*local, ty));
+        }
+    }
+
+    /// Infers a body: its parameters are the outermost scope, then the
+    /// statements it declares.
+    fn infer_body(&mut self, body: BodyId) {
+        let params = self.bodies.body(body).params.clone();
+        let stmts = self.bodies.body(body).stmts.clone();
+        self.in_scope(|ctx| {
+            for param in params {
+                // A parameter always carries a value: it is a `val`, and the only
+                // writes it accepts are none.
+                ctx.assigned.insert(param);
+                let ty = ctx
+                    .bodies
+                    .local(param)
+                    .ty
+                    .as_ref()
+                    .map(|ty| super::ty::ty_from_type_ref(ctx.db, &ctx.resolver, &ty.ty))
+                    .unwrap_or_else(|| Ty::error(ctx.db));
+                ctx.declare(
+                    ctx.bodies.local(param).name.clone(),
+                    Binding::Local(param, ty),
+                );
+            }
+            for stmt in stmts {
+                ctx.infer_stmt(stmt);
+            }
+        });
     }
 
     fn infer_stmt(&mut self, stmt: StmtId) {
@@ -274,42 +446,66 @@ impl<'a> InferCtx<'a> {
                     (None, Some(actual)) => actual,
                     (None, None) => self.error(),
                 };
-                self.types.locals.insert(local, ty);
+                // In scope from its declaration to the end of the block that
+                // declares it ([KLS
+                // `scopes-and-identifiers.html#scopes-and-identifiers`](https://kotlinlang.org/spec/scopes-and-identifiers.html#scopes-and-identifiers)).
+                let name = self.bodies.local(local).name.clone();
+                self.declare(name, Binding::Local(local, ty));
+            }
+            // `val x by d`: the local's type is what the *delegate* declares for
+            // it, through the same rule a delegated property's is
+            // (<https://kotlinlang.org/docs/delegated-properties.html>).
+            StmtData::DeclDelegated { local, delegate } => {
+                let delegate_ty = self.infer_expr(delegate);
+                let owner = self.delegation_owner();
+                let ty = super::db::delegated_value_ty(
+                    self.db,
+                    self.file,
+                    self.item,
+                    &self.resolver,
+                    owner,
+                    delegate_ty,
+                );
+                self.assigned.insert(local);
+                let name = self.bodies.local(local).name.clone();
+                self.declare(name, Binding::Local(local, ty));
             }
             StmtData::Destructuring {
                 pattern,
                 initializer,
             } => {
-                // The pattern binds one local per component; the component types
-                // are the initializer's type arguments, in order
-                // ([KLS `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)
-                // resolves them through `componentN()`, which for a `Pair` is
-                // exactly its two arguments).
+                // The pattern binds one local per component, each the `componentN`
+                // the initializer's type declares
+                // ([KLS `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)).
                 let initializer_ty = self.infer_expr(initializer);
-                let components = match initializer_ty.kind(self.db) {
-                    TyKind::Reference { args, .. } => args.clone(),
-                    _ => Vec::new(),
-                };
                 let parts: Vec<LocalId> = match self.bodies.pattern(pattern).clone() {
                     hir_expand::body::PatternData::Destructuring { parts } => parts,
                     _ => Vec::new(),
                 };
+                let components = self.destructured_types(&initializer_ty, parts.len());
                 for (index, part) in parts.into_iter().enumerate() {
                     let ty = components
                         .get(index)
                         .copied()
                         .unwrap_or_else(|| self.error());
-                    self.types.locals.insert(part, ty);
                     self.assigned.insert(part);
+                    let name = self.bodies.local(part).name.clone();
+                    self.declare(name, Binding::Local(part, ty));
                 }
             }
             StmtData::Expr(expr) => {
                 self.infer_expr(expr);
             }
+            // A block is a scope of its own ([KLS
+            // `scopes-and-identifiers.html#scopes-and-identifiers`]): the
+            // declarations it makes are gone when it ends, and a nested one may
+            // shadow them.
             StmtData::Block(stmts) => {
-                for stmt in stmts {
-                    self.infer_stmt(stmt);
-                }
+                self.in_scope(|ctx| {
+                    for stmt in stmts {
+                        ctx.infer_stmt(stmt);
+                    }
+                });
             }
             StmtData::While { cond, body } | StmtData::DoWhile { body, cond } => {
                 self.infer_expr(cond);
@@ -322,50 +518,39 @@ impl<'a> InferCtx<'a> {
                 body,
             } => {
                 let iterable_ty = self.infer_expr(iterable);
-                // The loop variable's type is the element type of the
-                // iterable's argument when the classpath names it, and the
-                // error type otherwise.
-                let element = match iterable_ty.kind(self.db) {
-                    TyKind::Reference { args, .. } => args.first().copied(),
-                    TyKind::Nullable(inner) => match inner.kind(self.db) {
-                        TyKind::Reference { args, .. } => args.first().copied(),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                let element = element.unwrap_or_else(|| self.error());
-                // A destructuring loop variable binds one local per component,
-                // each the component type of the element ([KLS
-                // `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)
-                // resolves them through `componentN()`); without the member
-                // bridge the components are the error type, which is what the
-                // loop variable is bound to.
-                self.assigned.insert(var);
-                match pattern {
-                    Some(pattern) => {
-                        let parts: Vec<LocalId> = match self.bodies.pattern(pattern).clone() {
-                            hir_expand::body::PatternData::Destructuring { parts } => parts,
-                            _ => Vec::new(),
-                        };
-                        let components = match element.kind(self.db) {
-                            TyKind::Reference { args, .. } => args.clone(),
-                            _ => Vec::new(),
-                        };
-                        for (index, part) in parts.into_iter().enumerate() {
-                            let ty = components
-                                .get(index)
-                                .copied()
-                                .unwrap_or_else(|| self.error());
-                            self.types.locals.insert(part, ty);
-                            self.assigned.insert(part);
+                let element = self.iterable_element_ty(&iterable_ty);
+                // The loop variable — and each binding of a destructuring one —
+                // is scoped to the loop body.
+                self.in_scope(|ctx| {
+                    ctx.assigned.insert(var);
+                    match pattern {
+                        Some(pattern) => {
+                            let parts: Vec<LocalId> = match ctx.bodies.pattern(pattern).clone() {
+                                hir_expand::body::PatternData::Destructuring { parts } => parts,
+                                _ => Vec::new(),
+                            };
+                            let components = ctx.destructured_types(&element, parts.len());
+                            for (index, part) in parts.into_iter().enumerate() {
+                                let ty = components
+                                    .get(index)
+                                    .copied()
+                                    .unwrap_or_else(|| ctx.error());
+                                ctx.assigned.insert(part);
+                                let name = ctx.bodies.local(part).name.clone();
+                                ctx.declare(name, Binding::Local(part, ty));
+                            }
+                        }
+                        None => {
+                            let name = ctx.bodies.local(var).name.clone();
+                            ctx.declare(name, Binding::Local(var, element));
                         }
                     }
-                    None => {
-                        self.types.locals.insert(var, element);
-                    }
-                }
-                self.infer_stmt(body);
+                    ctx.infer_stmt(body);
+                });
             }
+            // A local declaration is an item of the file's own tree, lowered
+            // where it stands ([`StmtData::LocalClass`]); its body is inferred
+            // when it is asked for, not while the declaring body is walked.
             StmtData::LocalClass { .. } | StmtData::LocalFunction { .. } => {}
             StmtData::Return(value) => {
                 if let Some(value) = value {
@@ -374,11 +559,98 @@ impl<'a> InferCtx<'a> {
             }
             StmtData::Missing => {}
             other => {
-                // The Java statement forms never appear in a Kotlin body; the
-                // walk stays total by ignoring them.
+                // What is left is the Java statement forms — an `if` or `for`
+                // *statement*, a `switch`, a `return`, a `throw`, a `break`, a
+                // `synchronized`, a `try` with resources: Kotlin lowers every one
+                // of its own constructs to an expression or an `ExprData` of its
+                // own, and the walk stays total by ignoring these.
                 let _ = other;
             }
         }
+    }
+
+    /// The type a `for (v in xs)` loop binds `v` to
+    /// ([KLS
+    /// `control--and-data-flow-analysis.html#for-loops`](https://kotlinlang.org/spec/control--and-data-flow-analysis.html#for-loops)
+    /// resolves `iterator()` on the iterable and takes `next()`'s type): the
+    /// `Iterator<T>` argument the convention returns when it resolves, else the
+    /// iterable's own argument — a mapped collection's element — else an array's
+    /// element.
+    fn iterable_element_ty(&mut self, iterable: &Ty) -> Ty {
+        let iterator = method::pick_operator_callable(
+            self.db,
+            &self.scope,
+            iterable,
+            &Name::new("iterator"),
+            None,
+            self.site(),
+        )
+        .map(|member| member.ty(self.db));
+        if let Some(element) = iterator.as_ref().and_then(|ty| self.element_of(ty)) {
+            return element;
+        }
+        self.element_of(iterable)
+            .or_else(|| match iterable.kind(self.db) {
+                TyKind::Array(inner) => Some(**inner),
+                _ => None,
+            })
+            .unwrap_or_else(|| self.error())
+    }
+
+    /// The element type of a collection type: its first type argument
+    /// (`Iterator<T>`, `Iterable<T>`, `List<T>`, `Set<T>`), or `None` when it
+    /// takes none.
+    fn element_of(&self, ty: &Ty) -> Option<Ty> {
+        match ty.kind(self.db) {
+            TyKind::Reference { args, .. } => args.first().copied(),
+            TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => self.element_of(inner),
+            _ => None,
+        }
+    }
+
+    /// The types a destructuring pattern of `count` names binds, each the
+    /// `componentN()` of the initializer's type with `N` its 1-based position
+    /// ([KLS
+    /// `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)).
+    /// A type whose components this model cannot resolve — a classfile
+    /// `Pair`/`Triple`, a `Map.Entry`, whose `componentN` the classfile does not
+    /// declare as a Kotlin member — falls back to its own type arguments, which
+    /// for those three *are* the components.
+    fn destructured_types(&mut self, initializer: &Ty, count: usize) -> Vec<Ty> {
+        let fallback: Vec<Ty> = match initializer.kind(self.db) {
+            TyKind::Reference { args, .. } => args.clone(),
+            _ => Vec::new(),
+        };
+        (1..=count)
+            .map(|index| {
+                let component = method::pick_operator_callable(
+                    self.db,
+                    &self.scope,
+                    initializer,
+                    &Name::new(&format!("component{index}")),
+                    None,
+                    self.site(),
+                )
+                .map(|member| member.ty(self.db));
+                component.unwrap_or_else(|| {
+                    fallback
+                        .get(index - 1)
+                        .copied()
+                        .unwrap_or_else(|| self.error())
+                })
+            })
+            .collect()
+    }
+
+    /// The `thisRef` a `by` delegate receives at this site: the receiver the
+    /// declaration site's `this` is — an enclosing classifier or a lambda's
+    /// receiver — and `null` when there is none
+    /// (<https://kotlinlang.org/docs/delegated-properties.html>).
+    fn delegation_owner(&self) -> Ty {
+        self.implicit_receivers()
+            .first()
+            .copied()
+            .unwrap_or_else(|| Ty::null(self.db))
     }
 
     /// Checks a value bound to a declaration, reporting the mismatch with
@@ -466,12 +738,17 @@ impl<'a> InferCtx<'a> {
             },
             ExprData::SafeAccess { receiver, member } => {
                 let receiver_ty = self.infer_expr(receiver);
-                let member_ty = self.infer_expr(member);
-                let _ = receiver_ty;
-                // The member access happens only when the receiver is not
-                // null, and its result is nullable
-                // ([KLS `expressions.html#navigation-operators`](https://kotlinlang.org/spec/expressions.html#navigation-operators)).
-                Ty::nullable(self.db, member_ty)
+                // The member is the access a non-null receiver makes — the
+                // lowering writes it without a receiver of its own — and the
+                // result is nullable *when the receiver is*
+                // ([KLS `expressions.html#navigation-operators`](https://kotlinlang.org/spec/expressions.html#navigation-operators)):
+                // `x?.port` of a non-null `x` is an `Int`, and kotlinc accepts
+                // it where one is expected.
+                let member_ty = self.safe_member_ty(member, &receiver_ty);
+                match receiver_ty.is_nullable(self.db) {
+                    true => Ty::nullable(self.db, member_ty),
+                    false => member_ty,
+                }
             }
             ExprData::NullAssert { expr: inner } => {
                 let inner_ty = self.infer_expr(inner);
@@ -540,30 +817,24 @@ impl<'a> InferCtx<'a> {
             ExprData::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.infer_expr(lhs);
                 let rhs_ty = self.infer_expr(rhs);
-                use hir_expand::body::BinaryOp;
-                match op {
-                    BinaryOp::Eq
-                    | BinaryOp::Ne
-                    | BinaryOp::Lt
-                    | BinaryOp::Gt
-                    | BinaryOp::Le
-                    | BinaryOp::Ge
-                    | BinaryOp::And
-                    | BinaryOp::Or => self.builtin("Boolean"),
-                    _ => {
-                        let _ = rhs_ty;
-                        lhs_ty
-                    }
-                }
+                self.binary_ty(op, lhs_ty, rhs_ty)
             }
             ExprData::Unary { op, expr: inner } => {
                 let inner_ty = self.infer_expr(inner);
-                match op {
-                    hir_expand::body::UnaryOp::Not => self.builtin("Boolean"),
-                    _ => inner_ty,
-                }
+                self.unary_ty(op, inner_ty)
             }
-            ExprData::Postfix { expr: inner, .. } => self.infer_expr(inner),
+            ExprData::Postfix { op, expr: inner } => {
+                let inner_ty = self.infer_expr(inner);
+                // `x++` is `x = x.inc()`: the expression's own value is the
+                // operand's type ([KLS
+                // `operator-overloading.html#postfix-increments-and-decrements`](https://kotlinlang.org/spec/operator-overloading.html#postfix-increments-and-decrements)).
+                let name = match op {
+                    hir_expand::body::PostfixOp::Inc => "inc",
+                    hir_expand::body::PostfixOp::Dec => "dec",
+                };
+                self.operator_call_ty(&inner_ty, name, None)
+                    .unwrap_or(inner_ty)
+            }
             ExprData::Assign { op, lhs, rhs } => {
                 let rhs_ty = self.infer_expr(rhs);
                 let range = self.bodies.expr_range(rhs);
@@ -595,13 +866,14 @@ impl<'a> InferCtx<'a> {
             }
             ExprData::ArrayAccess { array, index } => {
                 let array_ty = self.infer_expr(array);
-                self.infer_expr(index);
-                match array_ty.kind(self.db) {
-                    TyKind::Reference { args, .. } => {
-                        args.first().copied().unwrap_or_else(|| self.error())
-                    }
-                    _ => self.error(),
-                }
+                let index_ty = self.infer_expr(index);
+                // `a[i]` is `a.get(i)` ([KLS
+                // `operator-overloading.html#indexed-access`](https://kotlinlang.org/spec/operator-overloading.html#indexed-access));
+                // an array has no `get` in its classfile, so its element type is
+                // the fallback.
+                self.operator_call_ty(&array_ty, "get", Some(index_ty))
+                    .or_else(|| self.element_of(&array_ty))
+                    .unwrap_or_else(|| self.error())
             }
             ExprData::ArrayInit(items) => {
                 let element = items
@@ -621,9 +893,14 @@ impl<'a> InferCtx<'a> {
             }
             ExprData::Conditional { cond, then, els } => {
                 self.infer_expr(cond);
-                let then_ty = self.infer_expr(then);
-                let els_ty = self.infer_expr(els);
-                if then_ty == els_ty { then_ty } else { then_ty }
+                // A condition that tests a local narrows it in the branch the
+                // test selects ([KLS
+                // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)),
+                // and the narrowing is the branch's own.
+                let (when_true, when_false) = self.branch_narrowings(cond);
+                let then_ty = self.narrowed_branch(when_true, then);
+                let els_ty = self.narrowed_branch(when_false, els);
+                super::subtyping::lub(self.db, &self.scope, &then_ty, &els_ty)
             }
             ExprData::When { subject, arms } => self.infer_when(subject, &arms),
             ExprData::Try {
@@ -631,47 +908,39 @@ impl<'a> InferCtx<'a> {
                 catches,
                 finally,
             } => {
-                self.infer_stmt(body);
+                // A `try`'s value is the value of the block that ran ([KLS
+                // `expressions.html#try-expressions`](https://kotlinlang.org/spec/expressions.html#try-expressions)):
+                // the join of its body's and its `catch` blocks' types, with
+                // `finally` contributing none.
+                let mut value = Some(self.block_ty(body));
                 for catch in catches {
                     // A catch parameter's type is the first of its declared
-                    // types (Kotlin has no multi-catch).
+                    // types (Kotlin has no multi-catch), and it is scoped to its
+                    // own block.
                     let ty = catch
                         .param_types
                         .first()
                         .map(|ty| super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty))
                         .unwrap_or_else(|| self.error());
-                    self.types.locals.insert(catch.param, ty);
-                    self.infer_stmt(catch.body);
+                    let name = self.bodies.local(catch.param).name.clone();
+                    let caught = self.in_scope(|ctx| {
+                        ctx.declare(name, Binding::Local(catch.param, ty));
+                        ctx.block_ty(catch.body)
+                    });
+                    value = Some(match value {
+                        Some(previous) => {
+                            super::subtyping::lub(self.db, &self.scope, &previous, &caught)
+                        }
+                        None => caught,
+                    });
                 }
                 if let Some(finally) = finally {
                     self.infer_stmt(finally);
                 }
-                self.builtin("Unit")
+                value.unwrap_or_else(|| self.builtin("Unit"))
             }
             ExprData::Block(stmt) => self.block_ty(stmt),
-            ExprData::Lambda { params, body } => {
-                let param_tys: Vec<Ty> = params
-                    .iter()
-                    .map(|param| {
-                        param
-                            .ty
-                            .as_ref()
-                            .map(|ty| super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty))
-                            .unwrap_or_else(|| self.error())
-                    })
-                    .collect();
-                let ret = match body {
-                    hir_expand::body::LambdaBody::Expr(expr) => self.infer_expr(expr),
-                    hir_expand::body::LambdaBody::Block(stmt) => self.block_ty(stmt),
-                };
-                let mut args = param_tys;
-                args.push(ret);
-                let function = self.builtin(&format!("Function{}", args.len().saturating_sub(1)));
-                match function.kind(self.db) {
-                    TyKind::Reference { name, .. } => Ty::reference(self.db, name.clone(), args),
-                    _ => self.error(),
-                }
-            }
+            ExprData::Lambda { params, body } => self.infer_lambda(&params, body),
             ExprData::CallableReference { receiver, name } => {
                 let receiver_ty = match receiver {
                     Some(receiver) => self.infer_expr(receiver),
@@ -689,19 +958,42 @@ impl<'a> InferCtx<'a> {
                 };
                 self.member_ty(expr, &receiver_ty, &name)
             }
-            ExprData::Range { lhs, rhs, .. } => {
+            ExprData::Range {
+                lhs,
+                rhs,
+                inclusive,
+            } => {
                 let lhs_ty = self.infer_expr(lhs);
-                self.infer_expr(rhs);
-                lhs_ty
+                let rhs_ty = self.infer_expr(rhs);
+                // `a..b` is `a.rangeTo(b)` ([KLS
+                // `operator-overloading.html#ranges`](https://kotlinlang.org/spec/operator-overloading.html#ranges))
+                // and `a..<b` its `rangeUntil`; the left operand's own type
+                // remains the fallback for a range whose classifier the
+                // classpath does not supply.
+                let name = match inclusive {
+                    true => "rangeTo",
+                    false => "rangeUntil",
+                };
+                self.operator_call_ty(&lhs_ty, name, Some(rhs_ty))
+                    .unwrap_or(lhs_ty)
             }
             ExprData::Spread { expr: inner } => self.infer_expr(inner),
             // `return` and `throw` have type `Nothing`
             // ([KLS `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)).
-            ExprData::Jump { kind, value, .. } => {
+            ExprData::Jump { kind, value, label } => {
                 if let Some(value) = value {
-                    self.infer_expr(value);
+                    let actual = self.infer_expr(value);
+                    // A `return`'s value answers the return type the enclosing
+                    // declaration writes ([KLS
+                    // `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)).
+                    // A *labelled* one — `return@lambda x` — answers the target
+                    // the label names, which may be a lambda rather than the
+                    // enclosing declaration, so it is not checked (a recorded
+                    // deviation).
+                    if matches!(kind, JumpKind::Return) && label.is_none() {
+                        self.check_return(actual, value);
+                    }
                 }
-                let _ = matches!(kind, JumpKind::Return | JumpKind::Throw);
                 self.builtin("Nothing")
             }
             ExprData::Paren(inner) => self.infer_expr(inner),
@@ -745,15 +1037,268 @@ impl<'a> InferCtx<'a> {
                     }
                 }
             }
-            let body_ty = self.infer_expr(arm.body);
-            if let Some((local, ty)) = narrowed {
-                self.types.locals.insert(local, ty);
-                result = Some(body_ty);
-                self.narrowed.remove(&local);
-            }
-            result.get_or_insert(body_ty);
+            // The narrowing belongs to the arm: it is undone before the next
+            // one, which tests something else ([KLS
+            // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)).
+            let body_ty = self.narrowed_branch(narrowed, arm.body);
+            result = Some(match result {
+                Some(previous) => super::subtyping::lub(self.db, &self.scope, &previous, &body_ty),
+                None => body_ty,
+            });
         }
         result.unwrap_or_else(|| self.builtin("Unit"))
+    }
+
+    /// Infers `expr` with `narrowing` in force, and lifts it afterwards — the
+    /// scope of a smart cast is the expression it was established for.
+    fn narrowed_branch(&mut self, narrowing: Option<(LocalId, Ty)>, expr: ExprId) -> Ty {
+        if let Some((local, ty)) = narrowing {
+            self.narrowed.insert(local, ty);
+            let inferred = self.infer_expr(expr);
+            self.narrowed.remove(&local);
+            return inferred;
+        }
+        self.infer_expr(expr)
+    }
+
+    /// The narrowing a *condition* establishes on each of its branches, as
+    /// `(when true, when false)`:
+    ///
+    /// * `x is T` narrows `x` to `T` where the test holds, and `x !is T` — which
+    ///   the lowering spells `!(x is T)` — where it does not
+    ///   ([KLS
+    ///   `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts));
+    /// * `x == null` and `x != null` narrow to the non-null half on the branch
+    ///   that implies it.
+    ///
+    /// A narrowing applies only to a *local*, and only when the narrowed type is
+    /// assignable to the type the local already has — a test that could not hold
+    /// for its declared type establishes nothing.
+    fn branch_narrowings(&self, cond: ExprId) -> (Option<(LocalId, Ty)>, Option<(LocalId, Ty)>) {
+        match self.bodies.expr(cond).clone() {
+            ExprData::InstanceOf {
+                expr, ty: Some(ty), ..
+            } => {
+                let Some((local, declared)) = self.tested_local(expr) else {
+                    return (None, None);
+                };
+                let narrowed = super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty);
+                if !super::subtyping::is_assignable(self.db, &self.scope, &narrowed, &declared) {
+                    return (None, None);
+                }
+                (Some((local, narrowed)), None)
+            }
+            // `x !is T` and `!(x is T)`: the same narrowing on the *other*
+            // branch.
+            ExprData::Unary {
+                op: hir_expand::body::UnaryOp::Not,
+                expr: inner,
+            } => match self.branch_narrowings(inner) {
+                (Some((local, ty)), None) => (None, Some((local, ty))),
+                (None, Some((local, ty))) => (Some((local, ty)), None),
+                other => other,
+            },
+            ExprData::Binary { op, lhs, rhs } => {
+                let (tested, other) = match self.bodies.expr(rhs) {
+                    ExprData::Null => (lhs, rhs),
+                    _ => match self.bodies.expr(lhs) {
+                        ExprData::Null => (rhs, lhs),
+                        _ => return (None, None),
+                    },
+                };
+                let _ = other;
+                let negated = match op {
+                    hir_expand::body::BinaryOp::Ne => true,
+                    hir_expand::body::BinaryOp::Eq => false,
+                    _ => return (None, None),
+                };
+                let Some((local, declared)) = self.tested_local(tested) else {
+                    return (None, None);
+                };
+                let narrowed = declared.strip_nullability(self.db);
+                if narrowed == declared {
+                    return (None, None);
+                }
+                match negated {
+                    true => (Some((local, narrowed)), None),
+                    false => (None, Some((local, narrowed))),
+                }
+            }
+            _ => (None, None),
+        }
+    }
+
+    /// The local a condition *tests*, when it tests one, with the type it has.
+    fn tested_local(&self, expr: ExprId) -> Option<(LocalId, Ty)> {
+        let ExprData::Var(name) = self.bodies.expr(expr).clone() else {
+            return None;
+        };
+        self.local_binding(&name)
+    }
+
+    /// The types a *lambda* literal has ([KLS
+    /// `expressions.html#lambda-literals`](https://kotlinlang.org/spec/expressions.html#lambda-literals)):
+    /// its parameters take the types of the function type it is inferred
+    /// *against* — a written type wins — and `it` is the parameter-less form's
+    /// single parameter. Its type is the function type of its parameters and its
+    /// result.
+    fn infer_lambda(
+        &mut self,
+        params: &[hir_expand::body::LambdaParam],
+        body: hir_expand::body::LambdaBody,
+    ) -> Ty {
+        let expected = self.expected_lambdas.last().copied();
+        let param_tys: Vec<Ty> = params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| {
+                param
+                    .ty
+                    .as_ref()
+                    .map(|ty| super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty))
+                    .or_else(|| {
+                        expected.and_then(|expected| self.function_parameter_ty(&expected, index))
+                    })
+                    .unwrap_or_else(|| self.error())
+            })
+            .collect();
+        // `it` is the parameter-less lambda's single parameter, and the same
+        // type is the *receiver* a `T.() -> R` position gives the lambda — the
+        // two are one type once the classfile has erased them
+        // ([`Self::lambda_receivers`]).
+        let parameter = expected.and_then(|expected| self.function_parameter_ty(&expected, 0));
+        let it = params.is_empty().then_some(parameter).flatten();
+        if let Some(receiver) = parameter {
+            self.lambda_receivers.push(receiver);
+        }
+        let ret = self.in_scope(|ctx| {
+            for (param, ty) in params.iter().zip(&param_tys) {
+                ctx.declare(param.name.clone(), Binding::Parameter(*ty));
+                // A destructuring parameter binds one name per `componentN` of
+                // the parameter the function type declares ([KLS
+                // `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)).
+                if !param.destructured.is_empty() {
+                    let components = ctx.destructured_types(ty, param.destructured.len());
+                    for (name, component) in param.destructured.iter().zip(components) {
+                        ctx.declare(name.clone(), Binding::Parameter(component));
+                    }
+                }
+            }
+            if let Some(it) = it {
+                ctx.declare(Name::new("it"), Binding::Parameter(it));
+            }
+            match body {
+                hir_expand::body::LambdaBody::Expr(expr) => ctx.infer_expr(expr),
+                hir_expand::body::LambdaBody::Block(stmt) => ctx.block_ty(stmt),
+            }
+        });
+        if parameter.is_some() {
+            self.lambda_receivers.pop();
+        }
+        let mut args = param_tys;
+        args.push(ret);
+        let function = self.builtin(&format!("Function{}", args.len().saturating_sub(1)));
+        match function.kind(self.db) {
+            TyKind::Reference { name, .. } => Ty::reference(self.db, name.clone(), args),
+            _ => self.error(),
+        }
+    }
+
+    /// The result type of a *binary* operator over the operand types it is
+    /// written with: Kotlin's built-in rules first — they win over any
+    /// declaration ([KLS
+    /// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)) —
+    /// then the operator's own convention ([`super::operator`]).
+    fn binary_ty(&mut self, op: hir_expand::body::BinaryOp, lhs: Ty, rhs: Ty) -> Ty {
+        if let Some(ty) = super::operator::builtin_binary_ty(self.db, op, &lhs, &rhs) {
+            return ty;
+        }
+        let Some(name) = super::operator::binary_convention(op) else {
+            return self.error();
+        };
+        // A comparison's convention answers the comparison's *sign*, and the
+        // operator's own type is a `Boolean` whatever the convention returns.
+        let compared = matches!(
+            op,
+            hir_expand::body::BinaryOp::Lt
+                | hir_expand::body::BinaryOp::Gt
+                | hir_expand::body::BinaryOp::Le
+                | hir_expand::body::BinaryOp::Ge
+        );
+        match self.operator_call_ty(&lhs, name, Some(rhs)) {
+            Some(ty) => match compared {
+                true => self.builtin("Boolean"),
+                false => ty,
+            },
+            None => self.error(),
+        }
+    }
+
+    /// The result type of a *unary* operator over its operand
+    /// ([KLS
+    /// `operator-overloading.html#unary-operations`](https://kotlinlang.org/spec/operator-overloading.html#unary-operations)):
+    /// `!` is `Boolean` negation, which no declaration takes part in, and the
+    /// others are their convention — with a built-in numeric operand the operand
+    /// itself, which is what kotlinc types `-1` as.
+    fn unary_ty(&mut self, op: hir_expand::body::UnaryOp, operand: Ty) -> Ty {
+        if matches!(op, hir_expand::body::UnaryOp::Not) {
+            return self.builtin("Boolean");
+        }
+        if let TyKind::Reference { name, .. } = operand.kind(self.db)
+            && super::operator::builtin_binary_ty(
+                self.db,
+                hir_expand::body::BinaryOp::Add,
+                &operand,
+                &Ty::reference(self.db, "kotlin.Int", Vec::new()),
+            )
+            .is_some()
+            && name.as_str() != "kotlin.String"
+        {
+            return operand;
+        }
+        let Some(name) = super::operator::unary_convention(op) else {
+            return operand;
+        };
+        self.operator_call_ty(&operand, name, None)
+            .unwrap_or(operand)
+    }
+
+    /// The result type of an *operator convention* on `receiver`, resolved like
+    /// any other call of the convention's name
+    /// ([`method::pick_operator_callable`]).
+    fn operator_call_ty(&self, receiver: &Ty, name: &str, arg: Option<Ty>) -> Option<Ty> {
+        let member = method::pick_operator_callable(
+            self.db,
+            &self.scope,
+            receiver,
+            &Name::new(name),
+            arg,
+            self.site(),
+        )?;
+        match arg {
+            Some(arg) => Some(member.call_ty(self.db, &[arg])),
+            None => Some(member.ty(self.db)),
+        }
+    }
+
+    /// Checks a `return`'s value against the return type the enclosing
+    /// declaration writes ([KLS
+    /// `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)).
+    /// A declaration that writes none has nothing to check against — its own
+    /// type is what the body inference produces ([`super::db`]).
+    fn check_return(&mut self, actual: Ty, value: ExprId) {
+        let declared = match self.tree.data(self.item) {
+            KotlinItemData::Function(data) => data.ret.as_ref(),
+            KotlinItemData::Property(data) => data.ty.as_ref(),
+            KotlinItemData::Accessor(_) => None,
+            _ => None,
+        };
+        let Some(declared) = declared else {
+            return;
+        };
+        let expected = super::ty::ty_from_type_ref(self.db, &self.resolver, &declared.ty);
+        let range = self.bodies.expr_range(value);
+        self.check_binding(MismatchTarget::Return, expected, actual, range);
     }
 
     /// The narrowed type an `is` condition establishes for the subject, when
@@ -768,11 +1313,8 @@ impl<'a> InferCtx<'a> {
         for condition in conditions {
             if let WhenCondition::TypeTest { expr, ty, negated } = condition
                 && !negated
-                && let ExprData::Var(name) = self.bodies.expr(*expr).clone()
             {
-                let local = self.types.locals.iter().find_map(|(local, _)| {
-                    (self.bodies.local(*local).name == name).then_some(*local)
-                })?;
+                let (local, _) = self.tested_local(*expr)?;
                 let narrowed = super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty);
                 if super::subtyping::is_assignable(self.db, &self.scope, &narrowed, &subject_ty) {
                     return Some((local, narrowed));
@@ -812,35 +1354,25 @@ impl<'a> InferCtx<'a> {
     /// A name: a local (or a parameter), else a member of the implicit
     /// receiver, else an unresolved reference.
     fn infer_name(&mut self, expr: ExprId, name: &Name) -> Ty {
-        // The implicit parameter of a parameter-less lambda
-        // ([KLS `expressions.html#lambda-literals`](https://kotlinlang.org/spec/expressions.html#lambda-literals)):
-        // `it` is the enclosing lambda's single parameter, bound while its body
-        // is inferred.
-        if name.as_str() == "it"
-            && let Some(ty) = self.implicit_its.last().copied()
-        {
-            return ty;
+        // The lexically visible bindings, innermost scope first: a local, a
+        // parameter, a lambda's parameter, its `it`
+        // ([KLS
+        // `scopes-and-identifiers.html#scopes-and-identifiers`](https://kotlinlang.org/spec/scopes-and-identifiers.html#scopes-and-identifiers)).
+        if let Some(binding) = self.binding(name) {
+            if let Binding::Local(local, ty) = binding {
+                // A smart cast narrows the local the test established it for
+                // ([KLS
+                // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)).
+                if let Some(narrowed) = self.narrowed.get(&local) {
+                    return *narrowed;
+                }
+                self.types
+                    .resolved
+                    .insert(expr, KotlinResolvedMember::Local(local));
+                return ty;
+            }
+            return binding.ty();
         }
-        if let Some((local, ty)) = self
-            .types
-            .locals
-            .iter()
-            .map(|(local, ty)| (*local, *ty))
-            .find(|(local, _)| self.bodies.local(*local).name == *name)
-        {
-            self.types
-                .resolved
-                .insert(expr, KotlinResolvedMember::Local(local));
-            return ty;
-        }
-        if let Some((_, narrowed)) = self
-            .narrowed
-            .iter()
-            .find(|(local, _)| self.bodies.local(**local).name == *name)
-        {
-            return *narrowed;
-        }
-        let _ = expr;
         // A member of an enclosing classifier, without a written receiver —
         // the innermost first ([KLS
         // `type-inference.html#call-without-an-explicit-receiver`](https://kotlinlang.org/spec/type-inference.html#call-without-an-explicit-receiver)).
@@ -919,6 +1451,23 @@ impl<'a> InferCtx<'a> {
             file: self.file,
             item: self.item,
         }
+    }
+
+    /// The type of the member a *safe access* performs, resolved on the
+    /// receiver the access guards: the member expression the lowering writes for
+    /// `x?.m` carries no receiver of its own, so the guard's receiver is what it
+    /// resolves on.
+    fn safe_member_ty(&mut self, member: ExprId, receiver: &Ty) -> Ty {
+        let ty = match self.bodies.expr(member).clone() {
+            ExprData::FieldAccess { name, .. } => self.member_ty(member, receiver, &name),
+            ExprData::MethodCall { name, args, .. } => {
+                let arg_tys: Vec<Ty> = args.iter().map(|arg| self.infer_expr(*arg)).collect();
+                self.call_ty(member, receiver, &name, &arg_tys)
+            }
+            _ => self.infer_expr(member),
+        };
+        self.types.exprs.insert(member, ty);
+        ty
     }
 
     /// The type of the member `name` on `receiver`: a property's type, the
@@ -1065,16 +1614,19 @@ impl<'a> InferCtx<'a> {
                     })
             }
         };
-        let it_ty = candidate
+        // The lambda is inferred *against* the function type the candidate
+        // declares at that index: it is what the lambda's parameters and its
+        // `it` take their types from ([`Self::expected_lambdas`]).
+        let expected = candidate
             .as_ref()
             .and_then(|member| member.params.get(index).copied())
-            .and_then(|param| self.function_parameter_ty(&param, 0));
-        if let Some(it_ty) = it_ty {
-            self.implicit_its.push(it_ty);
+            .map(|param| self.unwrap_flexible(&param));
+        if let Some(expected) = expected {
+            self.expected_lambdas.push(expected);
         }
         self.infer_expr(args[index]);
-        if it_ty.is_some() {
-            self.implicit_its.pop();
+        if expected.is_some() {
+            self.expected_lambdas.pop();
         }
         // The lambda is inferred *against* the parameter's function type, so its
         // own type is what that position determines — `lazy { 1 }` is a
@@ -1123,16 +1675,19 @@ impl<'a> InferCtx<'a> {
             .collect();
         let candidate =
             method::pick_callable(self.db, &self.scope, class, name, &call_args, self.site());
-        let it_ty = candidate
+        // The lambda is inferred *against* the function type the candidate
+        // declares at that index: it is what the lambda's parameters and its
+        // `it` take their types from ([`Self::expected_lambdas`]).
+        let expected = candidate
             .as_ref()
             .and_then(|member| member.params.get(index).copied())
-            .and_then(|param| self.function_parameter_ty(&param, 0));
-        if let Some(it_ty) = it_ty {
-            self.implicit_its.push(it_ty);
+            .map(|param| self.unwrap_flexible(&param));
+        if let Some(expected) = expected {
+            self.expected_lambdas.push(expected);
         }
         self.infer_expr(args[index]);
-        if it_ty.is_some() {
-            self.implicit_its.pop();
+        if expected.is_some() {
+            self.expected_lambdas.pop();
         }
         if let Some(member) = candidate {
             self.record_member(expr, &member);
@@ -1154,11 +1709,21 @@ impl<'a> InferCtx<'a> {
             return None;
         };
         let text = name.as_str();
-        let arity = text.strip_prefix("kotlin.Function")?;
-        if arity.parse::<usize>().is_err() {
-            return None;
+        let arity: usize = text.strip_prefix("kotlin.Function")?.parse().ok()?;
+        // A `kotlin.FunctionN` carries `N` parameters followed by its result, so
+        // an index *within* the arity is a parameter: `Function0<R>`'s single
+        // argument is its result, and a lambda of it declares no parameter.
+        (index < arity).then(|| args.get(index).copied()).flatten()
+    }
+
+    /// A platform type reduced to the type it is a flexible pair of, for the
+    /// positions that need one type — a lambda's expected function type, which a
+    /// Java member declares as a classfile signature.
+    fn unwrap_flexible(&self, ty: &Ty) -> Ty {
+        match ty.kind(self.db) {
+            TyKind::Flexible { lower, .. } => *lower,
+            _ => *ty,
         }
-        args.get(index).copied()
     }
 
     /// The type of a call written *without* a receiver ([KLS
@@ -1288,8 +1853,20 @@ impl<'a> InferCtx<'a> {
             current = self.tree.parent_of(id);
         }
         let Some(&innermost) = classifiers.first() else {
-            return self.error();
+            // A `this` whose *enclosing* declaration is not a classifier can
+            // still be a lambda's receiver — the permissive `T.() -> R` reading
+            // ([`Self::lambda_receivers`]).
+            return match (written.is_none() && !super_, self.lambda_receivers.last()) {
+                (true, Some(receiver)) => *receiver,
+                _ => self.error(),
+            };
         };
+        if !super_
+            && written.is_none()
+            && let Some(receiver) = self.lambda_receivers.last()
+        {
+            return *receiver;
+        }
         if !super_ {
             let chosen = written
                 .as_ref()
@@ -1321,7 +1898,9 @@ impl<'a> InferCtx<'a> {
     /// literal's members are in scope inside its body exactly as a named class's
     /// are.
     fn implicit_receivers(&self) -> Vec<Ty> {
-        let mut out = Vec::new();
+        // A lambda's receiver is the innermost one inside its body
+        // ([`Self::lambda_receivers`]); the stack holds them innermost last.
+        let mut out: Vec<Ty> = self.lambda_receivers.iter().rev().copied().collect();
         let mut current = Some(self.item);
         while let Some(id) = current {
             if self.tree.as_class(id).is_some() {
@@ -1356,18 +1935,37 @@ impl<'a> InferCtx<'a> {
             ExprData::Var(name) => name,
             _ => return,
         };
+        // A *compound* assignment (`x += y`) is the `plusAssign` convention
+        // ([KLS
+        // `operator-overloading.html#augmented-assignments`](https://kotlinlang.org/spec/operator-overloading.html#augmented-assignments)):
+        // when the destination's type declares one, the write *is* that call and
+        // neither the `val` rule nor the binding check applies. When it declares
+        // none, kotlinc falls back to `x = x + y`, which is what the checks
+        // below are.
+        if let Some(convention) = super::operator::assign_convention(op)
+            && let Some(name) = super::operator::binary_convention(match op {
+                hir_expand::body::AssignOp::Add => hir_expand::body::BinaryOp::Add,
+                hir_expand::body::AssignOp::Sub => hir_expand::body::BinaryOp::Sub,
+                hir_expand::body::AssignOp::Mul => hir_expand::body::BinaryOp::Mul,
+                hir_expand::body::AssignOp::Div => hir_expand::body::BinaryOp::Div,
+                hir_expand::body::AssignOp::Rem => hir_expand::body::BinaryOp::Rem,
+                _ => hir_expand::body::BinaryOp::Add,
+            })
+            && self.operator_call_ty(&lhs_ty, name, Some(rhs_ty)).is_some()
+            && self
+                .operator_call_ty(&lhs_ty, convention, Some(rhs_ty))
+                .is_some()
+        {
+            let _ = &lhs_ty;
+            return;
+        }
         // A `val` — a read-only local — cannot be reassigned
         // ([KLS
         // `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)):
         // the binding's own mutability decides, which the lowering records for
         // every local ([`hir_expand::body::Local::is_mutable`]) — a parameter,
         // a loop variable and a pattern binding are `val`s too.
-        if let Some(&local) = self
-            .types
-            .locals
-            .keys()
-            .find(|local| self.bodies.local(**local).name == name)
-        {
+        if let Some((local, _)) = self.local_binding(&name) {
             // A `val` declared without an initializer is *deferred
             // initialization*: `val x: T` followed by a single `x = …` is how
             // Kotlin gives a `val` its value on every path, and kotlinc accepts

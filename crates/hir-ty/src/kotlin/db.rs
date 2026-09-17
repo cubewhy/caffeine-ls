@@ -242,7 +242,13 @@ fn inferred_property_ty(
     }
     if let Some(expr) = data.delegate_expr {
         let delegate = initializer_types(db, file_id, item_id).expr_ty(db, expr);
-        return delegated_value_ty(db, file_id, item_id, tree, resolver, delegate);
+        // The `thisRef` a `getValue` receives: the property's owner — the class
+        // it is a member of — or, for a top-level property, `null`.
+        let owner = match tree.parent_of(item_id) {
+            Some(class) => item_ty(db, file_id, class),
+            None => Ty::null(db),
+        };
+        return delegated_value_ty(db, file_id, item_id, resolver, owner, delegate);
     }
     // `val p get() = expr`: the getter's expression body is the property's type.
     for &accessor in &data.accessors {
@@ -268,12 +274,12 @@ fn inferred_property_ty(
 ///   it declares for the property's owner as `thisRef` — the second parameter,
 ///   `KProperty<*>`, has no type in this model, so the error type stands in for
 ///   it, which is assignable to it ([`crate::kotlin::subtyping`]).
-fn delegated_value_ty(
+pub(crate) fn delegated_value_ty(
     db: &dyn TyDatabase,
     file_id: FileId,
     item_id: ItemId,
-    tree: &KotlinItemTree,
     resolver: &KotlinResolver<'_>,
+    owner: Ty,
     delegate: Ty,
 ) -> Ty {
     if let TyKind::Reference { name, args, .. } = delegate.kind(db)
@@ -283,12 +289,6 @@ fn delegated_value_ty(
     {
         return args.first().copied().unwrap_or_else(|| Ty::error(db));
     }
-    // The `thisRef` a `getValue` receives: the property's owner — the class it
-    // is a member of — or, for a top-level property, `null`.
-    let owner = match tree.parent_of(item_id) {
-        Some(class) => item_ty(db, file_id, class),
-        None => Ty::null(db),
-    };
     let args = [
         crate::kotlin::method::CallArg {
             name: None,

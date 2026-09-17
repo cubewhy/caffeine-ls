@@ -476,6 +476,16 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
         class("kotlin/String", Some("kotlin/Any"), &[], 0x0031),
         class("kotlin/Int", Some("kotlin/Number"), &[], 0x0031),
         class("kotlin/Number", Some("kotlin/Any"), &[], 0x0421),
+        // The rest of the numeric types and the two other `Char`-adjacent ones:
+        // the built-in arithmetic rules are written over them
+        // ([KLS
+        // `built-in-types-and-their-semantics.html#built-in-integer-arithmetic-operators`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html#built-in-integer-arithmetic-operators)).
+        class("kotlin/Byte", Some("kotlin/Number"), &[], 0x0031),
+        class("kotlin/Short", Some("kotlin/Number"), &[], 0x0031),
+        class("kotlin/Long", Some("kotlin/Number"), &[], 0x0031),
+        class("kotlin/Float", Some("kotlin/Number"), &[], 0x0031),
+        class("kotlin/Double", Some("kotlin/Number"), &[], 0x0031),
+        class("kotlin/Char", Some("kotlin/Any"), &[], 0x0031),
         class("kotlin/Boolean", Some("kotlin/Any"), &[], 0x0031),
         class("kotlin/Unit", Some("kotlin/Any"), &[], 0x0031),
         class("kotlin/Nothing", Some("kotlin/Any"), &[], 0x0031),

@@ -520,6 +520,22 @@ fn kotlin_members(
                     defaults: 0,
                 });
             }
+            // An enum entry is a *value* of its enum's type, not a classifier
+            // of its own ([KLS
+            // `declarations.html#enum-class-declaration`](https://kotlinlang.org/spec/declarations.html#enum-class-declaration)):
+            // inside the enum, `CN` is a `Category`.
+            KotlinItemData::EnumEntry(_) if member_name == Some(name) => {
+                out.push(Member {
+                    target: MemberTarget::Kotlin { file, item: member },
+                    // The entry's own item type is the enum's, which the class
+                    // the walk started from declares.
+                    name: name.clone(),
+                    kind: MemberKind::Getter,
+                    params: Vec::new(),
+                    vararg: false,
+                    defaults: 0,
+                });
+            }
             KotlinItemData::Class(class)
                 if include_companion
                     && class.kind
@@ -831,6 +847,30 @@ pub fn access_context_for_kotlin(
         package,
         subclass_of,
     }
+}
+
+/// The callable a Kotlin *operator convention* resolves to on `receiver`
+/// ([KLS
+/// `operator-overloading.html`](https://kotlinlang.org/spec/operator-overloading.html)
+/// names the function each operator is spelled as): a thin [`pick_callable`]
+/// for the convention's name at the operator's arity — `arg` is the right-hand
+/// operand, `None` for the operators that write none (`iterator`, `componentN`).
+pub fn pick_operator_callable(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    name: &Name,
+    arg: Option<Ty>,
+    site: CallSite,
+) -> Option<Member> {
+    let args: Vec<CallArg<'_>> = match arg {
+        Some(arg) => vec![CallArg {
+            name: None,
+            ty: arg,
+        }],
+        None => Vec::new(),
+    };
+    pick_callable(db, scope, receiver, name, &args, site)
 }
 
 /// The function a call `name(args)` selects on `receiver`, or `None` when no

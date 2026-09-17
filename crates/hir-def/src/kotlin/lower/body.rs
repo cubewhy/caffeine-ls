@@ -322,7 +322,7 @@ fn lower_params(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<LocalId>
 /// Binds one declared parameter as a [`Local`], with its declared type when it
 /// writes one. A parameter is a `val`: it cannot be reassigned
 /// ([KLS `declarations.html#function-declaration`](https://kotlinlang.org/spec/declarations.html#function-declaration)).
-fn lower_param(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> LocalId {
+pub(super) fn lower_param(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> LocalId {
     let name = parameter_name(node).unwrap_or_else(|| Name::new("<missing>"));
     let ty = declared_type(ctx, node);
     alloc_local(ctx, name, ty, node.text_range(), name_range(node))
@@ -766,10 +766,24 @@ fn expr_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
             let (Some(value), Some(ty)) = (child_expression(node), cast_type(node)) else {
                 return ExprData::Missing;
             };
-            ExprData::InstanceOf {
+            // `x !is T` is the negation of the test: the production carries the
+            // `!` inside the operator token (`!is`), which is a `NOT_IS`
+            // ([spec: grammar-rule-infixOperation]).
+            let negated = node
+                .children_with_tokens()
+                .filter_map(NodeOrToken::into_token)
+                .any(|token| is_token(&token, K::NOT_IS));
+            let test = ExprData::InstanceOf {
                 expr: expr(ctx, owner, &value),
                 ty: Some(spanned_type(ctx, &ty)),
                 pattern: None,
+            };
+            match negated {
+                true => ExprData::Unary {
+                    op: hir_expand::body::UnaryOp::Not,
+                    expr: alloc_expr(ctx, test, node.text_range()),
+                },
+                false => test,
             }
         }
         K::IN_EXPRESSION => {
@@ -777,10 +791,22 @@ fn expr_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
             else {
                 return ExprData::Missing;
             };
-            ExprData::InfixCall {
+            // `e !in xs` is `!xs.contains(e)`, for the same reason.
+            let negated = node
+                .children_with_tokens()
+                .filter_map(NodeOrToken::into_token)
+                .any(|token| is_token(&token, K::NOT_IN));
+            let containment = ExprData::InfixCall {
                 receiver: expr(ctx, owner, &container),
                 name: Name::new("contains"),
                 arg: expr(ctx, owner, &element),
+            };
+            match negated {
+                true => ExprData::Unary {
+                    op: hir_expand::body::UnaryOp::Not,
+                    expr: alloc_expr(ctx, containment, node.text_range()),
+                },
+                false => containment,
             }
         }
         K::INFIX_FUNCTION_CALL => {
@@ -1545,10 +1571,20 @@ fn try_expr(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> E
 
 /// One `catch (name: Type) { … }` of a `try` ([spec: grammar-rule-catchBlock]).
 fn catch_clause(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> CatchClause {
+    // The parameter is the identifier between the parentheses: the leading
+    // `catch` is a *contextual* keyword, so it lexes as an identifier too and a
+    // plain scan for the first identifier reads the keyword as the name.
+    let mut after_paren = false;
     let param = node
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
-        .find(|token| matches!(token.kind(), K::IDENTIFIER | K::UNDERSCORE))
+        .find(|token| {
+            if is_token(token, K::L_PAREN) {
+                after_paren = true;
+                return false;
+            }
+            after_paren && matches!(token.kind(), K::IDENTIFIER | K::UNDERSCORE)
+        })
         .map(|token| Name::new(token.text()))
         .unwrap_or_else(|| Name::new("<missing>"));
     let ty = declared_type(ctx, node);
@@ -1664,6 +1700,14 @@ fn lambda_params(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<LambdaParam
             ty: declared_type(ctx, &parameter),
             annotations: Vec::new(),
             range: name_range(&parameter),
+            // A destructuring parameter — `(a, b) -> …` — writes one
+            // `variableDeclaration` per bound name, with no wrapper of its own
+            // ([spec: grammar-rule-lambdaParameter]).
+            destructured: parameter
+                .children()
+                .filter(|child| is(child, K::VARIABLE_DECLARATION))
+                .filter_map(|declaration| variable_name(&declaration))
+                .collect(),
         })
         .collect()
 }

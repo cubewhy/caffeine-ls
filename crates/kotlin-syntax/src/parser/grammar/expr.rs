@@ -1002,11 +1002,17 @@ fn jump_expression(p: &mut Parser) {
 }
 
 /// `@label` consumed after a jump keyword (`return@foo`, `break@outer`).
+///
+/// The suffix is a `LABEL` node exactly as the prefix form (`label@ x`) is, so a
+/// consumer that asks which label a `return` carries — the type layer's return
+/// check, navigation — reads one shape.
 fn label_suffix(p: &mut Parser) {
+    let m = p.start();
     p.expect(AT);
     if p.at(IDENTIFIER) {
         simple_identifier(p);
     }
+    m.complete(p, LABEL);
 }
 
 /// `objectLiteral`: ['data'] {NL} 'object' [: delegationSpecifiers] classBody

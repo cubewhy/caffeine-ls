@@ -173,6 +173,90 @@ fn class_binding(
         .collect()
 }
 
+/// The least upper bound of `a` and `b` — the type a branch join has
+/// ([KLS
+/// `type-system.html#subtyping`](https://kotlinlang.org/spec/type-system.html#subtyping)
+/// makes the join the least common supertype of the branches, which kotlinc
+/// words as `if`/`when`/`try` "common supertype"):
+///
+/// * an identical pair is itself;
+/// * `kotlin.Nothing` — the type of `throw` and of a branch that never returns —
+///   is the bottom, so the join is the other side;
+/// * the error type absorbs, exactly as it does in [`is_subtype`];
+/// * a subtype relation answers the supertype, and [`supertypes`]'s transitive
+///   closure answers it when neither side is one;
+/// * `kotlin.Any` remains as the last resort.
+///
+/// Nullability joins like any other attribute — `lub(Int?, Int)` is `Int?`
+/// ([KLS
+/// `type-system.html#nullable-types`](https://kotlinlang.org/spec/type-system.html#nullable-types)) —
+/// so the join is taken over the nullability-stripped operands and the result
+/// made nullable when either side was.
+pub fn lub(db: &dyn TyDatabase, scope: &hir::ResolutionScope, a: &Ty, b: &Ty) -> Ty {
+    // `null`'s type is `Nothing?`, the bottom of the nullable half of the lattice
+    // ([KLS
+    // `type-system.html#nullable-types`](https://kotlinlang.org/spec/type-system.html#nullable-types)):
+    // the join with it is the other side, *nullable* — which is what
+    // `if (c) x else null` is, and the type a `T?` return accepts.
+    if matches!(a.kind(db), TyKind::Null) {
+        return Ty::nullable(db, *b);
+    }
+    if matches!(b.kind(db), TyKind::Null) {
+        return Ty::nullable(db, *a);
+    }
+    let nullable = a.is_nullable(db) || b.is_nullable(db);
+    let plain = lub_non_nullable(
+        db,
+        scope,
+        &a.strip_nullability(db),
+        &b.strip_nullability(db),
+    );
+    match nullable {
+        true => Ty::nullable(db, plain),
+        false => plain,
+    }
+}
+
+/// [`lub`] over two non-null types: the join's nullability is its caller's.
+fn lub_non_nullable(db: &dyn TyDatabase, scope: &hir::ResolutionScope, a: &Ty, b: &Ty) -> Ty {
+    if a == b {
+        return *a;
+    }
+    if matches!(a.kind(db), TyKind::Error) {
+        return *b;
+    }
+    if matches!(b.kind(db), TyKind::Error) {
+        return *a;
+    }
+    let nothing = |ty: &Ty| matches!(ty.kind(db), TyKind::Reference { name, .. } if name.as_str() == "kotlin.Nothing");
+    if nothing(a) {
+        return *b;
+    }
+    if nothing(b) {
+        return *a;
+    }
+    if is_subtype(db, scope, a, b) {
+        return *b;
+    }
+    if is_subtype(db, scope, b, a) {
+        return *a;
+    }
+    // The first supertype of `a`'s closure that `b` satisfies — the least common
+    // supertype of the two when the relation can answer it.
+    let mut frontier = supertypes(db, scope, a);
+    let mut seen = rustc_hash::FxHashSet::default();
+    while let Some(supertype) = frontier.pop() {
+        if !seen.insert(supertype) {
+            continue;
+        }
+        if is_subtype(db, scope, b, &supertype) {
+            return supertype;
+        }
+        frontier.extend(supertypes(db, scope, &supertype));
+    }
+    Ty::reference(db, "kotlin.Any", Vec::new())
+}
+
 /// Whether `sub` is a subtype of `sup` ([KLS
 /// `type-system.html#subtyping`](https://kotlinlang.org/spec/type-system.html#subtyping)).
 pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, sup: &Ty) -> bool {

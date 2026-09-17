@@ -32,6 +32,7 @@ pub mod diagnostics;
 pub mod infer;
 pub mod jvm_view;
 pub mod method;
+pub mod operator;
 pub mod plugin;
 pub mod resolve;
 pub mod subtyping;

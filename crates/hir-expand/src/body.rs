@@ -804,6 +804,13 @@ pub struct LambdaParam {
     pub ty: Option<SpannedTypeRef>,
     pub annotations: Vec<AnnotationRef>,
     pub range: TextRange,
+    /// The names a *destructuring* parameter binds — `{ (a, b) -> … }` — in
+    /// component order, each the `componentN` of the parameter the function type
+    /// declares ([KLS
+    /// `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)).
+    /// Empty for a parameter that binds one name, and for a Java lambda
+    /// parameter, which never writes one.
+    pub destructured: Vec<Name>,
 }
 
 /// One method declared in an anonymous class body

@@ -1205,3 +1205,189 @@ fun use(): String = Holder().bySource
         "nothing of the fixture is unresolved: {bodies}"
     );
 }
+
+// -- control flow, operators and receivers ------------------------------------
+
+/// The fixture behind the cases below, each of which kotlinc 2.4.20 compiles
+/// clean: a class with the operator conventions it declares, a nullable and an
+/// open hierarchy for the smart casts, a function type for the lambdas and a
+/// local function that captures its caller's bindings.
+const CONTROL_FLOW: &str = r#"
+open class Animal
+class Dog(val legs: Int) : Animal()
+class Cat(val claws: Int) : Animal()
+
+class Span(val from: Int, val to: Int)
+
+class Box(var value: Int) {
+    operator fun plus(other: Box): Box = Box(value + other.value)
+
+    operator fun get(index: Int): String = "x"
+
+    operator fun component1(): Int = value
+
+    operator fun rangeTo(other: Int): Span = Span(value, other)
+
+    // A lambda whose parameter is a *receiver* function type: inside it, `this`
+    // is the box the call is written on.
+    fun applied(block: Box.() -> Unit): Box {
+        block()
+        return this
+    }
+}
+
+fun runWith(block: (Int) -> Int): Int = block(1)
+
+fun joins(c: Boolean, a: Animal, n: Int?): Int {
+    val joined: Number = if (c) 1 else 2.0
+    val animal: Animal = if (c) Dog(4) else Cat(18)
+    val tried: Int = try { 1 } catch (e: Exception) { 2 } finally { }
+    val narrowed: Int = if (a is Dog) a.legs else 0
+    val nonNull: Int = if (n != null) n else 0
+    val nonNull2: Int = if (n == null) 0 else n
+    val notDog: Boolean = a !is Dog
+    val notIn: Boolean = 1 !in listOf(1)
+    return joined.hashCode() + animal.hashCode() + tried + narrowed + nonNull + nonNull2 + (if (notDog) 1 else 0) + (if (notIn) 1 else 0)
+}
+
+fun arithmetic(): Long {
+    val int: Int = 1 + 2
+    val long: Long = 1L + 2
+    val double: Double = 1 + 2.5
+    val float: Float = 1.0f + 2
+    val char: Char = 'a' + 1
+    val text: String = "a" + 1
+    val compared: Boolean = 1 < 2L
+    val negated: Int = -int
+    var counted = 0
+    counted++
+    val span: Span = Box(1)..3
+    val box: Box = Box(1) + Box(2)
+    val indexed: String = Box(3)[0]
+    return long + double.toLong() + float.toLong() + char.code + text.length + (if (compared) 1L else 0L) + negated.toLong() + counted.toLong() + span.from.toLong() + box.value.toLong() + indexed.length.toLong()
+}
+
+fun lambdas(): Int {
+    val one = runWith { it + 1 }
+    val two = runWith { v -> v + 2 }
+    val receiver = Box(1).applied { value = 2 }
+    return one + two + receiver.value
+}
+
+fun captures(input: Int): Int {
+    val doubled = input * 2
+    fun inner(extra: Int): Int = doubled + extra
+    class Local(val own: Int) {
+        fun total(): Int = own + doubled
+    }
+    val listener = object : Animal() {
+        fun read(): Int = doubled
+    }
+    return inner(1) + Local(2).total() + listener.read()
+}
+
+fun caught(): Int {
+    val parsed: Int
+    try {
+        parsed = 1
+    } catch (e: Exception) {
+        return e.message?.length ?: 0
+    }
+    return parsed
+}
+
+fun destructured(): Int {
+    val (first) = Box(7)
+    var total = 0
+    for ((name, value) in listOf(1 to 2)) {
+        total += name + value
+    }
+    return first + total
+}
+
+fun delegated(): Int {
+    val local by lazy { 1 }
+    return local
+}
+"#;
+
+/// The types the control-flow, operator and receiver rules produce, and the
+/// claim that nothing of the fixture is unresolved: kotlinc 2.4.20 compiles it
+/// clean, whose own answer for `if (c) 1 else 2.0` is `Number & Comparable<*>`
+/// — assignable to the `Number` the join of the two branch types is here.
+#[test]
+fn control_flow_operators_and_receivers_match_the_compiler() {
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", CONTROL_FLOW)]);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        !rendered.contains("kotlin."),
+        "nothing of the fixture is unresolved or mismatched: {rendered}"
+    );
+    // The declared conventions are what the operators resolve to, and the
+    // built-in arithmetic is the compiler's own table.
+    for expected in [
+        ": Long",
+        ": Int",
+        ": Double",
+        ": Float",
+        ": Char",
+        ": String",
+        ": Boolean",
+        ": Span",
+        ": Box",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "expected a {expected} expression in:\n{rendered}"
+        );
+    }
+}
+
+/// A `for` loop's variable is the element of the `iterator()` convention's
+/// `Iterator<T>` ([KLS
+/// `control--and-data-flow-analysis.html#for-loops`](https://kotlinlang.org/spec/control--and-data-flow-analysis.html#for-loops)),
+/// and a destructuring pattern binds the `componentN` of what it destructures
+/// ([KLS
+/// `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations)).
+#[test]
+fn a_destructuring_declaration_binds_the_components() {
+    let source = r#"
+class Cell(val one: Int, val two: Int) {
+    operator fun component1(): Int = one
+
+    operator fun component2(): Int = two
+}
+
+fun probe(): Int {
+    val (first, second) = Cell(1, 2)
+    val sum: Int = first + second
+    return sum
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        !rendered.contains("kotlin."),
+        "the components are bound: {rendered}"
+    );
+}
+
+/// A `return` whose value the declared return type cannot accept is the
+/// compiler's mismatch, worded as an assignment's
+/// ([KLS `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)):
+/// kotlinc 2.4.20 reports `type mismatch: inferred type is 'String' but 'Int'
+/// was expected.` for the same source.
+#[test]
+fn a_return_answers_the_declared_return_type() {
+    let source = r#"
+fun probe(): Int {
+    return "x"
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        rendered.contains("kotlin.type-mismatch"),
+        "a `return` of the wrong type is reported: {rendered}"
+    );
+}
