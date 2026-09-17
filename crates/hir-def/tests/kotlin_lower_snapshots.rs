@@ -543,6 +543,70 @@ fun caller() {
 "#,
 }
 
+// The three shapes the members-and-supertypes fix is about, each compiled with
+// the same kotlinc and read back with `javap -p`:
+//
+//     public final class MembersKt$members$obj$1 implements java.lang.Runnable {
+//       private final java.lang.String label;
+//       public final java.lang.String getLabel();
+//       public void run();
+//       public final int extra();
+//     }
+//     public final class MultipleKt$multiple$obj$1 extends Base implements B {
+//       public int b();
+//     }
+//     public final class DelegationKt$delegation$obj$1 implements I {
+//       private final Impl $$delegate_0;
+//       public int i();
+//     }
+//
+// — the literal's class carries the members its body declares (a property, an
+// override and a plain function), every delegation specifier as a supertype,
+// and `by` as a delegating field next to the body's own members.
+
+body_snapshot_lang! {
+    kotlin_body_object_literal_members,
+    LanguageKind::Kotlin,
+    r#"
+fun members() {
+    val obj = object : Runnable {
+        val label: String = "x"
+        override fun run() {}
+        fun extra(): Int = 1
+    }
+    obj.extra()
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_object_literal_multiple_supertypes,
+    LanguageKind::Kotlin,
+    r#"
+open class Base(val n: Int)
+interface B { fun b(): Int }
+fun multiple() {
+    val obj = object : Base(1), B {
+        override fun b() = n
+    }
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_object_literal_delegation,
+    LanguageKind::Kotlin,
+    r#"
+interface I { fun i(): Int }
+class Impl : I { override fun i() = 1 }
+fun delegation() {
+    val obj = object : I by Impl() {
+        override fun i() = 2
+    }
+}
+"#,
+}
+
 body_snapshot_lang! {
     kotlin_body_local_declaration_parents,
     LanguageKind::Kotlin,

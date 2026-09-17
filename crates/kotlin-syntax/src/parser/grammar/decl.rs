@@ -454,7 +454,7 @@ fn class_parameter(p: &mut Parser) {
 /// `delegationSpecifiers`: annotatedDelegationSpecifier {{NL} ',' {NL}
 ///                         annotatedDelegationSpecifier}
 /// [spec: grammar-rule-delegationSpecifiers] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-delegationSpecifiers
-fn delegation_specifiers(p: &mut Parser) {
+pub(super) fn delegation_specifiers(p: &mut Parser) {
     let m = p.start();
     delegation_specifier(p);
     while p.eat(COMMA) {
@@ -486,7 +486,9 @@ fn delegation_specifier(p: &mut Parser) {
         // explicitDelegation: type 'by' expression
         p.bump();
         eat_nl(p);
-        expression(p);
+        // A `{ … }` after the delegate opens the class body, not the delegate
+        // call's trailing lambda ([spec: grammar-rule-explicitDelegation]).
+        p.with_trailing_lambda(|p| expression(p));
         head.complete(p, EXPLICIT_DELEGATION);
     } else {
         head.abandon(p);
@@ -966,7 +968,7 @@ fn type_alias(p: &mut Parser) {
 
 /// `classBody`: '{' {NL} classMemberDeclarations {NL} '}'
 /// [spec: grammar-rule-classBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-classBody
-fn class_body(p: &mut Parser) {
+pub(super) fn class_body(p: &mut Parser) {
     let m = p.start();
     p.expect(L_BRACE);
     eat_nl(p);

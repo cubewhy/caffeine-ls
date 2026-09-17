@@ -134,8 +134,10 @@ fn lower_import(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) {
 /// [spec: grammar-rule-objectDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-objectDeclaration
 /// `companionObject` — `companion object`
 /// [spec: grammar-rule-companionObject] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-companionObject
+/// `objectLiteral` — the anonymous class of `object : … { … }`
+/// [spec: grammar-rule-objectLiteral] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-objectLiteral
 ///
-/// All three lower to [`ClassData`], differing in [`KotlinClassKind`]. The
+/// All four lower to [`ClassData`], differing in [`KotlinClassKind`]. The
 /// primary constructor and the properties its `val`/`var` class parameters
 /// declare are lowered *before* the class-body members, in source order.
 fn lower_class(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
@@ -209,6 +211,7 @@ fn class_kind(node: &SyntaxNode<Lang>, modifiers: &KotlinModifiers) -> KotlinCla
     use crate::kotlin::modifiers::KotlinModifierFlags;
     match node.kind() {
         K::OBJECT_DECL => KotlinClassKind::Object,
+        K::OBJECT_LITERAL => KotlinClassKind::Object,
         K::COMPANION_OBJECT => KotlinClassKind::CompanionObject,
         _ if modifiers.flags.contains(KotlinModifierFlags::ANNOTATION) => {
             KotlinClassKind::Annotation
@@ -231,6 +234,13 @@ fn class_kind(node: &SyntaxNode<Lang>, modifiers: &KotlinModifiers) -> KotlinCla
 /// name the compiler gives it ([KLS
 /// `declarations.html#companion-objects`](https://kotlinlang.org/spec/declarations.html#companion-objects)).
 fn class_name(node: &SyntaxNode<Lang>, kind: KotlinClassKind) -> Option<Name> {
+    if is(node, K::OBJECT_LITERAL) {
+        // An object literal's class has no name in the source: the compiler
+        // gives it a positional binary name (`Foo$1`) that no source writes, so
+        // the item carries a stable printable one. ([KLS
+        // `expressions.html#object-literals`](https://kotlinlang.org/spec/expressions.html#object-literals))
+        return Some(Name::new("<anonymous>"));
+    }
     let mut after_keyword = false;
     for element in node.children_with_tokens() {
         let NodeOrToken::Token(token) = element else {
@@ -634,10 +644,10 @@ pub(super) fn lower_local_declaration(
 /// An object literal `object : Base() { … }` ([KLS
 /// `expressions.html#object-literals`](https://kotlinlang.org/spec/expressions.html#object-literals)):
 /// the anonymous class its body declares, lowered as an `object` classifier
-/// with no name of its own — `lower_class` reads the classifier's own keyword,
-/// which an object literal has none of, so the item it allocates carries the
-/// missing name and the item is the one the literal *is*, not the declaration
-/// that follows it.
+/// whose name the source does not write (`class_name` names it
+/// `<anonymous>`). The item is the class the literal *is*, not the declaration
+/// that follows it, and the body and the delegation specifiers are the ones
+/// `lower_class` reads from the same node.
 fn lower_object_literal(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemId> {
     Some(lower_class(ctx, node))
 }

@@ -88,6 +88,11 @@ pub struct Parser<'a> {
     pub errors: Vec<ParseError>,
     override_token: Option<Token<'a>>,
     last_token_range: TextRange,
+    /// The `expression` nesting level the trailing-lambda restriction applies
+    /// to, if any (see [`Self::trailing_lambda_allowed`]).
+    restricted_expression: Option<u32>,
+    /// The nesting level of the `expression` being parsed.
+    expression_nesting: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -98,6 +103,8 @@ impl<'a> Parser<'a> {
             events: Vec::new(),
             override_token: None,
             last_token_range: TextRange::empty(TextSize::from(0)),
+            restricted_expression: None,
+            expression_nesting: 0,
         }
     }
 
@@ -202,6 +209,44 @@ impl<'a> Parser<'a> {
             self.source.bump();
             self.last_token_range = TextRange::at(offset, TextSize::of(lexeme));
         }
+    }
+
+    /// Whether a `{ … }` directly after a call expression may be taken as that
+    /// call's trailing lambda
+    /// ([spec: grammar-rule-annotatedLambda]).
+    ///
+    /// False for the *one* expression the restriction is armed for — the
+    /// delegate expression of an explicit delegation, `class C : I by f { … }`,
+    /// where the brace opens the class body the production requires
+    /// ([spec: grammar-rule-explicitDelegation]) and kotlinc 2.4.20 reads it
+    /// that way too. A nested expression the delegate writes — the argument of
+    /// `by f(g { 1 })`, a parenthesized one, an `if` condition — is a distinct
+    /// nesting level and keeps its trailing lambdas.
+    pub(crate) fn trailing_lambda_allowed(&self) -> bool {
+        self.restricted_expression != Some(self.expression_nesting)
+    }
+
+    /// Runs `f` with the trailing-lambda restriction armed for the expression
+    /// `f` parses, restoring the previous state afterwards.
+    pub(crate) fn with_trailing_lambda<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let previous = self
+            .restricted_expression
+            .replace(self.expression_nesting + 1);
+        let result = f(self);
+        self.restricted_expression = previous;
+        result
+    }
+
+    /// Records that one more `expression` is being parsed, so the level a
+    /// restriction was armed for can be told from the levels nested inside it.
+    pub(crate) fn enter_expression(&mut self) -> u32 {
+        self.expression_nesting += 1;
+        self.expression_nesting
+    }
+
+    /// Undoes [`Self::enter_expression`].
+    pub(crate) fn leave_expression(&mut self) {
+        self.expression_nesting -= 1;
     }
 
     pub(crate) fn at_contextual_kw(&self, kw: ContextualKeyword) -> bool {

@@ -1,0 +1,40 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+interface I { fun i(): Int }
+class Impl : I { override fun i() = 1 }
+fun delegation() {
+    val obj = object : I by Impl() {
+        override fun i() = 2
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+interface I @1..29
+  fun i(): Int @15..27
+class Impl @30..69
+  : I
+  fun i() override @47..67
+fun delegation() @70..162
+locals:
+  object <anonymous>@103..160 parent item4
+    : I
+    fun i() override @134..154
+
+BODIES:
+fun i body b0:
+  s0: expr e0
+fun delegation body b2:
+  s2: decl l0 = e2
+fun i body b1:
+  s1: expr e1
+  local l0: obj
+  expr e0: literal Int(1) 
+  expr e1: literal Int(2) 
+  expr e2: object-literal item5

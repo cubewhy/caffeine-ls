@@ -1,0 +1,38 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+open class Base(val n: Int)
+interface B { fun b(): Int }
+fun multiple() {
+    val obj = object : Base(1), B {
+        override fun b() = n
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Base open @1..29
+  primary constructor(n: Int) @16..28
+  val n: Int @17..27
+interface B @29..57
+  fun b(): Int @43..55
+fun multiple() @58..147
+locals:
+  object <anonymous>@89..145 parent item5
+    : Base(e0), B
+    fun b() override @119..139
+
+BODIES:
+fun multiple body b1:
+  s1: decl l0 = e2
+fun b body b0:
+  s0: expr e1
+  local l0: obj
+  expr e0: literal Int(1) 
+  expr e1: var n 
+  expr e2: object-literal item6

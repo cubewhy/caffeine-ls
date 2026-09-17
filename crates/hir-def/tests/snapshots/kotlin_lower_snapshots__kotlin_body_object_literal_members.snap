@@ -1,0 +1,41 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun members() {
+    val obj = object : Runnable {
+        val label: String = "x"
+        override fun run() {}
+        fun extra(): Int = 1
+    }
+    obj.extra()
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun members() @1..165
+locals:
+  object <anonymous>@31..147 parent item0
+    : Runnable
+    val label: String @59..83
+    fun run() override @91..112
+    fun extra(): Int @121..141
+
+BODIES:
+fun members body b2:
+  s1: decl l0 = e2
+  s2: expr e5
+fun run body b0:
+fun extra body b1:
+  s0: expr e1
+  local l0: obj
+  expr e0: literal Str("x") 
+  expr e1: literal Int(1) 
+  expr e2: object-literal item1 
+  expr e3: var obj 
+  expr e4: field extra [e3]
+  expr e5: call extra [e3]

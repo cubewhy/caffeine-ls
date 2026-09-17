@@ -25,11 +25,16 @@ file (kotlin)
 fun local(): Int @1..257
 locals:
   class Counter@24..97 parent item0
+    primary constructor(start: Int) @37..53
+    val start: Int @38..52
+    fun next(): Int @64..91
   fun twice@103..141 parent item0
-  class <missing>@163..218 parent item0
+  object <anonymous>@163..218 parent item0
+    : Runnable
+    fun run() override @191..212
 
 BODIES:
-fun local body b2:
+fun local body b3:
   s1: local class item1
   s3: local fun item5
   s4: decl l1 = e6
@@ -39,6 +44,7 @@ fun next body b0:
 fun twice body b1:
   param l0: value: Int
   s2: expr e5
+fun run body b2:
   local l0: value: Int
   local l1: anonymous
   expr e0: var start 

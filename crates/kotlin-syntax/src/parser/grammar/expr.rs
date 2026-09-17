@@ -15,7 +15,9 @@ use crate::{
 /// `expression`: disjunction
 /// [spec: grammar-rule-expression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-expression
 pub(crate) fn expression(p: &mut Parser) {
+    p.enter_expression();
     disjunction(p);
+    p.leave_expression();
 }
 
 /// Whether the current token can start an expression.
@@ -347,7 +349,9 @@ fn postfix_unary_expression(p: &mut Parser) {
             indexing_suffix(p);
             s.complete(p, INDEXING_EXPRESSION);
             wrapped = true;
-        } else if p.at(L_BRACE) || p.at(AT) || (p.at(IDENTIFIER) && p.nth(1) == Some(AT)) {
+        } else if (p.at(L_BRACE) || p.at(AT) || (p.at(IDENTIFIER) && p.nth(1) == Some(AT)))
+            && p.trailing_lambda_allowed()
+        {
             // callSuffix: annotatedLambda = {annotation} [label] lambdaLiteral
             let s = p.start();
             while p.at(AT) {
@@ -1019,15 +1023,11 @@ fn object_literal(p: &mut Parser) {
     if p.at(COLON) {
         p.bump();
         eat_nl(p);
-        // delegationSpecifiers (simplified): userType + optional arguments
-        crate::parser::grammar::types::user_type(p);
-        if p.at(L_PAREN) {
-            value_arguments(p);
-        }
+        crate::parser::grammar::decl::delegation_specifiers(p);
         eat_nl(p);
     }
 
-    crate::parser::grammar::statements::block(p);
+    crate::parser::grammar::decl::class_body(p);
     m.complete(p, OBJECT_LITERAL);
 }
 
@@ -1314,6 +1314,43 @@ mod tests {
     fn object_literal() {
         let out = parse_with(expression, "object : Runnable { override fun run() {} }");
         insta::assert_snapshot!(out);
+    }
+
+    /// Every `objectLiteral` form writes a full `delegationSpecifiers` list —
+    /// constructor invocations, several supertypes, `by` delegation — and a
+    /// real `classBody`, never a statement block
+    /// ([spec: grammar-rule-objectLiteral]).
+    ///
+    /// Two forms a naive reading of the grammar suggests are *not* object
+    /// literals, and kotlinc 2.4.20 agrees with this grammar on both:
+    /// `data object : A { }` in expression position is `data` used as a
+    /// reference (`unresolved reference 'data'`) followed by an object
+    /// *declaration*, and a `by` whose delegate is a bare name —
+    /// `object : I by impl { }` — binds the `{ }` to that call as its trailing
+    /// lambda (`inferred type is 'Unit', but 'I' was expected`), leaving the
+    /// literal without a body. The delegation case therefore writes a
+    /// constructor invocation, which kotlinc resolves as the class body.
+    #[test]
+    fn object_literal_supertypes_and_body() {
+        for (src, specifiers) in [
+            ("object : A(1), B { fun f() = 2 }", 2),
+            ("object : I by impl() { }", 1),
+            ("object : A, B, C { }", 3),
+            ("object : A.Test { fun f() = 2 }", 1),
+            ("object { }", 0),
+        ] {
+            let out = parse_with(expression, src);
+            assert_eq!(
+                out.matches("StartNode(DELEGATION_SPECIFIER)\n").count(),
+                specifiers,
+                "delegation specifier count for `{src}`"
+            );
+            assert!(
+                out.contains("StartNode(CLASS_BODY)\n"),
+                "`{src}` lowers no class body:\n{out}"
+            );
+            assert!(!out.contains("ERROR"), "`{src}` reported:\n{out}");
+        }
     }
 
     #[test]

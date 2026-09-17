@@ -22,14 +22,18 @@ val x @1..28
 fun use(runnable: Runnable) @28..58
 fun caller() @60..141
 locals:
-  class <missing>@9..26 parent item0
-  class <missing>@83..138 parent item3
+  object <anonymous>@9..26 parent item0
+    : Any
+  object <anonymous>@83..138 parent item3
+    : Runnable
+    fun run() override @111..132
 
 BODIES:
 fun use body b0:
   param l0: runnable: Runnable
-fun caller body b1:
+fun caller body b2:
   s0: expr e3
+fun run body b1:
   local l0: runnable: Runnable
   expr e0: object-literal item1 
   expr e1: var use 

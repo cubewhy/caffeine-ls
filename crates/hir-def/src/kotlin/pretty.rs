@@ -84,6 +84,13 @@ pub fn pretty_print(tree: &KotlinItemTree, map: &AstIdMap, source: &SourceFile) 
                     None => "none".to_owned(),
                 },
             ));
+            // A local classifier — a local class, an object declaration or an
+            // object literal — declares supertypes and members exactly as a
+            // top-level one does, so the listing renders them instead of
+            // stopping at the item's own line.
+            if let KotlinItemData::Class(data) = data {
+                render_class_declarations(tree, map, source, data, 2, &mut out);
+            }
         }
     }
 
@@ -130,6 +137,52 @@ fn suffix<'a>(modifiers: impl Iterator<Item = &'a str>, range: Option<TextRange>
     out
 }
 
+/// The declarations a classifier carries past its header — the supertypes it
+/// delegates to, its primary constructor and the members of its body — each on
+/// its own line, indented for members at `depth`.
+///
+/// A *local* classifier carries exactly the same declarations, which is why the
+/// renderer of the `locals` listing reaches for this too: a local class, an
+/// `object` declaration and an object literal are lowered by the same function
+/// and differ only in where the item hangs.
+fn render_class_declarations(
+    tree: &KotlinItemTree,
+    map: &AstIdMap,
+    source: &SourceFile,
+    data: &super::item_tree::ClassData,
+    depth: usize,
+    out: &mut String,
+) {
+    let indent = "  ".repeat(depth);
+    if !data.super_types.is_empty() {
+        out.push_str(&format!(
+            "{indent}: {}\n",
+            render_join(data.super_types.iter().map(render_super_type))
+        ));
+    }
+    if let Some(constructor) = data.primary_constructor {
+        // The primary constructor is a declaration of its own (a navigation and
+        // member-resolution target), rendered here because it hangs off the
+        // header rather than off the body.
+        let data = match tree.data(constructor) {
+            KotlinItemData::Constructor(data) => data,
+            _ => unreachable!("a primary constructor is a constructor item"),
+        };
+        out.push_str(&format!(
+            "{indent}primary constructor{}{}\n",
+            render_params_with_defaults(&data.params, Some(&data.defaults)),
+            suffix(
+                data.modifiers.names(),
+                item_range(tree, map, source, constructor)
+            ),
+        ));
+        render_annotations(out, &indent, &data.annotations);
+    }
+    for &member in &data.body {
+        render_item(tree, map, source, member, depth, out);
+    }
+}
+
 fn render_item(
     tree: &KotlinItemTree,
     map: &AstIdMap,
@@ -159,33 +212,7 @@ fn render_item(
                 ),
             ));
             render_annotations(out, &indent, &data.annotations);
-            if !data.super_types.is_empty() {
-                out.push_str(&format!(
-                    "{indent}  : {}\n",
-                    render_join(data.super_types.iter().map(render_super_type))
-                ));
-            }
-            if let Some(constructor) = data.primary_constructor {
-                // The primary constructor is a declaration of its own (a
-                // navigation and member-resolution target), rendered here
-                // because it hangs off the header rather than off the body.
-                let data = match tree.data(constructor) {
-                    KotlinItemData::Constructor(data) => data,
-                    _ => unreachable!("a primary constructor is a constructor item"),
-                };
-                out.push_str(&format!(
-                    "{indent}  primary constructor{}{}\n",
-                    render_params_with_defaults(&data.params, Some(&data.defaults)),
-                    suffix(
-                        data.modifiers.names(),
-                        item_range(tree, map, source, constructor)
-                    ),
-                ));
-                render_annotations(out, &format!("{indent}  "), &data.annotations);
-            }
-            for &member in &data.body {
-                render_item(tree, map, source, member, depth + 1, out);
-            }
+            render_class_declarations(tree, map, source, data, depth + 1, out);
         }
         KotlinItemData::Constructor(data) => {
             render_constructor(out, &indent, map, source, data, range);
