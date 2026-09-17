@@ -1107,6 +1107,15 @@ fn rewrite_with(
                                     stack.push(Frame::Visit(*member));
                                 }
                             }
+                            // A *flexible* type is the pair it is, and both
+                            // halves are types: a Kotlin platform type
+                            // (`List<T>..List<T>?`) carries the same variables
+                            // in each, and a substitution that skipped them
+                            // would leave the type's arguments unsubstituted.
+                            TyKind::Flexible { lower, upper } => {
+                                stack.push(Frame::Visit(*upper));
+                                stack.push(Frame::Visit(*lower));
+                            }
                             // Type variables, inference variables and
                             // primitives carry no *rewritable* children: the
                             // leaf decides them (`Done`), or they rebuild to
@@ -1133,6 +1142,9 @@ fn rewrite_with(
                     ),
                     TyKind::Intersection(members) => {
                         Ty::intersection(db, members.iter().map(|m| memo[&m.id]).collect())
+                    }
+                    TyKind::Flexible { lower, upper } => {
+                        Ty::flexible(db, memo[&lower.id], memo[&upper.id])
                     }
                     // A leaf that chose `Recur` without children (a type
                     // variable or bare wildcard) rebuilds to its own handle.

@@ -1164,7 +1164,10 @@ fn call(
     callee: ExprId,
     suffix: &SyntaxNode<Lang>,
 ) -> ExprData {
-    let (args, arg_names): (Vec<ExprId>, Vec<Option<Name>>) = match suffix
+    let parenthesized = suffix
+        .children()
+        .any(|child| is(&child, K::VALUE_ARGUMENTS));
+    let (trailing_args, trailing_names): (Vec<ExprId>, Vec<Option<Name>>) = match suffix
         .children()
         .find(|child| is(child, K::VALUE_ARGUMENTS))
     {
@@ -1180,29 +1183,58 @@ fn call(
             Vec::new(),
         ),
     };
+    // The lambda this suffix carries (if any) is a *trailing* one only when the
+    // suffix has no parentheses of its own.
+    let trailing_only = !parenthesized
+        && trailing_args
+            .iter()
+            .any(|arg| matches!(ctx.bodies.expr(*arg), ExprData::Lambda { .. }));
+    let trailing_index = trailing_only.then(|| trailing_args.len().saturating_sub(1));
+    let args_len = match ctx.bodies.expr(callee).clone() {
+        ExprData::MethodCall { args, .. } => args.len(),
+        _ => 0,
+    };
     match ctx.bodies.expr(callee).clone() {
         ExprData::FieldAccess { target, name } => ExprData::MethodCall {
             receiver: target,
             name,
             type_args: Vec::new(),
-            args,
-            arg_names,
+            args: trailing_args,
+            arg_names: trailing_names,
+            // A lambda written *without* parentheses is the call's trailing
+            // lambda; one written inside them is a positional argument.
+            trailing: trailing_index,
         },
         // `receiver?.member(args)`: the member call happens only when the
         // receiver is not null, so the call lives *inside* the safe access.
         ExprData::SafeAccess { receiver, member } => {
-            let name = match ctx.bodies.expr(member).clone() {
-                ExprData::FieldAccess { name, .. } => name,
-                _ => Name::new("<missing>"),
-            };
+            let _ = &receiver;
+            // `x?.f(a)`: the call is the member's. A trailing lambda written
+            // after the call's own argument list joins it, exactly as for a
+            // written receiver.
+            let (name, mut existing_args, mut existing_names) =
+                match ctx.bodies.expr(member).clone() {
+                    ExprData::FieldAccess { name, .. } => (name, Vec::new(), Vec::new()),
+                    ExprData::MethodCall {
+                        name,
+                        args,
+                        arg_names,
+                        ..
+                    } => (name, args, arg_names),
+                    _ => (Name::new("<missing>"), Vec::new(), Vec::new()),
+                };
+            existing_args.extend(trailing_args);
+            existing_names.extend(trailing_names);
+            let trailing = trailing_only.then(|| existing_args.len().saturating_sub(1));
             let call = alloc_expr(
                 ctx,
                 ExprData::MethodCall {
                     receiver: None,
                     name,
                     type_args: Vec::new(),
-                    args,
-                    arg_names,
+                    args: existing_args,
+                    arg_names: existing_names,
+                    trailing,
                 },
                 suffix.text_range(),
             );
@@ -1211,12 +1243,42 @@ fn call(
                 member: call,
             }
         }
+        // `f(a) { … }`: a trailing lambda written after a parenthesized
+        // argument list is that call's **last argument**, not an `invoke` on its
+        // result ([KLS
+        // `expressions.html#function-calls-and-property-access`](https://kotlinlang.org/spec/expressions.html#function-calls-and-property-access)),
+        // so the call keeps its callee and the lambda joins the arguments it
+        // already has.
+        ExprData::MethodCall {
+            receiver,
+            name,
+            type_args,
+            mut args,
+            mut arg_names,
+            trailing: _,
+        } => {
+            let appended = trailing_args.len();
+            args.extend(trailing_args);
+            arg_names.extend(trailing_names);
+            ExprData::MethodCall {
+                receiver,
+                name,
+                type_args,
+                args,
+                arg_names,
+                // The lambda that arrived as a *second* suffix is the trailing
+                // one, whatever the call already carried.
+                trailing: trailing_only
+                    .then(|| args_len.saturating_add(appended).saturating_sub(1)),
+            }
+        }
         ExprData::Var(name) => ExprData::MethodCall {
             receiver: None,
             name,
             type_args: Vec::new(),
-            args,
-            arg_names,
+            args: trailing_args,
+            arg_names: trailing_names,
+            trailing: trailing_index,
         },
         // A call of a *value* (`f { }` on a function-typed local, `(x)(y)`):
         // Kotlin invokes the value, which is `invoke` on it.
@@ -1224,8 +1286,9 @@ fn call(
             receiver: Some(callee),
             name: Name::new("invoke"),
             type_args: Vec::new(),
-            args,
-            arg_names,
+            args: trailing_args,
+            arg_names: trailing_names,
+            trailing: None,
         },
     }
 }

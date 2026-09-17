@@ -513,6 +513,13 @@ pub enum ExprData {
         /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
         /// A Java call writes none, so its lowering leaves this empty.
         arg_names: Vec<Option<Name>>,
+        /// The index of the call's *trailing* lambda, when it has one: the
+        /// lambda written after the argument list, which binds to the **last**
+        /// parameter rather than positionally
+        /// (<https://kotlinlang.org/docs/lambdas.html#passing-trailing-lambdas>).
+        /// A lambda written inside the parentheses is a positional argument and
+        /// carries no index.
+        trailing: Option<usize>,
     },
     /// A class instance creation `new Type(args)` ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)).
     New {

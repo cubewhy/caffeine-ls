@@ -167,6 +167,7 @@ impl Member {
             .map(|ty| CallArg {
                 name: None,
                 ty: *ty,
+                trailing: false,
             })
             .collect();
         let binding = argument_binding(db, self, &call_args);
@@ -219,6 +220,10 @@ fn unify(
             unify(db, param, lower, binding);
             let _ = scope;
         }
+        // A *platform* type is the pair it is, and a classfile parameter is one:
+        // what it determines is what its lower half does.
+        (TyKind::Flexible { lower, .. }, _) => unify(db, &lower, arg, binding),
+        (_, TyKind::Flexible { lower, .. }) => unify(db, param, &lower, binding),
         (TyKind::TypeVar { scope, .. }, _) => {
             // An unresolved argument determines nothing: it is compatible with
             // every parameter ([`crate::kotlin::subtyping`]), so binding the
@@ -233,6 +238,11 @@ fn unify(
             }
         }
         (TyKind::Array(param), TyKind::Array(arg)) => unify(db, param, arg, binding),
+        // A *projection* in the parameter position — `Iterable<? extends T>`,
+        // which is how a classfile writes `T`'s use site
+        // ([JLS §4.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5.1))
+        // — is what it bounds.
+        (TyKind::Wildcard(Some(bound)), _) => unify(db, &bound.ty, arg, binding),
         // A source-written `Array<T>` is the classifier the JVM spells `T[]`
         // (<https://kotlinlang.org/docs/java-interop.html#mapped-types>): the two
         // are one type, and either side stands for the other.
@@ -282,6 +292,10 @@ pub struct CallSite {
 pub struct CallArg<'a> {
     pub name: Option<&'a str>,
     pub ty: Ty,
+    /// Whether the argument is the call's *trailing* lambda — the one written
+    /// after the argument list — which binds to the **last** parameter
+    /// (<https://kotlinlang.org/docs/lambdas.html#passing-trailing-lambdas>).
+    pub trailing: bool,
 }
 
 /// Every member `name` names on the receiver `receiver`.
@@ -1377,6 +1391,7 @@ pub fn pick_operator_callable(
         Some(arg) => vec![CallArg {
             name: None,
             ty: arg,
+            trailing: false,
         }],
         None => Vec::new(),
     };
@@ -1540,7 +1555,9 @@ fn applies(
             return false;
         }
         filled[index] = true;
-        if !crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &member.params[index]) {
+        if !crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &member.params[index])
+            && !contains_type_var(db, &member.params[index])
+        {
             return false;
         }
     }
@@ -1577,6 +1594,10 @@ fn argument_parameters(member: &Member, args: &[CallArg<'_>]) -> Option<Vec<Opti
                 Some(index) => Some(index),
                 None => return None,
             },
+            // A trailing lambda is the **last** parameter's argument, whatever
+            // the written arguments left unfilled
+            // (<https://kotlinlang.org/docs/lambdas.html#passing-trailing-lambdas>).
+            None if arg.trailing => member.params.len().checked_sub(1),
             None => filled.iter().position(|filled| !*filled),
         };
         match index {
@@ -1588,6 +1609,27 @@ fn argument_parameters(member: &Member, args: &[CallArg<'_>]) -> Option<Vec<Opti
         }
     }
     Some(landing)
+}
+
+/// Whether a type mentions a type variable of its declaration.
+///
+/// A parameter whose type the *call* determines — `fun <T> update(newValue: T,
+/// setter: (T) -> Unit)`, where the argument is what `T` is — accepts any
+/// argument: the call's type arguments are inferred from the arguments ([KLS
+/// `type-inference.html#call-completion`](https://kotlinlang.org/spec/type-inference.html#call-completion)),
+/// and this model's inference is the unification
+/// [`Member::call_ty`] reads the call's own type with. Requiring assignability
+/// here would reject every generic call whose type argument comes from a
+/// parameter, which is most of them.
+pub fn contains_type_var(db: &dyn TyDatabase, ty: &Ty) -> bool {
+    match ty.kind(db) {
+        TyKind::TypeVar { .. } => true,
+        TyKind::Reference { args, .. } => args.iter().any(|arg| contains_type_var(db, arg)),
+        TyKind::Array(inner) => contains_type_var(db, &inner),
+        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => contains_type_var(db, &inner),
+        TyKind::Wildcard(Some(bound)) => contains_type_var(db, &bound.ty),
+        _ => false,
+    }
 }
 
 /// The canonical name of a reference type, for a classpath lookup.

@@ -293,10 +293,12 @@ pub(crate) fn delegated_value_ty(
         crate::kotlin::method::CallArg {
             name: None,
             ty: owner,
+            trailing: false,
         },
         crate::kotlin::method::CallArg {
             name: None,
             ty: Ty::error(db),
+            trailing: false,
         },
     ];
     let site = crate::kotlin::method::CallSite {
@@ -475,13 +477,6 @@ pub(crate) fn kotlin_facade_name_index_query<'db>(
     let scope = key.scope(db).clone();
     let package = key.package(db).clone();
     let mut index: rustc_hash::FxHashMap<Name, Vec<hir::Resolved>> = Default::default();
-    if std::env::var_os("CAFFEINE_KT_TRACE").is_some() {
-        eprintln!(
-            "facade index {:?}: {} classes",
-            package,
-            facade_classes(db, &scope, &package).len()
-        );
-    }
     for facade in facade_classes(db, &scope, &package).iter() {
         let hir::Resolved::Library(facade) = facade else {
             continue;

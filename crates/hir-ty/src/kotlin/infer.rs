@@ -120,7 +120,11 @@ enum CallReceiver<'a> {
 /// The arguments of a call as the member set reads them: each argument's type
 /// with the *name* it was written under, when it writes one
 /// ([`hir_expand::body::ExprData::MethodCall`]).
-fn call_args<'a>(types: &'a [Ty], names: &'a [Option<Name>]) -> Vec<CallArg<'a>> {
+fn call_args<'a>(
+    types: &'a [Ty],
+    names: &'a [Option<Name>],
+    trailing: Option<usize>,
+) -> Vec<CallArg<'a>> {
     types
         .iter()
         .enumerate()
@@ -129,6 +133,7 @@ fn call_args<'a>(types: &'a [Ty], names: &'a [Option<Name>]) -> Vec<CallArg<'a>>
                 .get(index)
                 .and_then(|name| name.as_ref().map(Name::as_str)),
             ty: *ty,
+            trailing: trailing == Some(index),
         })
         .collect()
 }
@@ -804,6 +809,7 @@ impl<'a> InferCtx<'a> {
                 name,
                 args,
                 arg_names,
+                trailing,
                 ..
             } => {
                 // A lambda literal that declares no parameters takes them from
@@ -827,6 +833,7 @@ impl<'a> InferCtx<'a> {
                         &name,
                         &args,
                         &arg_names,
+                        trailing,
                         index,
                     ),
                     None => {
@@ -847,7 +854,12 @@ impl<'a> InferCtx<'a> {
                                     Some(fqn) => {
                                         let class = Ty::reference(self.db, fqn, Vec::new());
                                         self.constructor_ty(
-                                            expr, &class, &name, &arg_types, &arg_names,
+                                            expr,
+                                            &class,
+                                            &name,
+                                            &arg_types,
+                                            &arg_names,
+                                            trailing,
                                         )
                                     }
                                     None => {
@@ -858,13 +870,14 @@ impl<'a> InferCtx<'a> {
                                             &name,
                                             &arg_types,
                                             &arg_names,
+                                            trailing,
                                         )
                                     }
                                 }
                             }
-                            None => {
-                                self.call_without_receiver(expr, &name, &arg_types, &arg_names)
-                            }
+                            None => self.call_without_receiver(
+                                expr, &name, &arg_types, &arg_names, trailing,
+                            ),
                         }
                     }
                 }
@@ -876,7 +889,7 @@ impl<'a> InferCtx<'a> {
             } => {
                 let receiver_ty = self.infer_expr(receiver);
                 let arg_ty = self.infer_expr(arg);
-                self.call_ty(expr, &receiver_ty, &name, &[arg_ty], &[])
+                self.call_ty(expr, &receiver_ty, &name, &[arg_ty], &[], None)
             }
             ExprData::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.infer_expr(lhs);
@@ -1589,6 +1602,7 @@ impl<'a> InferCtx<'a> {
                 name,
                 args,
                 arg_names,
+                trailing,
                 ..
             } => {
                 // A lambda argument's expected type is the candidate's parameter,
@@ -1603,12 +1617,13 @@ impl<'a> InferCtx<'a> {
                         &name,
                         &args,
                         &arg_names,
+                        trailing,
                         index,
                     ),
                     None => {
                         let arg_tys: Vec<Ty> =
                             args.iter().map(|arg| self.infer_expr(*arg)).collect();
-                        self.call_ty(member, receiver, &name, &arg_tys, &arg_names)
+                        self.call_ty(member, receiver, &name, &arg_tys, &arg_names, trailing)
                     }
                 }
             }
@@ -1644,8 +1659,9 @@ impl<'a> InferCtx<'a> {
         name: &Name,
         arg_tys: &[Ty],
         arg_names: &[Option<Name>],
+        trailing: Option<usize>,
     ) -> Ty {
-        let args = call_args(arg_tys, arg_names);
+        let args = call_args(arg_tys, arg_names, trailing);
         match method::pick_callable(self.db, &self.scope, receiver, name, &args, self.site()) {
             Some(member) => {
                 let ty = member.call_ty(self.db, arg_tys);
@@ -1675,9 +1691,10 @@ impl<'a> InferCtx<'a> {
         name: &Name,
         args: &[ExprId],
         arg_names: &[Option<Name>],
+        trailing: Option<usize>,
         index: usize,
     ) -> Ty {
-        self.expected_lambda_call(expr, receiver, name, args, arg_names, index)
+        self.expected_lambda_call(expr, receiver, name, args, arg_names, trailing, index)
     }
 
     /// [`Self::call_with_expected_lambda`], whose receiver is either the
@@ -1690,6 +1707,7 @@ impl<'a> InferCtx<'a> {
         name: &Name,
         args: &[ExprId],
         arg_names: &[Option<Name>],
+        trailing: Option<usize>,
         index: usize,
     ) -> Ty {
         // Every argument but the lambda; the lambda's own type is the error
@@ -1706,7 +1724,7 @@ impl<'a> InferCtx<'a> {
                 }
             })
             .collect();
-        let call_args = call_args(&arg_types, arg_names);
+        let call_args = call_args(&arg_types, arg_names, trailing);
         let candidate = match receiver {
             CallReceiver::Expr(receiver) => {
                 let receiver_ty = self.infer_expr(*receiver);
@@ -1795,9 +1813,18 @@ impl<'a> InferCtx<'a> {
         // The lambda is inferred *against* the function type the candidate
         // declares at that index: it is what the lambda's parameters and its
         // `it` take their types from ([`Self::expected_lambdas`]).
+        // The parameter the lambda lands on: its argument position, or the
+        // *last* parameter's when it is the call's trailing lambda
+        // (<https://kotlinlang.org/docs/lambdas.html#passing-trailing-lambdas>).
         let expected = candidate
             .as_ref()
-            .and_then(|member| member.params.get(index).copied())
+            .and_then(|member| {
+                let position = match trailing == Some(index) {
+                    true => member.params.len().checked_sub(1).unwrap_or(index),
+                    false => index,
+                };
+                member.params.get(position).copied()
+            })
             .map(|param| self.unwrap_flexible(&param));
         if let Some(expected) = expected {
             self.expected_lambdas.push(expected);
@@ -1906,10 +1933,11 @@ impl<'a> InferCtx<'a> {
         name: &Name,
         arg_tys: &[Ty],
         arg_names: &[Option<Name>],
+        trailing: Option<usize>,
     ) -> Ty {
-        let args = call_args(arg_tys, arg_names);
+        let args = call_args(arg_tys, arg_names, trailing);
         if let Some(class) = self.class_receiver(name) {
-            return self.constructor_ty(expr, &class, name, &arg_tys, arg_names);
+            return self.constructor_ty(expr, &class, name, &arg_tys, arg_names, trailing);
         }
         for receiver in self.implicit_receivers() {
             if let Some(member) =
@@ -1982,8 +2010,9 @@ impl<'a> InferCtx<'a> {
         name: &Name,
         arg_tys: &[Ty],
         arg_names: &[Option<Name>],
+        trailing: Option<usize>,
     ) -> Ty {
-        let args = call_args(arg_tys, arg_names);
+        let args = call_args(arg_tys, arg_names, trailing);
         match method::pick_callable(self.db, &self.scope, class, name, &args, self.site()) {
             Some(member) => {
                 self.record_member(expr, &member);

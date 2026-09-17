@@ -1664,3 +1664,162 @@ fun probe(list: javax.swing.JList, names: Array<String>): Boolean {
         "the extension's receiver binds the receiver position: {rendered}"
     );
 }
+
+/// A lambda written *after* a call's parenthesized argument list is that call's
+/// last argument — the *trailing lambda*
+/// (<https://kotlinlang.org/docs/lambdas.html#passing-trailing-lambdas>) — so it
+/// joins the arguments the call already has, and it binds to the **last**
+/// parameter, not to the first one the written arguments left unfilled: the
+/// `joinToString(separator, …) { transform }` of the standard library is a
+/// function whose *last* parameter is the lambda.
+///
+/// kotlinc 2.4.20 compiles the fixture clean.
+#[test]
+fn a_trailing_lambda_is_the_calls_last_argument() {
+    let source = r#"
+class Panel {
+    private fun <T> update(configObject: Any, key: String, newValue: T, setter: (T) -> Unit) {
+        setter(newValue)
+    }
+
+    private fun bind(currentValue: String, key: String, parentObj: Any = this, setter: (String) -> Unit) {
+        setter(currentValue)
+    }
+
+    fun use(config: String) {
+        update(config, "k", "v") { it.length }
+        bind("x", "k") { it.length }
+    }
+}
+
+fun joined(names: List<String>): String =
+    names.joinToString(",") { it }
+"#;
+    let mut extra = common::interop_classes();
+    // `public static final <T> String joinToString(Iterable<? extends T>, CharSequence separator = …, Function1<? super T, String> transform = null)`
+    extra.push(facade(
+        "kotlin/collections/CollectionsKt",
+        &[(
+            "joinToString",
+            "(Ljava/lang/Iterable;Ljava/lang/CharSequence;Lkotlin/jvm/functions/Function1;)Ljava/lang/String;",
+        )],
+        &["<T:Ljava/lang/Object;>(Ljava/lang/Iterable<+TT;>;Ljava/lang/CharSequence;Lkotlin/jvm/functions/Function1<-TT;Ljava/lang/String;>;)Ljava/lang/String;"],
+        &[0x0009],
+    ));
+    let (db, file) = kotlin_fixture_with(&[("/src/main/kotlin/Sample.kt", source)], extra);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        !rendered.contains("kotlin."),
+        "the trailing lambda joins the call and binds to its last parameter: {rendered}"
+    );
+}
+
+#[test]
+fn zz_probe_trailing() {
+    let source = r#"
+class Panel {
+    private fun <T> update(configObject: Any, key: String, newValue: T, setter: (T) -> Unit) {
+        setter(newValue)
+    }
+
+    fun use(config: String) {
+        update(config, "k", "v") { it.length }
+    }
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let tree = hir::hir_def::kotlin::plugin::tree(&db, file).expect("a Kotlin file");
+    let bodies = hir::file_body_tree(&db, file);
+    println!(
+        "BODY:\n{}",
+        hir_def::kotlin::pretty::pretty_body(&tree, &bodies)
+    );
+}
+
+#[test]
+fn zz_probe_bind() {
+    let source = r#"
+class Panel {
+    private fun bind(currentValue: String, key: String, parentObj: Any = this, setter: (String) -> Unit) {
+        setter(currentValue)
+    }
+
+    fun use() {
+        bind("x", "k") { it.length }
+    }
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let tree = hir::hir_def::kotlin::plugin::tree(&db, file).expect("a Kotlin file");
+    let bodies = hir::file_body_tree(&db, file);
+    println!(
+        "BODY:\n{}",
+        hir_def::kotlin::pretty::pretty_body(&tree, &bodies)
+    );
+    let scope = hir::ResolutionScope::SourceSet(hir::source_set_for_file(&db, file).unwrap());
+    let panel_item = tree.top[0];
+    let panel = hir_ty::kotlin_item_ty(&db, file, panel_item);
+    let use_item = tree
+        .data(panel_item)
+        .body()
+        .iter()
+        .copied()
+        .find(|&id| {
+            matches!(
+                tree.data(id).name().map(|n| n.to_string()).as_deref(),
+                Some("use")
+            )
+        })
+        .expect("use");
+    let members = hir_ty::kotlin::method::declared_members(
+        &db,
+        &scope,
+        &panel,
+        &hir_expand::name::Name::new("bind"),
+        hir_ty::kotlin::method::CallSite {
+            file,
+            item: use_item,
+        },
+    );
+    println!("MEMBERS={}", members.len());
+    for member in &members {
+        println!(
+            "MEMBER names={:?} defaulted={:?} params={}",
+            member
+                .param_names
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>(),
+            member.defaulted,
+            member.params.len()
+        );
+        let picked = hir_ty::kotlin::method::pick_callable(
+            &db,
+            &scope,
+            &panel,
+            &hir_expand::name::Name::new("bind"),
+            &[
+                hir_ty::kotlin::method::CallArg {
+                    name: None,
+                    ty: hir_ty::Ty::reference(&db, "kotlin.String", Vec::new()),
+                    trailing: false,
+                },
+                hir_ty::kotlin::method::CallArg {
+                    name: None,
+                    ty: hir_ty::Ty::reference(&db, "kotlin.String", Vec::new()),
+                    trailing: false,
+                },
+                hir_ty::kotlin::method::CallArg {
+                    name: None,
+                    ty: hir_ty::Ty::error(&db),
+                    trailing: true,
+                },
+            ],
+            hir_ty::kotlin::method::CallSite {
+                file,
+                item: use_item,
+            },
+        );
+        println!("MEMBER picked={}", picked.is_some());
+    }
+}

@@ -1261,6 +1261,7 @@ impl InferCtx<'_> {
             type_args,
             args,
             arg_names: _,
+            trailing: _,
         } = self.tree.expr(id).clone()
         else {
             return true;

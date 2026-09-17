@@ -473,7 +473,10 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
     };
     vec![
         class("kotlin/Any", None, &[], 0x0021),
-        class("kotlin/String", Some("kotlin/Any"), &[], 0x0031),
+        // `interface CharSequence` — `String`'s supertype, which the library's
+        // `CharSequence` extensions are written over.
+        class("kotlin/CharSequence", Some("kotlin/Any"), &[], 0x0601),
+        class("kotlin/String", Some("kotlin/CharSequence"), &[], 0x0031),
         class("kotlin/Int", Some("kotlin/Number"), &[], 0x0031),
         class("kotlin/Number", Some("kotlin/Any"), &[], 0x0421),
         // The rest of the numeric types and the two other `Char`-adjacent ones:
