@@ -187,28 +187,29 @@ class Box<T : Any> {
 /// `class L<out T>(val v: T); val a: L<Number> = L(1); val b: L<Any> = a` and
 /// rejects `val probe: Any = (null as String?)`, which is what these cases
 /// assert through [`hir_ty::kotlin_subtype`].
+/// The declared type of the fixture's declaration named `name` — for an object
+/// literal's class, `<anonymous>`.
+fn ty_of(db: &TestDatabase, file: FileId, name: &str) -> Ty {
+    let tree = hir::hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
+    for (id, data) in tree.items.iter() {
+        if data.name().map(|n| n.as_str()) == Some(name) {
+            // The declared type, nullability included — the caller strips it
+            // only where the case is about the non-null half.
+            return hir_ty::kotlin_item_ty(db, file, hir_expand::ids::ItemId(id));
+        }
+    }
+    panic!("no item named {name}")
+}
+
+/// The resolution scope of the fixture's file, for a subtyping question.
+fn scope(db: &TestDatabase, file: FileId) -> hir::ResolutionScope {
+    hir::ResolutionScope::SourceSet(
+        hir::source_set_for_file(db, file).expect("a mapped source set"),
+    )
+}
+
 mod subtyping {
     use super::*;
-
-    /// A database plus the `Ty` of a type written in the fixture, for a
-    /// subtyping question.
-    fn ty_of(db: &TestDatabase, file: FileId, name: &str) -> Ty {
-        let tree = hir::hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
-        for (id, data) in tree.items.iter() {
-            if data.name().map(|n| n.as_str()) == Some(name) {
-                // The declared type, nullability included — the caller strips
-                // it only where the case is about the non-null half.
-                return hir_ty::kotlin_item_ty(db, file, hir_expand::ids::ItemId(id));
-            }
-        }
-        panic!("no item named {name}")
-    }
-
-    fn scope(db: &TestDatabase, file: FileId) -> hir::ResolutionScope {
-        hir::ResolutionScope::SourceSet(
-            hir::source_set_for_file(db, file).expect("a mapped source set"),
-        )
-    }
 
     #[test]
     fn nullability_rules_match_the_compiler() {
@@ -930,5 +931,158 @@ fun nested(): Int = runWith { twice { it + 1 } + it }
     assert!(
         !rendered.contains("kotlin.unresolved-reference"),
         "`it` is bound to the function type's parameter: {rendered}"
+    );
+}
+
+// -- anonymous and local classes ---------------------------------------------
+
+/// The fixture both cases below share: an object expression whose own members
+/// are used, a local class constructed and called, and `this`/`super` inside a
+/// subclass. kotlinc 2.4.20 compiles it clean.
+const ANONYMOUS_AND_LOCAL: &str = r#"
+interface Runner { fun run(): Int }
+
+fun probe(): Int {
+    val anonymous = object : Runner {
+        val label: String = "x"
+        override fun run(): Int = label.length
+    }
+    val box: Runner = anonymous
+    val label: String = anonymous.label
+    val direct: Int = anonymous.run()
+
+    class Counter(val start: Int) {
+        fun next(): Int = start + 1
+    }
+    val counted: Int = Counter(1).next()
+
+    return box.run() + direct + counted + label.length
+}
+
+open class Base { fun base(): Int = 1 }
+class Sub : Base() {
+    fun own(): Int = 2
+    fun both(): Int = this.own() + super.base()
+}
+"#;
+
+/// An object expression's type is the anonymous class its body declares ([KLS
+/// `expressions.html#object-literals`](https://kotlinlang.org/spec/expressions.html#object-literals)),
+/// and it is a subtype of every supertype the literal writes — which is what
+/// `val box: Runner = anonymous` needs. The class has no name in the source (the
+/// compiler gives it a positional binary name, `ProbeKt$probe$anonymous$1`),
+/// so the item carries `<anonymous>` and the type is identified by the
+/// declaration.
+#[test]
+fn an_object_expression_is_its_anonymous_class() {
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", ANONYMOUS_AND_LOCAL)]);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        !rendered.contains("kotlin."),
+        "every name of the fixture resolves: {rendered}"
+    );
+    assert!(
+        rendered.contains(": <anonymous>"),
+        "the literal types as its anonymous class: {rendered}"
+    );
+
+    // The literal is a `Runner`, and only its declared supertype makes it one:
+    // the anonymous class and `Runner` are different classifier identities.
+    let scope = scope(&db, file);
+    let anonymous = ty_of(&db, file, "<anonymous>");
+    let runner = Ty::reference(&db, "Runner", Vec::new());
+    assert_ne!(
+        hir_ty::display_kotlin(&db, anonymous).to_string(),
+        hir_ty::display_kotlin(&db, runner).to_string(),
+        "the literal is not its supertype by name"
+    );
+    assert!(
+        hir_ty::kotlin_subtype(&db, &scope, &anonymous, &runner),
+        "`object : Runner` makes the literal a `Runner`"
+    );
+}
+
+/// A local class is identified by its declaration too ([KLS
+/// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)):
+/// `Counter(1).next()` resolves the local declaration's constructor and then its
+/// own member, and the local class shadows nothing it should not.
+#[test]
+fn a_local_class_resolves_through_its_declaration() {
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", ANONYMOUS_AND_LOCAL)]);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        rendered.lines().any(|line| line.ends_with(": Counter")),
+        "`Counter(1)` types as the local class it constructs: {rendered}"
+    );
+    let scope = scope(&db, file);
+    let counter = ty_of(&db, file, "Counter");
+    assert_eq!(
+        hir_ty::display_kotlin(&db, counter).to_string(),
+        "Counter",
+        "a local class types as itself, by simple name"
+    );
+    let TyKind::Reference { local, .. } = counter.kind(&db) else {
+        panic!("a local class is a reference type");
+    };
+    assert!(
+        local.is_some(),
+        "a local class is identified by its declaration, not by a canonical name"
+    );
+    // Its declared supertype is `Any` (it writes none), which the local walk of
+    // the subtyping relation answers.
+    assert!(
+        hir_ty::kotlin_subtype(
+            &db,
+            &scope,
+            &counter,
+            &Ty::reference(&db, "kotlin.Any", Vec::new())
+        ),
+        "a local class is still a `kotlin.Any`"
+    );
+}
+
+/// A source class's *primary* constructor is not one of its body members — it
+/// hangs off the header — and it is what `Holder(1)` resolves to ([KLS
+/// `declarations.html#primary-constructor`](https://kotlinlang.org/spec/declarations.html#primary-constructor)).
+///
+/// The oracle is kotlinc 2.4.20's own wording for the same source:
+/// `val h: String = Holder(1)` reports
+/// `initializer type mismatch: expected 'String', actual 'Holder'.` — which needs
+/// the call to type as the class it constructs, and would not be reported at all
+/// for an unresolved call.
+#[test]
+fn a_primary_constructor_call_resolves_to_the_class_it_constructs() {
+    let source = r#"
+class Holder(val value: Int)
+
+fun probe(): String {
+    val h: String = Holder(1)
+    return h
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        rendered.contains("initializer type mismatch: expected 'String', actual 'Holder'."),
+        "`Holder(1)` is a `Holder`: {rendered}"
+    );
+}
+
+/// `this` is the innermost enclosing classifier's type and `super` its first
+/// supertype ([KLS
+/// `expressions.html#this-expressions`](https://kotlinlang.org/spec/expressions.html#this-expressions),
+/// [`#super-forms`](https://kotlinlang.org/spec/expressions.html#super-forms)):
+/// inside `Sub`, `this.own()` resolves on `Sub` and `super.base()` on `Base`.
+#[test]
+fn this_and_super_are_the_enclosing_classifiers() {
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", ANONYMOUS_AND_LOCAL)]);
+    let rendered = render_bodies(&db, file);
+    assert!(
+        rendered.lines().any(|line| line.ends_with(": Sub")),
+        "`this` is the enclosing classifier: {rendered}"
+    );
+    assert!(
+        rendered.lines().any(|line| line.ends_with(": Base")),
+        "`super` is its first supertype: {rendered}"
     );
 }

@@ -190,6 +190,42 @@ pub fn member_set(
     out
 }
 
+/// The identity of a receiver's classifier, for the member walk: the canonical
+/// name of a named one, the declaration of a *local* one — a local class or an
+/// object literal's anonymous class, which has no canonical name to be keyed by
+/// ([KLS
+/// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)).
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ReceiverKey {
+    Named(Name),
+    Local(hir::SourceClass),
+}
+
+/// The key the member walk visits `receiver` under, if it names a classifier.
+fn receiver_key(db: &dyn TyDatabase, ty: &Ty) -> Option<ReceiverKey> {
+    match ty.kind(db) {
+        TyKind::Reference {
+            local: Some(local), ..
+        } => Some(ReceiverKey::Local(local.clone())),
+        TyKind::Reference { name, .. } => Some(ReceiverKey::Named(name.clone())),
+        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => receiver_key(db, inner),
+        _ => None,
+    }
+}
+
+/// The *local* classifier `ty` is, if it is one: a local class, a local `object`
+/// or an object literal's anonymous class, each identified by its declaration
+/// rather than by a name.
+pub fn local_class_of(db: &dyn TyDatabase, ty: &Ty) -> Option<hir::SourceClass> {
+    match ty.kind(db) {
+        TyKind::Reference {
+            local: Some(local), ..
+        } => Some(local.clone()),
+        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => local_class_of(db, inner),
+        _ => None,
+    }
+}
+
 /// The members of the receiver and of every supertype of its supertype
 /// closure, most-derived first, each classifier visited once.
 fn collect_members(
@@ -199,52 +235,78 @@ fn collect_members(
     name: &Name,
     ctx: &InvocationContext,
     constructors: bool,
-    seen: &mut rustc_hash::FxHashSet<String>,
+    seen: &mut rustc_hash::FxHashSet<ReceiverKey>,
     out: &mut Vec<Member>,
     include_companion: bool,
 ) {
-    let Some(fqn) = reference_fqn(db, receiver) else {
+    let Some(key) = receiver_key(db, receiver) else {
         return;
     };
-    if !seen.insert(fqn.as_str().to_owned()) {
+    if !seen.insert(key.clone()) {
         return;
     }
-    let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
-        return;
-    };
-    match &resolved {
-        hir::Resolved::Source(class) => {
+    match &key {
+        // A local classifier is walked from the item tree of its own file: it is
+        // a declaration of that file exactly as a named one is, and the
+        // Kotlin twin of the Java layer's `ClassKey::Local` member walk.
+        ReceiverKey::Local(class) => {
             let tree = hir::file_item_tree(db, class.file);
-            match hir_def::kotlin::plugin::model(&tree) {
-                Some(tree) => {
-                    let resolver = KotlinResolver::for_item(db, class.file, tree, class.item);
-                    kotlin_members(
-                        db,
-                        tree,
-                        class.file,
-                        class.item,
-                        receiver,
-                        name,
-                        &resolver,
-                        constructors,
-                        out,
-                        include_companion,
-                    );
-                }
-                // A Java source class: its members are the Java layer's.
-                None => java_members(db, scope, receiver, name, ctx, constructors, out),
+            if let Some(tree) = hir_def::kotlin::plugin::model(&tree) {
+                let resolver = KotlinResolver::for_item(db, class.file, tree, class.item);
+                kotlin_members(
+                    db,
+                    tree,
+                    class.file,
+                    class.item,
+                    receiver,
+                    name,
+                    &resolver,
+                    constructors,
+                    out,
+                    include_companion,
+                );
             }
         }
-        hir::Resolved::Library(_) => {
-            java_members(db, scope, receiver, name, ctx, constructors, out)
+        ReceiverKey::Named(fqn) => {
+            let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
+                return;
+            };
+            match &resolved {
+                hir::Resolved::Source(class) => {
+                    let tree = hir::file_item_tree(db, class.file);
+                    match hir_def::kotlin::plugin::model(&tree) {
+                        Some(tree) => {
+                            let resolver =
+                                KotlinResolver::for_item(db, class.file, tree, class.item);
+                            kotlin_members(
+                                db,
+                                tree,
+                                class.file,
+                                class.item,
+                                receiver,
+                                name,
+                                &resolver,
+                                constructors,
+                                out,
+                                include_companion,
+                            );
+                        }
+                        // A Java source class: its members are the Java layer's.
+                        None => java_members(db, scope, receiver, name, ctx, constructors, out),
+                    }
+                }
+                hir::Resolved::Library(_) => {
+                    java_members(db, scope, receiver, name, ctx, constructors, out)
+                }
+                // A Kotlin file's facade class: Kotlin reaches a file's top-level
+                // declarations by *import*, not through the facade's name, so the
+                // arm contributes nothing here — the file's own top level is what
+                // [`super::infer`] consults, and a caller of another language
+                // reaches them through the facade, which this language's JVM view
+                // answers ([`crate::kotlin::jvm_view`]).
+                hir::Resolved::Facade { .. } => {}
+            }
         }
-        // A Kotlin file's facade class: Kotlin reaches a file's top-level
-        // declarations by *import*, not through the facade's name, so the arm
-        // contributes nothing here — the file's own top level is what
-        // [`super::infer`] consults, and a caller of another language reaches
-        // them through the facade, which this language's JVM view answers
-        // ([`crate::kotlin::jvm_view`]).
-        hir::Resolved::Facade { .. } => {}
     }
     // Inherited: the declared supertypes, then their own. The walk goes through
     // the Kotlin subtyping relation, which substitutes the receiver's arguments
@@ -267,6 +329,12 @@ fn names_the_class(
     let Some(fqn) = reference_fqn(db, receiver) else {
         return false;
     };
+    // A local classifier exists by construction — the receiver *is* its
+    // declaration — and answers by its simple name; a named one is confirmed
+    // against the classpath.
+    if local_class_of(db, receiver).is_some() {
+        return fqn.simple_name() == name.simple_name();
+    }
     // The written name may be qualified (`a.Util`); the call writes the simple
     // name.
     hir::fqn_resolve(db, scope, fqn.as_str()).is_some() && fqn.simple_name() == name.as_str()
@@ -288,7 +356,16 @@ fn kotlin_members(
     include_companion: bool,
 ) {
     let _ = receiver;
-    for &member in tree.data(item).body() {
+    // A classifier's *primary* constructor is not one of its body members — it
+    // hangs off the header — but it is what `Foo(1)` resolves to for a class
+    // that declares one ([KLS
+    // `declarations.html#primary-constructor`](https://kotlinlang.org/spec/declarations.html#primary-constructor)),
+    // so it is a candidate beside the secondary constructors the body declares.
+    let primary = match tree.data(item) {
+        KotlinItemData::Class(class) => class.primary_constructor,
+        _ => None,
+    };
+    for member in tree.data(item).body().iter().copied().chain(primary) {
         let data = tree.data(member);
         let member_name = data.name();
         match data {

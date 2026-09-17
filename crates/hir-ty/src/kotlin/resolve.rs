@@ -279,6 +279,12 @@ impl<'a> KotlinResolver<'a> {
         if let Some(alias) = self.type_alias(simple) {
             return self.expand_alias(alias, args);
         }
+        // A local classifier, before any *named* one: a local declaration
+        // shadows a declaration of the same name from an outer scope ([KLS
+        // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)).
+        if let Some(local) = self.local_class_reference(simple, args.clone()) {
+            return local;
+        }
         match self.class_fqn(text) {
             Some(fqn) => Ty::reference(self.db, fqn, args),
             None => Ty::error(self.db),
@@ -289,6 +295,30 @@ impl<'a> KotlinResolver<'a> {
     fn type_alias(&self, simple: &str) -> Option<hir_expand::ids::ItemId> {
         let item = self.local_declaration(simple)?;
         matches!(self.tree.data(item), KotlinItemData::TypeAlias(_)).then_some(item)
+    }
+
+    /// The type of the *local* classifier this file declares under `simple` and
+    /// that is in scope at the resolved item, or `None` when the name is not a
+    /// local classifier's.
+    ///
+    /// A local class, a local `object` and an object literal's anonymous class
+    /// have no canonical name ([KLS
+    /// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)),
+    /// so the type is identified by the declaration itself — the identity
+    /// [`TyKind::Reference`]'s `local` carries — and never by
+    /// [`Self::local_fqn`], which would name a class the compiler does not emit
+    /// under that name.
+    pub fn local_class_reference(&self, simple: &str, args: Vec<Ty>) -> Option<Ty> {
+        let item = self.local_declaration(simple)?;
+        if !self.tree.is_local_type(item) {
+            return None;
+        }
+        let name = self.tree.data(item).name()?;
+        let class = hir::SourceClass {
+            file: self.file,
+            item,
+        };
+        Some(Ty::local_reference(self.db, class, name.clone(), args))
     }
 
     /// The expansion of a type-alias reference ([KLS
@@ -321,8 +351,14 @@ impl<'a> KotlinResolver<'a> {
         let segments: Vec<&str> = name.split('.').collect();
         let simple = segments[0];
         if segments.len() == 1
-            && let Some(_) = self.local_declaration(simple)
+            && let Some(item) = self.local_declaration(simple)
         {
+            // A local declaration has no canonical name — the caller that needs
+            // its type asks [`Self::local_class_reference`] — and it shadows any
+            // named declaration of the same name.
+            if self.tree.is_local_type(item) {
+                return None;
+            }
             return self.local_fqn(simple);
         }
         for candidate in self.candidates(name) {
@@ -439,12 +475,16 @@ impl<'a> KotlinResolver<'a> {
         })
     }
 
-    /// The declaration of this file that `simple` names, if any: the *members
-    /// of the enclosing classifiers first*, innermost outwards, then the file's
-    /// own declarations ([KLS
-    /// `declarations.html#nested-and-inner-classes`](https://kotlinlang.org/spec/declarations.html#nested-and-inner-classes)
-    /// scopes a nested classifier to its enclosing declaration, so it shadows a
-    /// file-level declaration of the same name).
+    /// The declaration of this file that `simple` names, if any: the *local*
+    /// declarations of the enclosing bodies first, innermost body outwards, then
+    /// the *members of the enclosing classifiers*, innermost outwards, then the
+    /// file's own declarations ([KLS
+    /// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)
+    /// scopes a local declaration to the body that declares it, which is why it
+    /// shadows a class member of the same name, and
+    /// [`#nested-and-inner-classes`](https://kotlinlang.org/spec/declarations.html#nested-and-inner-classes)
+    /// scopes a nested classifier to its enclosing declaration, which is why that
+    /// shadows a file-level declaration).
     fn local_declaration(&self, simple: &str) -> Option<hir_expand::ids::ItemId> {
         fn walk(
             tree: &KotlinItemTree,
@@ -460,6 +500,22 @@ impl<'a> KotlinResolver<'a> {
                 }
             }
             None
+        }
+        // The *local* declarations of the enclosing bodies, innermost body
+        // first: a local class, `object`, function or type alias is in scope in
+        // the body that declares it, and shadows every outer declaration of the
+        // same name ([KLS
+        // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)).
+        // The item tree records the declaring body as the parent, so the
+        // visibility question is ancestry.
+        let mut current = Some(self.item);
+        while let Some(id) = current {
+            if let Some(found) = self.tree.local_types_of(id).find(|&candidate| {
+                self.tree.data(candidate).name().map(|name| name.as_str()) == Some(simple)
+            }) {
+                return Some(found);
+            }
+            current = self.tree.parent_of(id);
         }
         // The enclosing classifiers, innermost first: their members are in
         // scope where the name is written.

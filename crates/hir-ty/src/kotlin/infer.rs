@@ -45,6 +45,7 @@ use hir_expand::body::{
     BodyId, ExprData, ExprId, JumpKind, LocalId, StmtData, StmtId, WhenCondition,
 };
 use hir_expand::name::Name;
+use hir_expand::span::SpannedTypeRef;
 
 use super::diagnostics::{KotlinTypeError, MismatchTarget};
 use super::method::{self, CallArg};
@@ -385,8 +386,8 @@ impl<'a> InferCtx<'a> {
             },
             ExprData::Null => Ty::null(self.db),
             ExprData::Var(name) => self.infer_name(expr, &name),
-            ExprData::This { .. } => self.builtin("Any"),
-            ExprData::Super { .. } => self.builtin("Any"),
+            ExprData::This { qualifier } => self.enclosing_receiver_ty(qualifier.as_ref(), false),
+            ExprData::Super { qualifier } => self.enclosing_receiver_ty(qualifier.as_ref(), true),
             ExprData::Template { args } => {
                 for arg in args {
                     self.infer_expr(arg);
@@ -640,13 +641,11 @@ impl<'a> InferCtx<'a> {
                 self.builtin("Nothing")
             }
             ExprData::Paren(inner) => self.infer_expr(inner),
-            ExprData::ObjectLiteral { item } => match self.tree.data(item) {
-                KotlinItemData::Class(data) => {
-                    let _ = data;
-                    self.error()
-                }
-                _ => self.error(),
-            },
+            // An object literal's type is the anonymous class its body declares
+            // ([KLS
+            // `expressions.html#object-literals`](https://kotlinlang.org/spec/expressions.html#object-literals)):
+            // the item the lowering anchored the literal to.
+            ExprData::ObjectLiteral { item } => super::db::item_ty(self.db, self.file, item),
             ExprData::Missing => self.error(),
             other => {
                 let _ = other;
@@ -1179,23 +1178,83 @@ impl<'a> InferCtx<'a> {
     }
 
     /// The type of the *classifier* a name denotes, if it denotes one — what
-    /// makes `Foo(1)` a constructor call and `Foo.bar()` a static access.
+    /// makes `Foo(1)` a constructor call and `Foo.bar()` a static access. A
+    /// local classifier is answered by its declaration, a named one by its
+    /// canonical name.
     fn class_receiver(&self, name: &Name) -> Option<Ty> {
+        if let Some(local) = self
+            .resolver
+            .local_class_reference(name.as_str(), Vec::new())
+        {
+            return Some(local);
+        }
         let fqn = self.resolver.class_fqn(name.as_str())?;
         Some(Ty::reference(self.db, fqn, Vec::new()))
+    }
+
+    /// The type of the receiver `this` denotes inside the declaration whose body
+    /// is being inferred — the innermost enclosing classifier, or the one a
+    /// written qualifier names (`this@Outer`)
+    /// ([KLS `expressions.html#this-expressions`](https://kotlinlang.org/spec/expressions.html#this-expressions)).
+    /// `super` is the same classifier's supertype list's first entry, or the one
+    /// a `super<Base>` qualifier names
+    /// ([`#super-forms`](https://kotlinlang.org/spec/expressions.html#super-forms));
+    /// an unmatched qualifier falls back to the innermost `this` and the first
+    /// `super`.
+    ///
+    /// `this` inside an *extension* body — where the receiver is the extended
+    /// type and not a classifier of this file — is not resolved (a recorded
+    /// deviation).
+    fn enclosing_receiver_ty(&self, qualifier: Option<&SpannedTypeRef>, super_: bool) -> Ty {
+        let written = qualifier.and_then(|qualifier| qualifier.ty.as_reference_name().cloned());
+        // The enclosing classifiers, innermost first.
+        let mut classifiers = Vec::new();
+        let mut current = Some(self.item);
+        while let Some(id) = current {
+            if self.tree.as_class(id).is_some() {
+                classifiers.push(id);
+            }
+            current = self.tree.parent_of(id);
+        }
+        let Some(&innermost) = classifiers.first() else {
+            return self.error();
+        };
+        if !super_ {
+            let chosen = written
+                .as_ref()
+                .and_then(|written| {
+                    classifiers
+                        .iter()
+                        .copied()
+                        .find(|&id| self.tree.data(id).name() == Some(written))
+                })
+                .unwrap_or(innermost);
+            return super::db::item_ty(self.db, self.file, chosen);
+        }
+        let ty = super::db::item_ty(self.db, self.file, innermost);
+        let supertypes = super::subtyping::supertypes(self.db, &self.scope, &ty);
+        let chosen = match &written {
+            Some(written) => supertypes.iter().find(|supertype| {
+                matches!(supertype.kind(self.db), TyKind::Reference { name, .. } if name.simple_name() == written.as_str())
+            }),
+            None => supertypes.first(),
+        };
+        chosen.copied().unwrap_or_else(|| self.error())
     }
 
     /// The types of the *implicit* receivers of an unqualified name: the
     /// enclosing classifiers, innermost first ([KLS
     /// `type-inference.html#call-without-an-explicit-receiver`](https://kotlinlang.org/spec/type-inference.html#call-without-an-explicit-receiver)).
+    ///
+    /// Each is the type of the classifier's own declaration, so an object
+    /// literal's members are in scope inside its body exactly as a named class's
+    /// are.
     fn implicit_receivers(&self) -> Vec<Ty> {
         let mut out = Vec::new();
         let mut current = Some(self.item);
         while let Some(id) = current {
-            if self.tree.as_class(id).is_some()
-                && let Some(fqn) = hir::source_class_fqn(self.db, self.file, id)
-            {
-                out.push(Ty::reference(self.db, fqn, Vec::new()));
+            if self.tree.as_class(id).is_some() {
+                out.push(super::db::item_ty(self.db, self.file, id));
             }
             current = self.tree.parent_of(id);
         }

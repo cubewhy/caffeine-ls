@@ -79,7 +79,27 @@ pub(crate) fn kotlin_item_ty_query<'db>(db: &'db dyn TyDatabase, key: KotlinItem
                 None => Ty::error(db),
             },
         },
-        KotlinItemData::Class(data) => reference(data.name.as_str()),
+        KotlinItemData::Class(data) => {
+            // A *local* classifier — a local class or `object`, and an object
+            // literal's anonymous class — has a simple name but no canonical
+            // one ([KLS
+            // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)),
+            // so it is identified by the declaration it is, exactly as a Java
+            // local class is ([JLS §6.7]).
+            if tree.is_local_type(item_id) {
+                Ty::local_reference(
+                    db,
+                    hir::SourceClass {
+                        file: file_id,
+                        item: item_id,
+                    },
+                    data.name.clone(),
+                    Vec::new(),
+                )
+            } else {
+                reference(data.name.as_str())
+            }
+        }
         KotlinItemData::Constructor(_) => match tree.parent_of(item_id) {
             Some(class) => *kotlin_item_ty_query(db, KotlinItemKey::new(db, file_id, class)),
             None => Ty::error(db),

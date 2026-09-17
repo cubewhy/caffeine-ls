@@ -41,6 +41,21 @@ use crate::ty::{Ty, TyKind};
 
 /// The direct supertypes of `ty` in `scope`.
 pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) -> Vec<Ty> {
+    // A local classifier declares its supertypes in its own item, and the
+    // receiver *is* that declaration ([KLS
+    // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)):
+    // `object : Runnable { … }` is a `Runnable`, which is what makes it usable
+    // in a SAM position.
+    if let Some(class) = super::method::local_class_of(db, ty) {
+        if hir_def::kotlin::plugin::model(&hir::file_item_tree(db, class.file)).is_some() {
+            let binding = class_binding(db, &class, ty);
+            return super::db::supertypes(db, class.file, class.item)
+                .iter()
+                .map(|supertype| supertype.substitute(db, &binding))
+                .collect();
+        }
+        return supertypes_of_another_language(db, scope, ty);
+    }
     let Some(fqn) = reference_fqn(db, ty) else {
         return Vec::new();
     };
@@ -88,20 +103,31 @@ fn supertypes_of_another_language(
     scope: &hir::ResolutionScope,
     ty: &Ty,
 ) -> Vec<Ty> {
-    let Some(fqn) = reference_fqn(db, ty) else {
-        return Vec::new();
-    };
-    let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
-        return Vec::new();
-    };
-    let language = match &resolved {
-        // A classfile declares no language: the entry that reads classfiles
-        // answers for it.
-        hir::Resolved::Library(_) => crate::lang::classfile(),
-        class => match crate::lang::for_class(db, class) {
+    let language = match super::method::local_class_of(db, ty) {
+        // A local class of another language: the receiver carries exactly the
+        // identity that layer answers for ([JLS §6.7]), so the lookup is the
+        // file's own language.
+        Some(class) => match crate::lang::for_file(db, class.file) {
             Some(language) => language,
             None => return Vec::new(),
         },
+        None => {
+            let Some(fqn) = reference_fqn(db, ty) else {
+                return Vec::new();
+            };
+            let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
+                return Vec::new();
+            };
+            match &resolved {
+                // A classfile declares no language: the entry that reads
+                // classfiles answers for it.
+                hir::Resolved::Library(_) => crate::lang::classfile(),
+                class => match crate::lang::for_class(db, class) {
+                    Some(language) => language,
+                    None => return Vec::new(),
+                },
+            }
+        }
     };
     language
         .supertypes(db, scope, *ty)
