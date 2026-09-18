@@ -23,6 +23,22 @@ use vfs::FileId;
 
 use common::{TestDatabase, edit_file, find_method, jdk_fixture, register_source_set};
 
+/// The id of the first Kotlin function named `name` declared in `file`.
+fn kotlin_function(db: &TestDatabase, file: FileId, name: &str) -> hir_expand::ids::ItemId {
+    let tree = hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
+    tree.items
+        .iter()
+        .find_map(|(id, data)| match data {
+            hir_def::kotlin::item_tree::KotlinItemData::Function(function)
+                if function.name.as_str() == name =>
+            {
+                Some(hir_expand::ids::ItemId(id))
+            }
+            _ => None,
+        })
+        .expect("the function is declared")
+}
+
 #[test]
 fn unrelated_package_edit_short_circuits_other_inference() {
     let fixture = jdk_fixture();
@@ -294,5 +310,88 @@ class A {
         *hir::file_item_tree(&db, a),
         *tree_before_local,
         "declaring a Kotlin local class must change the item tree"
+    );
+}
+
+/// An edit to a Kotlin file re-derives the inference of exactly the files that
+/// mention it — and no others.
+///
+/// The dependency index ([`hir_ty::lang::file_resolved_deps`]) is what names
+/// the mentioning files: `User` resolves `Util` (a declared type, a call
+/// through it and a call to `Util.kt`'s top-level function), so `Util.kt` is in
+/// its resolved set, while `Solo` mentions nothing of it and has an empty set.
+/// The `Arc::ptr_eq` probe on [`hir_ty::kotlin_body_types`] then shows the same
+/// partition on re-inference: renaming `Util` re-infers `User`'s body, and
+/// leaves `Solo`'s — which sits in the *same* package — served from the memo.
+#[test]
+fn kotlin_dependency_edit_re_derives_only_mentioning_files() {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(
+        &mut db,
+        &fixture,
+        &[
+            (
+                "/src/com/a/Util.kt",
+                "package com.a\n\nclass Util {\n    fun help(): Int = 1\n}\n\nfun topLevel(): Int = 2\n",
+            ),
+            (
+                "/src/com/a/User.kt",
+                "package com.a\n\nclass User {\n    fun f(u: Util): Int {\n        val n = u.help()\n        return n + topLevel()\n    }\n}\n",
+            ),
+            (
+                "/src/com/a/Solo.kt",
+                "package com.a\n\nclass Solo {\n    fun g(): Int = 3\n}\n",
+            ),
+        ],
+    );
+
+    let util = FileId::from_raw(1);
+    let user = FileId::from_raw(2);
+    let solo = FileId::from_raw(3);
+    let user_f = kotlin_function(&db, user, "f");
+    let solo_g = kotlin_function(&db, solo, "g");
+
+    // The index attributes `Util.kt` to the file that mentions it, and nothing
+    // to the file that does not. `topLevel` is only reachable through the
+    // file's synthesized facade, so `User`'s set proves that path too.
+    let user_deps = hir_ty::lang::file_resolved_deps(&db, user);
+    assert_eq!(
+        user_deps.iter().copied().collect::<Vec<_>>(),
+        vec![util],
+        "User resolves Util.kt and nothing else: {user_deps:?}"
+    );
+    let solo_deps = hir_ty::lang::file_resolved_deps(&db, solo);
+    assert!(
+        solo_deps.is_empty(),
+        "Solo mentions nothing of another file: {solo_deps:?}"
+    );
+    let solo_refs = hir_ty::lang::file_dependency_refs(&db, solo);
+    assert!(
+        !solo_refs.iter().any(|name| name.as_str() == "Util"),
+        "Solo's reference names must not name Util: {solo_refs:?}"
+    );
+
+    // Warm both bodies; each is clean and resolves its own declarations.
+    let user_before = hir_ty::kotlin_body_types(&db, user, user_f);
+    let solo_before = hir_ty::kotlin_body_types(&db, solo, solo_g);
+
+    // A symbol-affecting edit to `Util` (its class renamed): `User` mentions
+    // `Util`, so its body inference is re-derived …
+    edit_file(
+        &mut db,
+        util,
+        "package com.a\n\nclass Util2 {\n    fun help(): Int = 1\n}\n\nfun topLevel(): Int = 2\n",
+    );
+    assert!(
+        !Arc::ptr_eq(&user_before, &hir_ty::kotlin_body_types(&db, user, user_f)),
+        "renaming Util must re-infer the body of the file that mentions it"
+    );
+
+    // … while `Solo`, in the same package but mentioning nothing of `Util.kt`,
+    // stays a memo hit.
+    assert!(
+        Arc::ptr_eq(&solo_before, &hir_ty::kotlin_body_types(&db, solo, solo_g)),
+        "an edit to a file `Solo` does not mention must not re-infer its body"
     );
 }

@@ -59,17 +59,20 @@ impl LanguageTypes for Kotlin {
         access_context_for_kotlin(db, file, item)
     }
 
-    /// Kotlin's own dependency index is not built yet: the file depends on
-    /// nothing it does not declare, which is the answer the Java index gave
-    /// over a Kotlin file's (empty) Java model — a recorded gap, not a
-    /// regression.
-    fn file_resolved_deps(&self, _db: &dyn TyDatabase, _file: FileId) -> Arc<FxHashSet<FileId>> {
-        Arc::new(FxHashSet::default())
+    /// The workspace source files whose declarations `file`'s type outputs
+    /// resolve against — its imports, the type references of its declaration
+    /// model and bodies, and the declarations its bodies resolved their names
+    /// to, closed over source supertypes. See
+    /// [`crate::kotlin::dep_index::file_resolved_deps`].
+    fn file_resolved_deps(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<FileId>> {
+        crate::kotlin::dep_index::file_resolved_deps(db, file)
     }
 
-    /// See [`Kotlin::file_resolved_deps`](Self::file_resolved_deps).
-    fn file_dependency_refs(&self, _db: &dyn TyDatabase, _file: FileId) -> Arc<FxHashSet<Name>> {
-        Arc::new(FxHashSet::default())
+    /// The resolution-relevant *names* of `file`, the sound name-level fallback
+    /// of the cross-file dependency index. See
+    /// [`crate::kotlin::dep_index::file_dependency_refs`].
+    fn file_dependency_refs(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<Name>> {
+        crate::kotlin::dep_index::file_dependency_refs(db, file)
     }
 }
 

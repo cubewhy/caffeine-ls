@@ -15,6 +15,9 @@ mod common;
 
 use base_db::FileChange;
 use hir_ty::java::db::{file_dependency_refs, file_resolved_deps};
+use hir_ty::kotlin::dep_index::{
+    file_dependency_refs as kotlin_dependency_refs, file_resolved_deps as kotlin_resolved_deps,
+};
 use hir_ty::{pick_field, pick_method};
 use vfs::FileId;
 
@@ -51,6 +54,60 @@ fn check_dep_index(files: &[(&str, &str)]) -> String {
     }
     lines.join("\n")
 }
+
+/// Renders, for every fixture file, its resolved cross-file dependencies and
+/// its resolution-relevant reference names, sorted for determinism — the
+/// Kotlin twin of [`check_dep_index`], answered by the Kotlin index
+/// ([`hir_ty::kotlin::dep_index`]) over a Kotlin fixture the JDK fixture is the
+/// only classpath of. A declaration of another file of the fixture is a
+/// reference either way it is written: as a type name, as a call through a
+/// receiver, or as a call to another file's top-level function.
+fn check_kotlin_dep_index(files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(&mut db, &fixture, files);
+
+    let mut lines = Vec::new();
+    for (i, _) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        let deps = kotlin_resolved_deps(&db, file_id);
+        let mut deps: Vec<String> = deps.iter().map(|&dep| path_of(files, dep)).collect();
+        deps.sort();
+        let refs = kotlin_dependency_refs(&db, file_id);
+        let mut refs: Vec<String> = refs.iter().map(|name| name.as_str().to_owned()).collect();
+        refs.sort();
+        lines.push(format!(
+            "FILE {}\n{}\nDEPS: {}\nREFNAMES: {}\n",
+            path_of(files, file_id),
+            files[i].1,
+            deps.join(", "),
+            refs.join(", ")
+        ));
+    }
+    lines.join("\n")
+}
+
+snapshot!(
+    kotlin_deps_cross_file_reference,
+    check_kotlin_dep_index(&[
+        (
+            "/src/p/Util.kt",
+            "package p\n\nclass Util {\n    fun help(): Int = 1\n}\n\nfun topLevel(): Int = 2\n",
+        ),
+        (
+            "/src/p/User.kt",
+            "package p\n\nclass User {\n    fun f(u: Util): Int {\n        val n = u.help()\n        return n + topLevel()\n    }\n}\n",
+        ),
+        (
+            "/src/q/Client.kt",
+            "package q\n\nimport p.Util\n\nclass Client {\n    fun f(u: Util): Int = u.help()\n}\n",
+        ),
+        (
+            "/src/p/Solo.kt",
+            "package p\n\nclass Solo {\n    fun g(): Int = 3\n}\n",
+        ),
+    ])
+);
 
 snapshot!(
     deps_basic_cross_file_reference,

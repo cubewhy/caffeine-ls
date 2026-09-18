@@ -1,0 +1,50 @@
+---
+source: crates/hir-ty/tests/dep_index_snapshots.rs
+expression: out
+---
+FILE /src/p/Util.kt
+package p
+
+class Util {
+    fun help(): Int = 1
+}
+
+fun topLevel(): Int = 2
+
+DEPS: 
+REFNAMES: Int
+
+FILE /src/p/User.kt
+package p
+
+class User {
+    fun f(u: Util): Int {
+        val n = u.help()
+        return n + topLevel()
+    }
+}
+
+DEPS: /src/p/Util.kt
+REFNAMES: Int, Util, help, n, topLevel, u
+
+FILE /src/q/Client.kt
+package q
+
+import p.Util
+
+class Client {
+    fun f(u: Util): Int = u.help()
+}
+
+DEPS: /src/p/Util.kt
+REFNAMES: Int, Util, help, p.Util, u
+
+FILE /src/p/Solo.kt
+package p
+
+class Solo {
+    fun g(): Int = 3
+}
+
+DEPS: 
+REFNAMES: Int

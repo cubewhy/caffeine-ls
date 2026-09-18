@@ -29,6 +29,7 @@
 
 pub mod builtins;
 pub mod db;
+pub mod dep_index;
 pub mod diagnostics;
 pub mod infer;
 pub mod jvm_view;
