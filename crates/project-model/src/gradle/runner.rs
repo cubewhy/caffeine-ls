@@ -295,6 +295,47 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
 
         let main_compile_classpath = map_entries(project.compile_classpath);
 
+        // A Gradle project's Kotlin build scripts — `build.gradle.kts` and, in
+        // the root project, `settings.gradle.kts` — live in the *project
+        // directory*
+        // (<https://docs.gradle.org/current/userguide/build_script_basics.html>:
+        // a build script is named `build.gradle.kts` and is read from the
+        // directory of the project it configures), which no reported source
+        // root contains: they are Kotlin *scripts*
+        // (<https://kotlinlang.org/docs/command-line.html#run-scripts>), not
+        // sources of any source set, so the export reports no root for them and
+        // an analysis that walks the project's files skips them. The directory
+        // is the `scripts` source set's root, carrying the project's compile
+        // classpath — the classpath a script's own file is compiled against.
+        //
+        // A file belongs to the *longest* root containing it
+        // ([`vfs::file_set::FileSetConfig`]), and the project directory is an
+        // ancestor of the main, test and generated roots, so this root owns
+        // exactly what none of the others covers — the scripts — and no source
+        // file changes owner. A project whose classpath-relevant directories
+        // already name the directory itself (a `srcDirs` containing `.`) loads
+        // them as that source set's sources; registering the path a second time
+        // would leave the owner to a map's iteration order, so no set is added
+        // there.
+        let scripts_kind = SourceSetKind::Custom(SmolStr::from("scripts"));
+        let scripts_source_set = if graph
+            .source_root_to_owning_set
+            .contains_key(&abs_project_dir)
+        {
+            None
+        } else {
+            graph
+                .source_root_to_owning_set
+                .insert(abs_project_dir.clone(), (project_id, scripts_kind.clone()));
+            Some(SourceSetData {
+                kind: scripts_kind,
+                source_roots: vec![abs_project_dir.clone()],
+                generated_source_roots: Vec::new(),
+                compile_classpath: main_compile_classpath.clone(),
+                runtime_classpath: main_compile_classpath.clone(),
+            })
+        };
+
         // Setup separate test compile entries ensuring module isolation
         let mut test_compile_classpath = Vec::new();
         if let Some(sdk_id) = target_sdk {
@@ -327,6 +368,9 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
         let mut source_sets = FxHashMap::default();
         source_sets.insert(SourceSetKind::Main, main_source_set);
         source_sets.insert(SourceSetKind::Test, test_source_set);
+        if let Some(scripts_source_set) = scripts_source_set {
+            source_sets.insert(scripts_source_set.kind.clone(), scripts_source_set);
+        }
 
         let project_data = ProjectData {
             id: project_id,

@@ -294,6 +294,39 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
 
         let main_compile_classpath = map_entries(project.compile_classpath);
 
+        // The project directory as the `scripts` source set's root, exactly as
+        // the Gradle runner reports it
+        // ([`crate::gradle::runner::build_graph_from_json`]): a Kotlin script
+        // is a `.kts` file compiled with the `script` production
+        // (<https://kotlinlang.org/docs/command-line.html#run-scripts>), and a
+        // project may keep one in the directory its build file sits in. Maven's
+        // own build file is `pom.xml`, not a script, so nothing here is
+        // required *by* the build system — the root exists so that a `.kts`
+        // file the loader finds in the project directory is a source of the
+        // workspace rather than a skipped file, with the project's compile
+        // classpath. No reported source root contains that directory, and a
+        // file belongs to the *longest* root containing it
+        // ([`vfs::file_set::FileSetConfig`]), so the main, test and generated
+        // roots keep every file they already own.
+        let scripts_kind = SourceSetKind::Custom(SmolStr::from("scripts"));
+        let scripts_source_set = if graph
+            .source_root_to_owning_set
+            .contains_key(&abs_project_dir)
+        {
+            None
+        } else {
+            graph
+                .source_root_to_owning_set
+                .insert(abs_project_dir.clone(), (project_id, scripts_kind.clone()));
+            Some(SourceSetData {
+                kind: scripts_kind,
+                source_roots: vec![abs_project_dir.clone()],
+                generated_source_roots: Vec::new(),
+                compile_classpath: main_compile_classpath.clone(),
+                runtime_classpath: main_compile_classpath.clone(),
+            })
+        };
+
         let mut test_compile_classpath = Vec::new();
         if let Some(sdk_id) = target_sdk {
             test_compile_classpath.push(ClasspathEntry::Sdk(sdk_id));
@@ -323,6 +356,9 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
         let mut source_sets = FxHashMap::default();
         source_sets.insert(SourceSetKind::Main, main_source_set);
         source_sets.insert(SourceSetKind::Test, test_source_set);
+        if let Some(scripts_source_set) = scripts_source_set {
+            source_sets.insert(scripts_source_set.kind.clone(), scripts_source_set);
+        }
 
         let project_data = ProjectData {
             id: project_id,
