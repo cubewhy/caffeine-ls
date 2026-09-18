@@ -547,6 +547,14 @@ pub enum KotlinDiagnosticCode {
     NullabilityMismatch,
     /// `'val' cannot be reassigned.`
     ValReassignment,
+    /// `argument type mismatch: actual type is '<S>', but '<T>' was expected.`
+    ArgumentMismatch,
+    /// `no value passed for parameter '<name>'.`
+    MissingArgument,
+    /// `'when' expression must be exhaustive. Add an 'else' branch.`
+    NonExhaustiveWhen,
+    /// `condition of type 'Boolean' expected.`
+    NonBooleanWhenCondition,
     /// `'<name>' overrides nothing.`
     OverridesNothing,
     /// `'<name>' hides member of supertype '<S>' and needs an 'override'
@@ -619,6 +627,10 @@ impl KotlinDiagnosticCode {
             KotlinDiagnosticCode::TypeMismatch => "kotlin.type-mismatch",
             KotlinDiagnosticCode::NullabilityMismatch => "kotlin.nullability-mismatch",
             KotlinDiagnosticCode::ValReassignment => "kotlin.val-reassignment",
+            KotlinDiagnosticCode::ArgumentMismatch => "kotlin.argument-mismatch",
+            KotlinDiagnosticCode::MissingArgument => "kotlin.missing-argument",
+            KotlinDiagnosticCode::NonExhaustiveWhen => "kotlin.non-exhaustive-when",
+            KotlinDiagnosticCode::NonBooleanWhenCondition => "kotlin.non-boolean-when-condition",
             KotlinDiagnosticCode::OverridesNothing => "kotlin.overrides-nothing",
             KotlinDiagnosticCode::NeedsOverrideModifier => "kotlin.needs-override-modifier",
             KotlinDiagnosticCode::FinalMemberOverridden => "kotlin.final-member-overridden",

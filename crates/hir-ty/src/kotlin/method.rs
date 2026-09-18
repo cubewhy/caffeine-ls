@@ -1617,20 +1617,38 @@ pub fn library_top_level_callable(
     name: &Name,
     args: &[CallArg<'_>],
 ) -> Option<Member> {
+    select(
+        db,
+        scope,
+        library_top_level_candidates(db, scope, file, name),
+        args,
+    )
+}
+
+/// The same candidate set without the applicability filter — what a *failed*
+/// call's reason is read off ([`not_applicable`]).
+pub fn library_top_level_candidates(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    file: FileId,
+    name: &Name,
+) -> Vec<Member> {
     let tree = hir::file_item_tree(db, file);
-    let tree = hir_def::kotlin::plugin::model(&tree)?;
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
+        return Vec::new();
+    };
     // The resolver only needs an item for the *declaring* context of the names
     // it resolves; a file-level package list is the same for every item of the
     // file, and the file's first item is one.
     let Some(&item) = tree.top.first() else {
-        return None;
+        return Vec::new();
     };
     let resolver = KotlinResolver::for_item(db, file, tree, item);
     let mut out = Vec::new();
     for package in resolver.packages_in_scope() {
         facade_members(db, scope, &package, name, &mut out);
     }
-    select(db, scope, out, args)
+    out
 }
 
 /// The members `name` names on the facade classes of one package, as *members of
@@ -1917,17 +1935,28 @@ pub fn top_level_callable(
     name: &Name,
     args: &[CallArg<'_>],
 ) -> Option<Member> {
+    select(db, scope, top_level_candidates(db, scope, file, name), args)
+}
+
+/// The same candidate set without the applicability filter — what a *failed*
+/// call's reason is read off ([`not_applicable`]).
+pub fn top_level_candidates(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    file: FileId,
+    name: &Name,
+) -> Vec<Member> {
     let tree = hir::file_item_tree(db, file);
     let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
-        return None;
+        return Vec::new();
     };
     let mut candidates = Vec::new();
     for &top in &tree.top {
-        if let Some(member) = declaration_callable(db, scope, file, top, name, args) {
+        if let Some(member) = declaration_candidate(db, scope, file, top, name) {
             candidates.push(member);
         }
     }
-    select(db, scope, candidates, args)
+    candidates
 }
 
 /// The callable a *top-level* declaration is, when its name is `name` and the
@@ -1941,6 +1970,19 @@ pub fn declaration_callable(
     name: &Name,
     args: &[CallArg<'_>],
 ) -> Option<Member> {
+    let member = declaration_candidate(db, scope, file, item, name)?;
+    applies(db, scope, &member, args).then_some(member)
+}
+
+/// The callable a *top-level* declaration is, without the applicability filter —
+/// what a *failed* call's reason is read off ([`not_applicable`]).
+pub fn declaration_candidate(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    file: FileId,
+    item: hir_expand::ids::ItemId,
+    name: &Name,
+) -> Option<Member> {
     let tree = hir::file_item_tree(db, file);
     let tree = hir_def::kotlin::plugin::model(&tree)?;
     let KotlinItemData::Function(function) = tree.data(item) else {
@@ -1949,8 +1991,7 @@ pub fn declaration_callable(
     if function.name != *name {
         return None;
     }
-    let member = kotlin_function_member(db, file, item, name, tree, function);
-    applies(db, scope, &member, args).then_some(member)
+    Some(kotlin_function_member(db, file, item, name, tree, function))
 }
 
 /// The most specific of the applicable candidates ([KLS
@@ -2004,6 +2045,146 @@ fn select(
         .unwrap_or(0);
     Some(applicable.swap_remove(picked))
 }
+/// Why no candidate accepts a call's arguments, for the two findings a call
+/// site reports ([KLS
+/// `overload-resolution.html#determining-function-applicability-for-a-specific-call`](https://kotlinlang.org/spec/overload-resolution.html#determining-function-applicability-for-a-specific-call)):
+/// an argument that is not assignable to the parameter it lands on, and a
+/// parameter no argument filled.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NotApplicable {
+    /// The written argument at `argument` is not assignable to the parameter it
+    /// lands on, which declares `parameter`.
+    Argument { argument: usize, parameter: Ty },
+    /// The parameter at `parameter` declares no default and no argument filled
+    /// it; `name` is the parameter's own name, or the `p<index>` a classfile
+    /// without a `MethodParameters` attribute leaves for kotlinc to print.
+    Missing { parameter: usize, name: Name },
+}
+
+/// Why the candidates of a call all failed, or `None` when one applies: the
+/// *first* candidate's own reason, which is what a compiler reports when it
+/// reports one thing.
+///
+/// A *type* mismatch is reported only for a candidate whose declaration this
+/// model reads the way the compiler does — a Kotlin or Java *source* one, whose
+/// parameter types are the written ones. A *classfile* candidate's signature is
+/// erased and its overload set is the part of the classpath this model manages
+/// to enumerate, so a call it cannot match is far more often a gap in the model
+/// than an error in the source: reporting one would be exactly the false
+/// `type mismatch` the rest of this layer is written to avoid. A *missing*
+/// value is reported for any candidate, since an arity is what a classfile
+/// records exactly.
+pub fn not_applicable(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    members: &[Member],
+    args: &[CallArg<'_>],
+) -> Option<NotApplicable> {
+    let mut candidates: Vec<&Member> = Vec::new();
+    for member in members {
+        if !matches!(member.kind, MemberKind::Function | MemberKind::Constructor) {
+            continue;
+        }
+        // The same declaration reaches this set more than once — a source
+        // top-level function and the *facade* member standing for it
+        // ([`library_top_level_callable`]) are one callable, and a call has one
+        // candidate however many views of it the lookup has.
+        if !candidates
+            .iter()
+            .any(|seen| seen.kind == member.kind && seen.target == member.target)
+        {
+            candidates.push(member);
+        }
+    }
+    // A call with *several* candidates is a call whose *selection* failed, and
+    // the reason a compiler reports for it is the one *it* selected — a choice
+    // this model is in no position to second-guess from a failed selection of
+    // its own. Only a call with a single candidate is judged here.
+    let [member] = candidates[..] else {
+        return None;
+    };
+    why_not(db, scope, member, args)
+}
+
+/// [`not_applicable`] for one candidate: `None` when it applies.
+fn why_not(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    member: &Member,
+    args: &[CallArg<'_>],
+) -> Option<NotApplicable> {
+    let landing = argument_parameters(member, args)?;
+    // See [`not_applicable`]: a classfile candidate's *types* are not what this
+    // model can judge, so only its arity is.
+    let source_declaration = match &member.target {
+        MemberTarget::Kotlin { .. } => true,
+        MemberTarget::Java(method) => method.owner_file.is_some(),
+        MemberTarget::JavaField(field) => field.owner_file.is_some(),
+        MemberTarget::Builtin { .. } => false,
+    };
+    let argument = |argument: usize, parameter: Ty| {
+        source_declaration.then_some(NotApplicable::Argument {
+            argument,
+            parameter,
+        })
+    };
+    let mut filled = vec![false; member.params.len()];
+    for (index, (arg, landing)) in args.iter().zip(&landing).enumerate() {
+        let Some(parameter) = *landing else {
+            // Past the last parameter: a `vararg` takes it as an element.
+            let Some(element) = member.varargs_element(db) else {
+                return argument(
+                    index,
+                    member
+                        .params
+                        .last()
+                        .copied()
+                        .unwrap_or_else(|| Ty::error(db)),
+                );
+            };
+            if !crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &element) {
+                return argument(index, element);
+            }
+            continue;
+        };
+        if filled[parameter] {
+            return argument(index, member.params[parameter]);
+        }
+        filled[parameter] = true;
+        let element = (member.vararg && parameter + 1 == member.params.len())
+            .then(|| member.varargs_element(db))
+            .flatten();
+        if !crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &member.params[parameter])
+            && !element.is_some_and(|element| {
+                crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &element)
+            })
+            && !(contains_type_var(db, &member.params[parameter])
+                && same_shape(db, &arg.ty, &member.params[parameter]))
+        {
+            return argument(index, member.params[parameter]);
+        }
+    }
+    let last = member.params.len().saturating_sub(1);
+    filled.iter().enumerate().find_map(|(index, filled)| {
+        if *filled
+            || member.defaulted.get(index).copied().unwrap_or(false)
+            || (member.vararg && index == last)
+        {
+            return None;
+        }
+        let name = match member.param_names.get(index) {
+            Some(name) => name.clone(),
+            // A classfile parameter without a `MethodParameters` attribute: the
+            // compiler prints the position (`p0`).
+            None => Name::new(&format!("p{index}")),
+        };
+        Some(NotApplicable::Missing {
+            parameter: index,
+            name,
+        })
+    })
+}
+
 /// Whether a candidate accepts `args`
 /// ([KLS `overload-resolution.html#determining-function-applicability-for-a-specific-call`](https://kotlinlang.org/spec/overload-resolution.html#determining-function-applicability-for-a-specific-call)):
 /// arity with defaults and `vararg` filled, named arguments matched by

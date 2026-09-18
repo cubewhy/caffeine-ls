@@ -166,6 +166,20 @@ pub fn infer_initializer(
     infer(db, file, item, Inferred::Initializer)
 }
 
+/// Whether the item tree records the declaration's body as its *expression*
+/// form. A declaration whose kind carries no body flag is not one this decides
+/// for.
+fn declared_expression_body(
+    tree: &hir_def::kotlin::item_tree::KotlinItemTree,
+    item: hir_expand::ids::ItemId,
+) -> bool {
+    match tree.data(item) {
+        hir_def::kotlin::item_tree::KotlinItemData::Function(data) => data.expression_body,
+        hir_def::kotlin::item_tree::KotlinItemData::Accessor(data) => data.expression_body,
+        _ => false,
+    }
+}
+
 /// What an inference pass walks: a declaration's body, or the initializer
 /// expressions a property declares in its place. A declaration has one or the
 /// other, never both, so each entry point is asked for what exists.
@@ -215,6 +229,8 @@ fn infer(
         scopes: Vec::new(),
         lambda_receivers: Vec::new(),
         expected_lambdas: Vec::new(),
+        expression_body: declared_expression_body(&tree, item),
+        in_statement: false,
     };
     // The parameters of the enclosing classifier's primary constructor are in
     // scope in every body of the class body ([KLS
@@ -287,6 +303,17 @@ struct InferCtx<'a> {
     /// their types from ([KLS
     /// `type-inference.html#function-literals`](https://kotlinlang.org/spec/type-inference.html#function-literals)).
     expected_lambdas: Vec<Ty>,
+    /// Whether the declaration's body is written as an *expression* (`fun f() =
+    /// expr`, `get() = expr`), whose value is the declaration's
+    /// ([`hir_def::kotlin::item_tree::FunctionData::expression_body`]). A block
+    /// body's statements have no value in Kotlin, which is the distinction a
+    /// `when` needs no `else` for — and the two are indistinguishable from the
+    /// lowered statements alone, where both are one [`StmtData::Expr`].
+    expression_body: bool,
+    /// Whether the expression being inferred stands as a *statement* of a block
+    /// body, where its value is not used ([KLS
+    /// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)).
+    in_statement: bool,
 }
 
 /// What a written name resolves to in the scope that declares it.
@@ -563,7 +590,15 @@ impl<'a> InferCtx<'a> {
                 }
             }
             StmtData::Expr(expr) => {
+                // An expression standing as a statement of a *block* body: its
+                // value is not used, which is what a `when` here needs no `else`
+                // for ([`Self::in_statement`]). An expression *body* is the other
+                // way round — its one statement *is* the declaration's value —
+                // and the two lower to the same statement, which is why the item
+                // tree's flag is what decides.
+                let enclosing = std::mem::replace(&mut self.in_statement, !self.expression_body);
                 self.infer_expr(expr);
+                self.in_statement = enclosing;
             }
             // A block is a scope of its own ([KLS
             // `scopes-and-identifiers.html#scopes-and-identifiers`]): the
@@ -1025,11 +1060,11 @@ impl<'a> InferCtx<'a> {
                 // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)),
                 // and the narrowing is the branch's own.
                 let (when_true, when_false) = self.branch_narrowings(cond);
-                let then_ty = self.narrowed_branch(when_true, then);
-                let els_ty = self.narrowed_branch(when_false, els);
+                let then_ty = self.narrowed_branch(&when_true, then);
+                let els_ty = self.narrowed_branch(&when_false, els);
                 super::subtyping::lub(self.db, &self.scope, &then_ty, &els_ty)
             }
-            ExprData::When { subject, arms } => self.infer_when(subject, &arms),
+            ExprData::When { subject, arms } => self.infer_when(expr, subject, &arms),
             ExprData::Try {
                 body,
                 catches,
@@ -1166,20 +1201,69 @@ impl<'a> InferCtx<'a> {
     /// A `when` expression: the joined type of its arm bodies, with the subject
     /// narrowed inside an `is` arm
     /// ([KLS `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)).
-    fn infer_when(&mut self, subject: Option<ExprId>, arms: &[hir_expand::body::WhenArm]) -> Ty {
+    /// A `when` ([KLS
+    /// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)):
+    /// its subject, its arms, and the two rules the compiler applies to them —
+    /// a *subject-less* arm's condition is a `Boolean` itself, and a `when`
+    /// whose value is used needs an `else` unless its subject can be told apart
+    /// exhaustively.
+    fn infer_when(
+        &mut self,
+        expr: ExprId,
+        subject: Option<ExprId>,
+        arms: &[hir_expand::body::WhenArm],
+    ) -> Ty {
         let subject_ty = subject.map(|subject| self.infer_expr(subject));
         let mut result = None;
+        let mut has_else = false;
         for arm in arms {
-            let narrowed = self.narrow_for(&arm.conditions, subject_ty);
+            // An arm with no conditions is the `else`
+            // ([`hir_expand::body::WhenArm`]).
+            if arm.conditions.is_empty() {
+                has_else = true;
+            }
+            let narrowed: Vec<(LocalId, Ty)> = self
+                .narrow_for(&arm.conditions, subject_ty)
+                .into_iter()
+                .collect();
             for condition in &arm.conditions {
                 match condition {
                     WhenCondition::Value(value) => {
-                        self.infer_expr(*value);
+                        let ty = self.infer_expr(*value);
+                        // A subject-less `when` tests the condition itself, so
+                        // it is a `Boolean` ([KLS
+                        // `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)).
+                        if subject.is_none() && !self.is_boolean(&ty) {
+                            let range = self.bodies.expr_range(*value);
+                            self.types
+                                .diagnostics
+                                .push(KotlinTypeError::NonBooleanWhenCondition {
+                                    range,
+                                    actual: Some(ty),
+                                });
+                        }
                     }
                     WhenCondition::TypeTest { expr, ty, .. } => {
                         self.infer_expr(*expr);
                         super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty);
+                        // `when { is String -> … }` tests nothing: a type test
+                        // needs a subject, and kotlinc reports the condition it
+                        // stands for as not being a `Boolean`.
+                        if subject.is_none() {
+                            let range = self.bodies.expr_range(*expr);
+                            self.types
+                                .diagnostics
+                                .push(KotlinTypeError::NonBooleanWhenCondition {
+                                    range,
+                                    actual: None,
+                                });
+                        }
                     }
+                    // A containment condition is an operator expression
+                    // (`in` is `contains`), whose value is a `Boolean` however
+                    // the `when` is written — kotlinc 2.4.20 accepts
+                    // `when { "a" in "abc" -> … }` — so it is never a *subject*
+                    // of the rule `not being a Boolean` is.
                     WhenCondition::Containment {
                         element, container, ..
                     } => {
@@ -1191,25 +1275,113 @@ impl<'a> InferCtx<'a> {
             // The narrowing belongs to the arm: it is undone before the next
             // one, which tests something else ([KLS
             // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)).
-            let body_ty = self.narrowed_branch(narrowed, arm.body);
+            let body_ty = self.narrowed_branch(&narrowed, arm.body);
             result = Some(match result {
                 Some(previous) => super::subtyping::lub(self.db, &self.scope, &previous, &body_ty),
                 None => body_ty,
             });
         }
+        // A `when` the *compiler* must be able to tell apart: one whose value is
+        // used needs an `else` unless its subject's type is exhausted by the
+        // arms. Only the decidable cases are read here — a source `enum class`
+        // (its entries are the arms' values) and a `sealed` classifier (the
+        // compiler knows its subtypes) — and a subject whose type this model
+        // cannot classify is left alone, so a `when` it cannot judge is never
+        // reported.
+        if !has_else
+            && !self.in_statement
+            && let Some(subject_ty) = subject_ty
+            && self.when_needs_else(subject_ty)
+        {
+            let range = self.bodies.expr_range(expr);
+            self.types
+                .diagnostics
+                .push(KotlinTypeError::NonExhaustiveWhen { range });
+        }
         result.unwrap_or_else(|| self.builtin("Unit"))
+    }
+
+    /// Whether a `when` over a subject of this type needs an `else` — `true`
+    /// for every subject whose type the compiler cannot tell apart
+    /// exhaustively, `false` for the two it can ([KLS
+    /// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)
+    /// makes an enum's entries and a sealed hierarchy the subjects an `else` is
+    /// unnecessary for).
+    ///
+    /// A `Boolean` subject is a third case the arms themselves decide
+    /// (`when (b) { true -> …; false -> … }`), which the arms' *values* would
+    /// have to be read for; it is not read here — a recorded deviation, in the
+    /// permissive direction (an exhausted boolean `when` is not reported).
+    fn when_needs_else(&self, subject_ty: Ty) -> bool {
+        let subject_ty = subject_ty.flexible_lower(self.db);
+        let TyKind::Reference { name, .. } = subject_ty.kind(self.db) else {
+            return false;
+        };
+        // An unresolved subject is not judged.
+        if matches!(subject_ty.kind(self.db), TyKind::Error) {
+            return false;
+        }
+        if self.builtin_name("Boolean").as_deref() == Some(name.as_str()) {
+            return false;
+        }
+        let Some(resolved) = hir::fqn_resolve(self.db, &self.scope, name.as_str()) else {
+            return true;
+        };
+        let hir::Resolved::Source(class) = &resolved else {
+            return true;
+        };
+        let outer = hir::file_item_tree(self.db, class.file);
+        let Some(tree) = hir_def::kotlin::plugin::model(&outer) else {
+            return false;
+        };
+        match tree.data(class.item) {
+            // An enum's entries are the arms' values; an `else` is unnecessary
+            // for the *exhaustive* case, which the arms' values would have to be
+            // read for — left alone here, in the permissive direction.
+            hir_def::kotlin::item_tree::KotlinItemData::Class(class) => {
+                !matches!(
+                    class.kind,
+                    hir_def::kotlin::item_tree::KotlinClassKind::Enum
+                ) && !matches!(
+                    class.modifiers.modality,
+                    hir_def::kotlin::modifiers::KotlinModality::Sealed
+                )
+            }
+            _ => false,
+        }
+    }
+
+    /// The canonical name of a built-in classifier, when the classpath carries
+    /// it (`Boolean` is `kotlin.Boolean`).
+    fn builtin_name(&self, simple: &str) -> Option<String> {
+        self.resolver.class_fqn(simple).map(|fqn| fqn.to_string())
+    }
+
+    /// Whether a type is `kotlin.Boolean`, through a platform type's halves.
+    fn is_boolean(&self, ty: &Ty) -> bool {
+        if matches!(ty.kind(self.db), TyKind::Error) {
+            return true;
+        }
+        let halves = [*ty, ty.flexible_lower(self.db), ty.flexible_upper(self.db)];
+        halves.iter().any(|ty| match ty.kind(self.db) {
+            TyKind::Reference { name, .. } => {
+                name.as_str() == "kotlin.Boolean" || name.as_str() == "Boolean"
+            }
+            _ => false,
+        })
     }
 
     /// Infers `expr` with `narrowing` in force, and lifts it afterwards — the
     /// scope of a smart cast is the expression it was established for.
-    fn narrowed_branch(&mut self, narrowing: Option<(LocalId, Ty)>, expr: ExprId) -> Ty {
-        if let Some((local, ty)) = narrowing {
-            self.narrowed.insert(local, ty);
-            let inferred = self.infer_expr(expr);
-            self.narrowed.remove(&local);
-            return inferred;
+    fn narrowed_branch(&mut self, narrowing: &[(LocalId, Ty)], expr: ExprId) -> Ty {
+        for (local, ty) in narrowing {
+            self.narrowed.insert(*local, *ty);
         }
-        self.infer_expr(expr)
+        let inferred = self.infer_expr(expr);
+        for (local, _) in narrowing {
+            self.narrowed.remove(local);
+        }
+        inferred
     }
 
     /// The narrowing a *condition* establishes on each of its branches, as
@@ -1225,19 +1397,19 @@ impl<'a> InferCtx<'a> {
     /// A narrowing applies only to a *local*, and only when the narrowed type is
     /// assignable to the type the local already has — a test that could not hold
     /// for its declared type establishes nothing.
-    fn branch_narrowings(&self, cond: ExprId) -> (Option<(LocalId, Ty)>, Option<(LocalId, Ty)>) {
+    fn branch_narrowings(&self, cond: ExprId) -> (Vec<(LocalId, Ty)>, Vec<(LocalId, Ty)>) {
         match self.bodies.expr(cond).clone() {
             ExprData::InstanceOf {
                 expr, ty: Some(ty), ..
             } => {
                 let Some((local, declared)) = self.tested_local(expr) else {
-                    return (None, None);
+                    return (Vec::new(), Vec::new());
                 };
                 let narrowed = super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty);
                 if !super::subtyping::is_assignable(self.db, &self.scope, &narrowed, &declared) {
-                    return (None, None);
+                    return (Vec::new(), Vec::new());
                 }
-                (Some((local, narrowed)), None)
+                (vec![(local, narrowed)], Vec::new())
             }
             // `x !is T` and `!(x is T)`: the same narrowing on the *other*
             // branch.
@@ -1245,37 +1417,54 @@ impl<'a> InferCtx<'a> {
                 op: hir_expand::body::UnaryOp::Not,
                 expr: inner,
             } => match self.branch_narrowings(inner) {
-                (Some((local, ty)), None) => (None, Some((local, ty))),
-                (None, Some((local, ty))) => (Some((local, ty)), None),
+                (narrowed, other) if other.is_empty() => (Vec::new(), narrowed),
+                (narrowed, other) if narrowed.is_empty() => (other, Vec::new()),
                 other => other,
             },
+            // `a && b` holds only when both hold, so the branch it selects
+            // carries the narrowings of *both* conjuncts — `if (x != null &&
+            // x.isSomething())` narrows `x` for the whole body. The other branch
+            // follows from neither conjunct alone, so it carries none.
+            ExprData::Binary {
+                op: hir_expand::body::BinaryOp::And,
+                lhs,
+                rhs,
+            } => {
+                let (mut when_true, _) = self.branch_narrowings(lhs);
+                let (from_rhs, _) = self.branch_narrowings(rhs);
+                for narrowing in from_rhs {
+                    if !when_true.contains(&narrowing) {
+                        when_true.push(narrowing);
+                    }
+                }
+                (when_true, Vec::new())
+            }
             ExprData::Binary { op, lhs, rhs } => {
-                let (tested, other) = match self.bodies.expr(rhs) {
-                    ExprData::Null => (lhs, rhs),
+                let tested = match self.bodies.expr(rhs) {
+                    ExprData::Null => lhs,
                     _ => match self.bodies.expr(lhs) {
-                        ExprData::Null => (rhs, lhs),
-                        _ => return (None, None),
+                        ExprData::Null => rhs,
+                        _ => return (Vec::new(), Vec::new()),
                     },
                 };
-                let _ = other;
                 let negated = match op {
                     hir_expand::body::BinaryOp::Ne => true,
                     hir_expand::body::BinaryOp::Eq => false,
-                    _ => return (None, None),
+                    _ => return (Vec::new(), Vec::new()),
                 };
                 let Some((local, declared)) = self.tested_local(tested) else {
-                    return (None, None);
+                    return (Vec::new(), Vec::new());
                 };
                 let narrowed = declared.strip_nullability(self.db);
                 if narrowed == declared {
-                    return (None, None);
+                    return (Vec::new(), Vec::new());
                 }
                 match negated {
-                    true => (Some((local, narrowed)), None),
-                    false => (None, Some((local, narrowed))),
+                    true => (vec![(local, narrowed)], Vec::new()),
+                    false => (Vec::new(), vec![(local, narrowed)]),
                 }
             }
-            _ => (None, None),
+            _ => (Vec::new(), Vec::new()),
         }
     }
 
@@ -1872,7 +2061,146 @@ impl<'a> InferCtx<'a> {
                     ty
                 }
             }
-            None => self.error(),
+            None => {
+                self.report_call_failure(expr, Some(receiver), name, trailing);
+                self.error()
+            }
+        }
+    }
+
+    /// Every callable a call written *without a receiver* could select among,
+    /// in the order its lookup tries them: the enclosing receivers' members, a
+    /// class receiver's constructors, the file's own top-level declarations, the
+    /// library's facades, and the declaration an imported name resolves to —
+    /// [`Self::call_without_receiver`]'s sources, unfiltered. A *failed* call's
+    /// reason is read off this set, so a call whose candidates this model cannot
+    /// enumerate at all reports nothing.
+    fn unqualified_candidates(&self, name: &Name) -> Vec<method::Member> {
+        let mut candidates = Vec::new();
+        for receiver in self.implicit_receivers() {
+            candidates.extend(method::member_set(
+                self.db,
+                &self.scope,
+                &receiver,
+                name,
+                self.site(),
+            ));
+        }
+        if let Some(class) = self.class_receiver(name) {
+            candidates.extend(method::member_set(
+                self.db,
+                &self.scope,
+                &class,
+                name,
+                self.site(),
+            ));
+        }
+        candidates.extend(method::top_level_candidates(
+            self.db,
+            &self.scope,
+            self.file,
+            name,
+        ));
+        candidates.extend(method::library_top_level_candidates(
+            self.db,
+            &self.scope,
+            self.file,
+            name,
+        ));
+        if let Some((file, item)) = self.resolver.source_declaration(name)
+            && let Some(member) =
+                method::declaration_candidate(self.db, &self.scope, file, item, name)
+        {
+            candidates.push(member);
+        }
+        candidates
+    }
+
+    /// Whether a type still carries a *flexible* pair — a platform type, or the
+    /// `T..T?` a call this model could not fully infer left behind
+    /// (`crates/hir-ty/src/kotlin.rs`).
+    fn is_flexible(&self, ty: Ty) -> bool {
+        !matches!(ty.kind(self.db), TyKind::Error)
+            && !ty
+                .flexible_lower(self.db)
+                .same_shape(self.db, &ty.flexible_upper(self.db))
+    }
+
+    /// Reports why a call whose candidates did not apply was rejected: kotlinc
+    /// reports one of two findings for it — an argument of the wrong type, or a
+    /// value missing for a parameter ([KLS
+    /// `overload-resolution.html#determining-function-applicability-for-a-specific-call`](https://kotlinlang.org/spec/overload-resolution.html#determining-function-applicability-for-a-specific-call)).
+    ///
+    /// Nothing is reported when the model cannot stand behind an argument the
+    /// finding would name: a *lambda literal*, whose parameter types come from
+    /// inferring the very callee that failed, or a type that is still
+    /// *flexible*, an inference this model left to the platform. Reporting one
+    /// of those would be the false `type mismatch` this layer exists to avoid.
+    /// The arguments are the call expression's own ([`ExprData::MethodCall`]),
+    /// so the finding is anchored at the written argument kotlinc underlines;
+    /// the *missing*-value finding is anchored at the call, which is where the
+    /// compiler reports it. A receiver's members are the declared ones; an
+    /// unqualified call reads the implicit receivers', which is the candidate
+    /// set the selection reads too.
+    fn report_call_failure(
+        &mut self,
+        expr: ExprId,
+        receiver: Option<&Ty>,
+        name: &Name,
+        trailing: Option<usize>,
+    ) {
+        let (arg_exprs, arg_names) = match self.bodies.expr(expr).clone() {
+            ExprData::MethodCall {
+                args, arg_names, ..
+            } => (args, arg_names),
+            _ => return,
+        };
+        let arg_types: Vec<Ty> = arg_exprs
+            .iter()
+            .map(|arg| self.types.expr_ty(self.db, *arg))
+            .collect();
+        if arg_exprs.iter().enumerate().any(|(index, arg)| {
+            matches!(self.bodies.expr(*arg), ExprData::Lambda { .. })
+                || self.is_flexible(arg_types[index])
+        }) {
+            return;
+        }
+        let args = call_args(&arg_types, &arg_names, trailing);
+        let candidates = match receiver {
+            Some(receiver) => method::member_set(self.db, &self.scope, receiver, name, self.site()),
+            None => self.unqualified_candidates(name),
+        };
+        let Some(reason) = method::not_applicable(self.db, &self.scope, &candidates, &args) else {
+            return;
+        };
+        match reason {
+            method::NotApplicable::Argument {
+                argument,
+                parameter,
+            } => {
+                let actual = arg_types
+                    .get(argument)
+                    .copied()
+                    .unwrap_or_else(|| self.error());
+                let range = arg_exprs
+                    .get(argument)
+                    .and_then(|arg| self.bodies.expr_range(*arg));
+                self.types
+                    .diagnostics
+                    .push(KotlinTypeError::ArgumentMismatch {
+                        parameter,
+                        actual,
+                        range,
+                    });
+            }
+            method::NotApplicable::Missing { name, .. } => {
+                self.types
+                    .diagnostics
+                    .push(KotlinTypeError::MissingArgument {
+                        parameter: name,
+                        range: self.bodies.expr_range(expr),
+                    });
+            }
         }
     }
 
@@ -2194,6 +2522,9 @@ impl<'a> InferCtx<'a> {
             self.record_member(expr, &member);
             return ty;
         }
+        // A call no candidate answered: the *reason* is what the compiler
+        // reports ([`Self::report_call_failure`]).
+        self.report_call_failure(expr, None, name, trailing);
         self.error()
     }
 
@@ -2268,7 +2599,12 @@ impl<'a> InferCtx<'a> {
                     expected.as_ref(),
                 )
             }
-            None => self.error(),
+            // A construction no candidate answered: the reason is the class's
+            // own candidate set's ([`Self::report_call_failure`]).
+            None => {
+                self.report_call_failure(expr, Some(class), name, trailing);
+                self.error()
+            }
         }
     }
 
@@ -2440,8 +2776,13 @@ impl<'a> InferCtx<'a> {
         if op != hir_expand::body::AssignOp::Assign {
             return;
         }
-        let name = match self.bodies.expr(lhs).clone() {
-            ExprData::Var(name) => name,
+        // The *destination* the write names — a local, or a property of a
+        // receiver, which is the *enclosing* one for a bare name and the
+        // written one for `x.y` ([KLS
+        // `expressions.html#assignment-operators`](https://kotlinlang.org/spec/expressions.html#assignment-operators)).
+        let (name, receiver) = match self.bodies.expr(lhs).clone() {
+            ExprData::Var(name) => (name, None),
+            ExprData::FieldAccess { target, name } => (name, target),
             _ => return,
         };
         // A *compound* assignment (`x += y`) is the `plusAssign` convention
@@ -2474,7 +2815,9 @@ impl<'a> InferCtx<'a> {
         // the binding's own mutability decides, which the lowering records for
         // every local ([`hir_expand::body::Local::is_mutable`]) — a parameter,
         // a loop variable and a pattern binding are `val`s too.
-        if let Some((local, _)) = self.local_binding(&name) {
+        if receiver.is_none()
+            && let Some((local, _)) = self.local_binding(&name)
+        {
             // A `val` declared without an initializer is *deferred
             // initialization*: `val x: T` followed by a single `x = …` is how
             // Kotlin gives a `val` its value on every path, and kotlinc accepts
@@ -2494,9 +2837,74 @@ impl<'a> InferCtx<'a> {
             self.check_binding(MismatchTarget::Assignment, lhs_ty, rhs_ty, range);
             return;
         }
-        // A *property* write: `x = v` or `x.y = v` on an enclosing receiver.
-        // Whether the property has a setter is what the member set answers
-        // ([`crate::kotlin::method::MemberKind::Setter`]).
+        // A *property* write: `x = v` on an enclosing receiver, or `x.y = v`
+        // on a written one. A `val` has no setter, so the write is a
+        // reassignment of a read-only property
+        // ([KLS
+        // `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)):
+        // the member the write resolves to answers whether it is mutable — a
+        // Kotlin property by its `var`, a Java field by its `final`
+        // (<https://kotlinlang.org/docs/java-interop.html#fields>).
+        if !self.property_is_mutable(receiver, &name) {
+            self.types
+                .diagnostics
+                .push(KotlinTypeError::ValReassignment {
+                    expr: lhs,
+                    name,
+                    range: self.bodies.expr_range(lhs),
+                });
+            return;
+        }
         self.check_binding(MismatchTarget::Assignment, lhs_ty, rhs_ty, range);
+    }
+
+    /// Whether the property a write names can be written: a `var` for a Kotlin
+    /// declaration, a non-`final` field for a Java one. `true` when the write
+    /// resolves to nothing this model can read, so a name it cannot answer for
+    /// is never *also* reported as a reassignment.
+    fn property_is_mutable(&mut self, receiver: Option<ExprId>, name: &Name) -> bool {
+        let member = match receiver {
+            Some(receiver) => {
+                let receiver = self.types.expr_ty(self.db, receiver);
+                method::member_set(self.db, &self.scope, &receiver, name, self.site())
+                    .into_iter()
+                    .next()
+            }
+            None => self.implicit_member(name),
+        };
+        let Some(member) = member else {
+            return true;
+        };
+        match &member.target {
+            method::MemberTarget::Kotlin { file, item } => {
+                let outer = hir::file_item_tree(self.db, *file);
+                let Some(tree) = hir_def::kotlin::plugin::model(&outer) else {
+                    return true;
+                };
+                match tree.data(*item) {
+                    hir_def::kotlin::item_tree::KotlinItemData::Property(property) => {
+                        property.is_var
+                    }
+                    _ => true,
+                }
+            }
+            method::MemberTarget::JavaField(field) => !field.is_final,
+            _ => true,
+        }
+    }
+
+    /// The member an unqualified write names on an enclosing receiver: the
+    /// innermost receiver's own, the same walk an unqualified *read* takes.
+    fn implicit_member(&self, name: &Name) -> Option<method::Member> {
+        for receiver in self.implicit_receivers() {
+            if let Some(member) =
+                method::member_set(self.db, &self.scope, &receiver, name, self.site())
+                    .into_iter()
+                    .next()
+            {
+                return Some(member);
+            }
+        }
+        None
     }
 }

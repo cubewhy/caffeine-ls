@@ -366,6 +366,140 @@ fun broken() {
     }
 }
 
+/// The two findings a *failed* call reports, each checked with kotlinc 2.4.20
+/// against this exact source first — kotlinc 2.4.20 says
+/// `argument type mismatch: actual type is 'String', but 'Int' was expected.`
+/// twice, `no value passed for parameter 'b'.`, `no value passed for parameter
+/// 'a'.` (and `'b'` again for the same call) and `no value passed for parameter
+/// 'y'.`
+///
+/// A finding is reported only for a call whose candidates this model reads
+/// whole (one judgeable candidate, no lambda and no flexible argument), which is
+/// why the fixture's two-candidate overload set is not what it pins.
+#[test]
+fn failed_calls_match_the_compiler_wordings() {
+    let source = r#"
+fun takesTwo(a: Int, b: String) {}
+
+class Point2(val x: Int, val y: Int)
+
+fun calls() {
+    takesTwo("x", "y")
+    takesTwo(1)
+    takesTwo()
+    Point2(1)
+    Point2("a", 2)
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    let mismatches = rendered
+        .lines()
+        .filter(|line| {
+            line.contains(
+                "argument type mismatch: actual type is 'String', but 'Int' was expected.",
+            )
+        })
+        .count();
+    assert_eq!(mismatches, 2, "`takesTwo` and `Point2`: {rendered}");
+    for expected in [
+        "kotlin.missing-argument: no value passed for parameter 'b'.",
+        "kotlin.missing-argument: no value passed for parameter 'a'.",
+        "kotlin.missing-argument: no value passed for parameter 'y'.",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "expected {expected:?} in:\n{rendered}"
+        );
+    }
+}
+
+/// A write to a read-only property, checked with kotlinc 2.4.20 against this
+/// exact source: `holder.readOnly = 3` is `'val' cannot be reassigned.`, while
+/// the `var` beside it compiles.
+#[test]
+fn a_write_to_a_read_only_property_matches_the_compiler_wording() {
+    let source = r#"
+class Holder {
+    val readOnly: Int = 1
+    var writable: Int = 2
+}
+
+fun writes(holder: Holder) {
+    holder.readOnly = 3
+    holder.writable = 4
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    let reassignments = rendered
+        .lines()
+        .filter(|line| line == &"kotlin.val-reassignment: 'val' cannot be reassigned.")
+        .count();
+    assert_eq!(reassignments, 1, "only the `val` write: {rendered}");
+}
+
+/// The `when` findings, checked with kotlinc 2.4.20 against this exact source:
+/// a `when` used as a value over an `Int` is `'when' expression must be
+/// exhaustive. Add an 'else' branch.`, a subject-less arm condition of type
+/// `Int` is `condition type mismatch: inferred type is 'Int' but 'Boolean' was
+/// expected.`, and a subject-less *type test* — which has no type to name — is
+/// `condition of type 'Boolean' expected.`
+///
+/// The last two functions are what the compiler *accepts*, and are why neither
+/// the containment condition nor a `when` standing as a statement is a finding
+/// here: `when { "a" in "abc" -> 1; else -> 2 }` is a `Boolean` operator
+/// expression, and a `when` whose value is not used needs no `else`, however
+/// few of its subjects its arms cover.
+#[test]
+fn when_findings_match_the_compiler_wordings() {
+    let source = r#"
+fun choose(x: Int): String = when (x) {
+    1 -> "one"
+    2 -> "two"
+}
+
+fun odd(x: Int) = when {
+    x -> 1
+    else -> 2
+}
+
+fun isString() = when {
+    is String -> 1
+    else -> 2
+}
+
+fun contains() = when {
+    "a" in "abc" -> 1
+    else -> 2
+}
+
+fun statement(x: Int) {
+    when (x) {
+        1 -> println("one")
+        2 -> println("two")
+    }
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    for expected in [
+        "kotlin.non-exhaustive-when: 'when' expression must be exhaustive. Add an 'else' branch.",
+        "kotlin.non-boolean-when-condition: condition type mismatch: inferred type is 'Int' but 'Boolean' was expected.",
+        "kotlin.non-boolean-when-condition: condition of type 'Boolean' expected.",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "expected {expected:?} in:\n{rendered}"
+        );
+    }
+    assert_eq!(
+        rendered.matches("kotlin.").count(),
+        3,
+        "`contains` and `statement` report nothing: {rendered}"
+    );
+}
+
 // -- Java and classfile members on a Kotlin receiver --------------------------
 
 /// The member bridge: what a call, a read or a write on a Java or classfile

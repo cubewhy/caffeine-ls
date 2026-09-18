@@ -64,6 +64,43 @@ pub enum KotlinTypeError {
         name: Name,
         range: Option<TextRange>,
     },
+    /// A written argument that is not assignable to the parameter it lands on
+    /// ([KLS
+    /// `overload-resolution.html#determining-function-applicability-for-a-specific-call`](https://kotlinlang.org/spec/overload-resolution.html#determining-function-applicability-for-a-specific-call)).
+    /// kotlinc: `argument type mismatch: actual type is '<S>', but '<T>' was
+    /// expected.`
+    ArgumentMismatch {
+        parameter: Ty,
+        actual: Ty,
+        range: Option<TextRange>,
+    },
+    /// A call that passes no value for a parameter without a default ([KLS
+    /// `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+    /// kotlinc: `no value passed for parameter '<name>'.` — the parameter's own
+    /// name where the declaration carries one, and `p0`, `p1`, … otherwise
+    /// (which is what a classfile without a `MethodParameters` attribute gives).
+    MissingArgument {
+        parameter: Name,
+        range: Option<TextRange>,
+    },
+    /// A `when` whose value is used and whose subject needs an `else` ([KLS
+    /// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)).
+    /// kotlinc: `'when' expression must be exhaustive. Add an 'else' branch.`
+    NonExhaustiveWhen { range: Option<TextRange> },
+    /// A `when` arm's condition that is not a `Boolean` — the subject-less form
+    /// tests each condition itself ([KLS
+    /// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)).
+    /// kotlinc 2.4.20 words the two shapes differently: a condition that *has* a
+    /// type is `condition type mismatch: inferred type is 'Int' but 'Boolean'
+    /// was expected.`, while a *type test* with no subject — which tests
+    /// nothing, and so has no type — is `condition of type 'Boolean'
+    /// expected.`
+    NonBooleanWhenCondition {
+        range: Option<TextRange>,
+        /// The condition's own type, for the first wording; `None` for a type
+        /// test with no subject.
+        actual: Option<Ty>,
+    },
 }
 
 /// What a mismatched value is bound to, for the diagnostic's range and text.
@@ -117,6 +154,26 @@ impl KotlinTypeError {
                 }
             }
             KotlinTypeError::ValReassignment { .. } => "'val' cannot be reassigned.".to_owned(),
+            KotlinTypeError::ArgumentMismatch {
+                parameter, actual, ..
+            } => format!(
+                "argument type mismatch: actual type is '{}', but '{}' was expected.",
+                display(actual),
+                display(parameter)
+            ),
+            KotlinTypeError::MissingArgument { parameter, .. } => {
+                format!("no value passed for parameter '{}'.", parameter.as_str())
+            }
+            KotlinTypeError::NonExhaustiveWhen { .. } => {
+                "'when' expression must be exhaustive. Add an 'else' branch.".to_owned()
+            }
+            KotlinTypeError::NonBooleanWhenCondition { actual, .. } => match actual {
+                Some(actual) => format!(
+                    "condition type mismatch: inferred type is '{}' but 'Boolean' was expected.",
+                    display(actual)
+                ),
+                None => "condition of type 'Boolean' expected.".to_owned(),
+            },
         }
     }
 }
@@ -138,6 +195,18 @@ impl KotlinTypeError {
             KotlinTypeError::ValReassignment { .. } => {
                 syntax::KotlinDiagnosticCode::ValReassignment
             }
+            KotlinTypeError::ArgumentMismatch { .. } => {
+                syntax::KotlinDiagnosticCode::ArgumentMismatch
+            }
+            KotlinTypeError::MissingArgument { .. } => {
+                syntax::KotlinDiagnosticCode::MissingArgument
+            }
+            KotlinTypeError::NonExhaustiveWhen { .. } => {
+                syntax::KotlinDiagnosticCode::NonExhaustiveWhen
+            }
+            KotlinTypeError::NonBooleanWhenCondition { .. } => {
+                syntax::KotlinDiagnosticCode::NonBooleanWhenCondition
+            }
         }
     }
 
@@ -146,6 +215,10 @@ impl KotlinTypeError {
     pub fn range(&self) -> Option<TextRange> {
         match self {
             KotlinTypeError::UnresolvedReference { range, .. }
+            | KotlinTypeError::ArgumentMismatch { range, .. }
+            | KotlinTypeError::MissingArgument { range, .. }
+            | KotlinTypeError::NonExhaustiveWhen { range }
+            | KotlinTypeError::NonBooleanWhenCondition { range, .. }
             | KotlinTypeError::TypeMismatch { range, .. }
             | KotlinTypeError::NullabilityMismatch { range, .. }
             | KotlinTypeError::ValReassignment { range, .. } => *range,
