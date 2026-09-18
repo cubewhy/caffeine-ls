@@ -1030,8 +1030,13 @@ fn label_suffix(p: &mut Parser) {
     m.complete(p, LABEL);
 }
 
-/// `objectLiteral`: ['data'] {NL} 'object' [: delegationSpecifiers] classBody
+/// `objectLiteral`: ['data'] {NL} 'object' [{NL} ':' {NL} delegationSpecifiers {NL}]
+///                  [{NL} classBody]
 /// [spec: grammar-rule-objectLiteral] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-objectLiteral
+///
+/// Both the delegation-specifier list and the class body are optional, so
+/// `object : Runnable` and a bare `object` are objects with no members
+/// ([spec: grammar-rule-objectLiteral]); only an `L_BRACE` opens the body.
 fn object_literal(p: &mut Parser) {
     let m = p.start();
     if p.at_contextual_kw(ContextualKeyword::Data) {
@@ -1048,7 +1053,9 @@ fn object_literal(p: &mut Parser) {
         eat_nl(p);
     }
 
-    crate::parser::grammar::decl::class_body(p);
+    if p.at(L_BRACE) {
+        crate::parser::grammar::decl::class_body(p);
+    }
     m.complete(p, OBJECT_LITERAL);
 }
 

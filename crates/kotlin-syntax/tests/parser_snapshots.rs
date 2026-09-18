@@ -232,6 +232,20 @@ parser_snapshot!(
     "#}
 );
 
+/// An `objectLiteral` needs neither a delegation-specifier list nor a class
+/// body ([spec: grammar-rule-objectLiteral]): `object : Runnable` is a complete
+/// object, and its members are whatever an `L_BRACE` opens. `kotlinc` 2.4.20
+/// compiles both this and the bodied form.
+parser_snapshot!(
+    parse_object_literal_without_body,
+    indoc! {r#"
+        fun f(): Runnable {
+            val x = object : Runnable
+            return x
+        }
+    "#}
+);
+
 /// A `when` body token no `whenEntry` production can consume — here a stray
 /// `]` — must not stall the entry loop: `whenEntry` cannot reach the token
 /// (its body's `primaryExpression` reports an error without bumping), so the

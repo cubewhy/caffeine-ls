@@ -1,0 +1,96 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun f(): Runnable {
+    val x = object : Runnable
+    return x
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "f"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Runnable"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OBJECT_KW "object"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Runnable"
+NEWLINE "\n"
+WHITESPACE "    "
+RETURN_KW "return"
+WHITESPACE " "
+IDENTIFIER "x"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..65
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..64
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..5 "f"
+    VALUE_PARAMETERS@5..7
+      L_PAREN@5..6 "("
+      R_PAREN@6..7 ")"
+    COLON@7..8 ":"
+    WHITESPACE@8..9 " "
+    TYPE@9..17
+      USER_TYPE@9..17
+        IDENTIFIER@9..17 "Runnable"
+    WHITESPACE@17..18 " "
+    BLOCK@18..64
+      L_BRACE@18..19 "{"
+      NEWLINE@19..20 "\n"
+      WHITESPACE@20..24 "    "
+      PROPERTY_DECL@24..50
+        VAL_KW@24..27 "val"
+        WHITESPACE@27..28 " "
+        VARIABLE_DECLARATION@28..29
+          IDENTIFIER@28..29 "x"
+        WHITESPACE@29..30 " "
+        EQUAL@30..31 "="
+        WHITESPACE@31..32 " "
+        OBJECT_LITERAL@32..50
+          OBJECT_KW@32..38 "object"
+          WHITESPACE@38..39 " "
+          COLON@39..40 ":"
+          WHITESPACE@40..41 " "
+          DELEGATION_SPECIFIERS@41..50
+            DELEGATION_SPECIFIER@41..50
+              TYPE@41..50
+                USER_TYPE@41..50
+                  IDENTIFIER@41..49 "Runnable"
+                  NEWLINE@49..50 "\n"
+      WHITESPACE@50..54 "    "
+      EXPRESSION_STATEMENT@54..62
+        JUMP_EXPRESSION@54..62
+          RETURN_KW@54..60 "return"
+          WHITESPACE@60..61 " "
+          PRIMARY_EXPRESSION@61..62
+            IDENTIFIER@61..62 "x"
+      NEWLINE@62..63 "\n"
+      R_BRACE@63..64 "}"
+  NEWLINE@64..65 "\n"
