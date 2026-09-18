@@ -24,6 +24,8 @@
 //! * [`db`] — the memoized per-item queries;
 //! * [`subtyping`] — Kotlin's subtype and assignability rules;
 //! * [`method`] — a receiver's member set and overload selection;
+//! * [`jvm_view`] — the classfile shape a Java caller reads a Kotlin
+//!   declaration through;
 //! * [`diagnostics`] — the Kotlin type errors, with the compiler's wordings;
 //! * [`infer`] — body inference over the lowered body IR.
 

@@ -23,7 +23,7 @@
 //! | `@JvmStatic` on a companion member | *also* a static of the enclosing class |
 //! | a top-level `fun f()` / `val x` | a static member of the file's facade `FooKt` |
 //! | `fun T.f()` (an extension) | a member whose **first** parameter is the receiver — a static of the facade when it is top-level |
-//! | `@JvmName("y")` on a function / `@get:JvmName("y")` on an accessor | the member is named `y` |
+//! | `@JvmName("y")` on a function / `@get:JvmName("y")` on an accessor | the member is named `y`, whether the name is written `"y"` or a `const val` that holds it |
 //! | `@file:JvmName("Y")` | the facade is named `Y` |
 //! | `@JvmOverloads fun f(a: Int, b: Int = 0)` | one further method per parameter that declares a default |
 //! | `@Throws(IOException::class) fun f()` | the method declares `throws IOException` |
@@ -34,7 +34,9 @@
 //! Every type is *erased*: the classfile carries the erasure of a Kotlin type
 //! (`T` is its bound, `List<Int>` is `java.util.List`), so the type arguments a
 //! Kotlin receiver wrote never reach a Java caller — which is why nothing here
-//! takes the receiver's arguments.
+//! takes the receiver's arguments. A property that writes no type carries the
+//! one its initializer gives it ([`Shapes::property_ty`]), since a classfile
+//! records no inferred types.
 //!
 //! The annotations of the table are recognized by the canonical name their
 //! application *resolves* to in the declaration's scope ([`JvmAnnotation`]),
@@ -287,10 +289,10 @@ fn is_jvm_annotation(
 }
 
 /// The `@JvmName("x")` of an annotation list: the JVM name the compiler gives
-/// the member instead of the Kotlin one. The element values are the ones M2
-/// lowered, so a name written as a *constant* (`@JvmName(SOME_NAME)`) is not
-/// read yet — a recorded gap, not a different rule.
+/// the member instead of the Kotlin one ([`annotation_string`] reads the
+/// value).
 fn annotation_name(
+    db: &dyn TyDatabase,
     resolver: &KotlinResolver<'_>,
     annotations: &[KotlinAnnotationRef],
 ) -> Option<Name> {
@@ -299,8 +301,8 @@ fn annotation_name(
             continue;
         }
         for arg in &application.annotation.args {
-            if let ItemAnnotationValue::Literal(Literal::Str(value)) = &arg.value {
-                return Some(Name::new(value));
+            if let Some(value) = annotation_string(db, resolver, &arg.value) {
+                return Some(Name::new(&value));
             }
         }
     }
@@ -311,6 +313,7 @@ fn annotation_name(
 /// `get` of `@get:JvmName("x")`, the `set` of `@set:JvmName("x")`
 /// (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>).
 fn targeted_name(
+    db: &dyn TyDatabase,
     resolver: &KotlinResolver<'_>,
     annotations: &[KotlinAnnotationRef],
     target: &str,
@@ -322,13 +325,70 @@ fn targeted_name(
             .is_some_and(|written| written.as_str() == target);
         if applies && is_jvm_annotation(resolver, application, JvmAnnotation::Name) {
             for arg in &application.annotation.args {
-                if let ItemAnnotationValue::Literal(Literal::Str(value)) = &arg.value {
-                    return Some(value.clone());
+                if let Some(value) = annotation_string(db, resolver, &arg.value) {
+                    return Some(value);
                 }
             }
         }
     }
     None
+}
+
+/// The string an annotation argument holds: a string literal, or the `const
+/// val` a bare name stands for.
+///
+/// The compiler *folds* a constant before it names the member, so a name has to
+/// be resolved in the declaration's scope and read off the constant's
+/// initializer: `const val RENAMED = "renamed"` with
+/// `@JvmName(RENAMED) fun f()` compiles to `public static final int renamed();`
+/// (kotlinc 2.4.20), exactly as the literal `@JvmName("renamed")` does.
+///
+/// The lowering keeps a bare name as [`ItemAnnotationValue::EnumConstant`] —
+/// the one shape it has for an identifier, since the JVM cannot carry an
+/// arbitrary expression — and a name that does not resolve to a string `const
+/// val` is not a value the annotation could hold, so it answers `None`.
+fn annotation_string(
+    db: &dyn TyDatabase,
+    resolver: &KotlinResolver<'_>,
+    value: &ItemAnnotationValue,
+) -> Option<String> {
+    match value {
+        ItemAnnotationValue::Literal(Literal::Str(value)) => Some(value.clone()),
+        ItemAnnotationValue::EnumConstant {
+            qualifier: None,
+            member,
+        } => {
+            // The constant is resolved in the scope the annotation is written
+            // in, exactly as the compiler resolves it
+            // ([KLS `packages-and-imports.html#importing`]).
+            let (file, item) = resolver.source_declaration(member)?;
+            const_string_value(db, file, item)
+        }
+        _ => None,
+    }
+}
+
+/// The value of the string `const val` `item` declares, read off its
+/// initializer; `None` for any other declaration, or for a constant whose
+/// initializer is not a string literal.
+fn const_string_value(db: &dyn TyDatabase, file: FileId, item: ItemId) -> Option<String> {
+    let tree = hir::file_item_tree(db, file);
+    let tree = hir_def::kotlin::plugin::model(&tree)?;
+    let KotlinItemData::Property(property) = tree.data(item) else {
+        return None;
+    };
+    if !property
+        .modifiers
+        .flags
+        .contains(KotlinModifierFlags::CONST)
+    {
+        return None;
+    }
+    let expr = property.initializer_expr?;
+    match hir::file_body_tree(db, file).expr(expr) {
+        hir_expand::body::ExprData::Literal(Literal::Str(value)) => Some(value.clone()),
+        _ => None,
+    }
 }
 
 /// Whether the annotation list applies the `kotlin.jvm` annotation `wanted`.
@@ -487,7 +547,7 @@ impl<'a> Shapes<'a> {
         if self.kind() == Some(KotlinClassKind::Annotation) {
             return Some(property.name.to_string());
         }
-        property_getter_name(resolver, property)
+        property_getter_name(self.db, resolver, property)
     }
 
     /// Whether the property declares an accessor of `is_setter`'s direction
@@ -502,6 +562,24 @@ impl<'a> Shapes<'a> {
                     if data.is_setter == is_setter && data.body.is_some()
             )
         })
+    }
+
+    /// The type the classfile carries for a property or one of its accessors:
+    /// the written one, or the *inferred* one — `const val NAME = "renamed"`
+    /// compiles to `public static final java.lang.String NAME;` and
+    /// `var v = 0` to a `public final int getV();`, so a property that writes
+    /// no type is typed by its initializer exactly as any other expression is
+    /// ([`super::db::item_ty`]).
+    fn property_ty(
+        &self,
+        resolver: &KotlinResolver<'_>,
+        property: &PropertyData,
+        item: ItemId,
+    ) -> Ty {
+        match &property.ty {
+            Some(ty) => ty_from_kotlin(self.db, ty_from_type_ref(self.db, resolver, &ty.ty)),
+            None => ty_from_kotlin(self.db, super::db::item_ty(self.db, self.file, item)),
+        }
     }
 
     /// The JVM access of the constructors the compiler emits for this
@@ -567,7 +645,7 @@ impl<'a> Shapes<'a> {
             force_static || (jvm_static && self.kind() != Some(KotlinClassKind::CompanionObject));
         match data {
             KotlinItemData::Function(function) => {
-                let jvm = annotation_name(resolver, &function.annotations)
+                let jvm = annotation_name(self.db, resolver, &function.annotations)
                     .map(|name| name.to_string())
                     .unwrap_or_else(|| function.name.to_string());
                 if name.is_empty() || jvm == name {
@@ -591,7 +669,7 @@ impl<'a> Shapes<'a> {
                     self.push_accessor(resolver, item, property, &getter, false, is_static, out);
                 }
                 if property.is_var
-                    && let Some(setter) = property_setter_name(resolver, property)
+                    && let Some(setter) = property_setter_name(self.db, resolver, property)
                     && (name.is_empty() || setter == name)
                 {
                     self.push_accessor(resolver, item, property, &setter, true, is_static, out);
@@ -677,7 +755,7 @@ impl<'a> Shapes<'a> {
         is_static: bool,
         out: &mut Vec<MethodData>,
     ) {
-        let jvm_name = annotation_name(resolver, &function.annotations)
+        let jvm_name = annotation_name(self.db, resolver, &function.annotations)
             .map(|name| name.to_string())
             .unwrap_or_else(|| function.name.to_string());
         // A Kotlin *extension* compiles to a member whose **first** parameter
@@ -845,10 +923,7 @@ impl<'a> Shapes<'a> {
         is_static: bool,
         out: &mut Vec<MethodData>,
     ) {
-        let ty = match &property.ty {
-            Some(ty) => ty_from_kotlin(self.db, ty_from_type_ref(self.db, resolver, &ty.ty)),
-            None => Ty::reference(self.db, "java.lang.Object", Vec::new()),
-        };
+        let ty = self.property_ty(resolver, property, item);
         // The accessor's body decides its abstractness where the property's
         // modality does not: a `val`/`var` member of an `interface` is
         // `abstract` unless an accessor declares a body, while a `class`'s
@@ -943,12 +1018,7 @@ impl<'a> Shapes<'a> {
                 if jvm_name != name {
                     return;
                 }
-                let ty = match &property.ty {
-                    Some(ty) => {
-                        ty_from_kotlin(self.db, ty_from_type_ref(self.db, resolver, &ty.ty))
-                    }
-                    None => Ty::reference(self.db, "java.lang.Object", Vec::new()),
-                };
+                let ty = self.property_ty(resolver, property, item);
                 out.push(FieldData {
                     name: jvm_name,
                     owner: self.owner.clone(),
@@ -1142,8 +1212,12 @@ fn access(visibility: KotlinVisibility) -> Access {
 /// for an `is`-prefixed property, whose getter keeps the name — unless
 /// `@get:JvmName` renames it
 /// (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>).
-fn property_getter_name(resolver: &KotlinResolver<'_>, property: &PropertyData) -> Option<String> {
-    if let Some(name) = targeted_name(resolver, &property.annotations, "get") {
+fn property_getter_name(
+    db: &dyn TyDatabase,
+    resolver: &KotlinResolver<'_>,
+    property: &PropertyData,
+) -> Option<String> {
+    if let Some(name) = targeted_name(db, resolver, &property.annotations, "get") {
         return Some(name);
     }
     let name = property.name.as_str();
@@ -1155,8 +1229,12 @@ fn property_getter_name(resolver: &KotlinResolver<'_>, property: &PropertyData) 
 
 /// The JVM name of a property's setter: `set` + the capitalized name without a
 /// leading `is`, unless `@set:JvmName` renames it.
-fn property_setter_name(resolver: &KotlinResolver<'_>, property: &PropertyData) -> Option<String> {
-    if let Some(name) = targeted_name(resolver, &property.annotations, "set") {
+fn property_setter_name(
+    db: &dyn TyDatabase,
+    resolver: &KotlinResolver<'_>,
+    property: &PropertyData,
+) -> Option<String> {
+    if let Some(name) = targeted_name(db, resolver, &property.annotations, "set") {
         return Some(name);
     }
     let name = property.name.as_str();

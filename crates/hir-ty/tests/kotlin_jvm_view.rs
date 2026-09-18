@@ -225,6 +225,17 @@ fn fields(db: &TestDatabase, file: FileId, class: &str, names: &[&str]) -> Vec<S
     out
 }
 
+fn facade_fields(db: &TestDatabase, file: FileId, names: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in names {
+        out.extend(
+            file_facade_fields(db, file, name)
+                .iter()
+                .map(|f| field_line(db, f)),
+        );
+    }
+    out
+}
 /// The fixture every test below asserts against — one declaration per
 /// behaviour. It is compiled by the test's own oracle, kotlinc 2.4.20 (JRE
 /// 25.0.4.1), and the `javap -p` output quoted in each test's doc comment is
@@ -608,5 +619,167 @@ fn an_object_interface_and_enum_have_no_public_constructor() {
     assert_eq!(
         methods(&db, file, "AllDefaults", &["AllDefaults"]),
         vec!["public void <init>(int)", "public void <init>()"]
+    );
+}
+
+/// A Kotlin property's accessors, and a Java member seen as a Kotlin property.
+/// kotlinc 2.4.20, `javap -p m6.Props`:
+///
+/// ```text
+/// private int v;
+/// private final int r;
+/// private boolean isOn;
+/// public final int getV();
+/// public final void setV(int);
+/// public final int getR();
+/// public final boolean isOn();
+/// public final void setOn(boolean);
+/// ```
+///
+/// A `var v` is the `getV()`/`setV(int)` pair; a `val r` only `getR()`; and the
+/// `is`-prefixed `var isOn` keeps the name in the *reader* and drops it in the
+/// *writer* (`isOn()`/`setOn(boolean)`) — there is no `getIsOn` and no
+/// `setIsOn`
+/// (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>).
+///
+/// The other direction is the JavaBeans *synthetic property*: a Java
+/// `getDragEnabled()`/`setDragEnabled(boolean)` pair is the Kotlin property
+/// `dragEnabled`, whose read resolves to a getter member and whose write to a
+/// setter member (`java.awt.Container.getLayout`'s precedent;
+/// `javax.swing.JList` is the fixture's classfile).
+#[test]
+fn a_propertys_accessor_is_the_member_each_direction_names() {
+    let (db, file) = shapes();
+    // A read is the getter — no parameters, the property's type — and a write
+    // the setter — one parameter, `void`.
+    assert_eq!(
+        methods(&db, file, "Props", &["getV", "setV"]),
+        vec!["public final int getV()", "public final void setV(int)",]
+    );
+    // A `val` has no writer.
+    assert_eq!(
+        methods(&db, file, "Props", &["getR"]),
+        vec!["public final int getR()"]
+    );
+    assert!(methods(&db, file, "Props", &["setR"]).is_empty());
+    // The `is`-prefixed reader keeps the name the property wrote; the writer
+    // drops the `is`.
+    assert_eq!(
+        methods(&db, file, "Props", &["isOn", "setOn"]),
+        vec![
+            "public final boolean isOn()",
+            "public final void setOn(boolean)"
+        ]
+    );
+    assert!(methods(&db, file, "Props", &["getIsOn", "setIsOn"]).is_empty());
+    // The Kotlin side of the same inversion: a `val`'s candidate member is its
+    // getter, a `var`'s the setter a write names.
+    let scope = java_scope(&db, file);
+    let props = Ty::reference(&db, "m6.Props", Vec::new());
+    let site = CallSite {
+        file,
+        item: Some(class_item(&db, file, "Props")),
+    };
+    let kinds = |name: &str| {
+        kotlin_declared_members(
+            &db,
+            &scope,
+            &props,
+            &hir_expand::name::Name::new(name),
+            site,
+        )
+        .into_iter()
+        .map(|member| (member.kind, member.params.len()))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds("r"), vec![(MemberKind::Getter, 0)]);
+    assert_eq!(kinds("v"), vec![(MemberKind::Setter, 1)]);
+    // A Java getter/setter pair is the property `dragEnabled`, in both
+    // directions.
+    let jlist = Ty::reference(&db, "javax.swing.JList", Vec::new());
+    let java_kinds = kotlin_declared_members(
+        &db,
+        &scope,
+        &jlist,
+        &hir_expand::name::Name::new("dragEnabled"),
+        site,
+    )
+    .into_iter()
+    .map(|member| (member.kind, member.params.len()))
+    .collect::<Vec<_>>();
+    assert!(
+        java_kinds.contains(&(MemberKind::Getter, 0)),
+        "the Java getter is the property's read: {java_kinds:?}"
+    );
+    assert!(
+        java_kinds.contains(&(MemberKind::Setter, 1)),
+        "the Java setter is the property's write: {java_kinds:?}"
+    );
+}
+
+/// What `@JvmName` renames, and what it does not. kotlinc 2.4.20, `javap -p
+/// m6.ShapesKt`:
+///
+/// ```text
+/// public static final java.lang.String NAME;
+/// private static final int topVal;
+/// private static int topVar;
+/// public static final int CONST;
+/// public static final java.lang.String twice(java.lang.String);
+/// public static final int renamed();
+/// public static final int getRenamed();
+/// public static final int getTopVar();
+/// public static final void writeTopVar(int);
+/// ```
+///
+/// `const val NAME = "renamed"` with `@JvmName(NAME)` names the *member*
+/// `renamed()` — the constant's value is what the compiler folds — while the
+/// `const val`'s own field keeps the property's name (`NAME`). A `const val` is
+/// a property with a backing field, so `@JvmName` on one is a compiler error
+/// ("this annotation is not applicable to target 'top level property with
+/// backing field'. Applicable targets: function, getter, setter, file") and
+/// renames nothing; the accessor targets do the renaming — `@get:JvmName`
+/// names the reader, `@set:JvmName` the writer — and the *backing field* keeps
+/// the property's name whatever they say (`topVal`, `topVar`).
+/// (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>.)
+#[test]
+fn a_jvm_name_written_as_a_constant_renames_the_member() {
+    let (db, file) = shapes();
+    assert_eq!(
+        facade_methods(
+            &db,
+            file,
+            &[
+                "renamed",
+                "topFn",
+                "getRenamed",
+                "getTopVal",
+                "getTopVar",
+                "writeTopVar"
+            ]
+        ),
+        vec![
+            // `public static final int renamed();` — `@JvmName(NAME)` with
+            // `const val NAME = "renamed"`.
+            "public static final int renamed()",
+            // `public static final int getRenamed();`
+            "public static final int getRenamed()",
+            // `public static final int getTopVar();`
+            "public static final int getTopVar()",
+            // `public static final void writeTopVar(int);` — the *setter* the
+            // `@set:JvmName` names; the reader keeps the property's name.
+            "public static final void writeTopVar(int)",
+        ]
+    );
+    // A `const val`'s field is named by the property, never by `@JvmName`, and
+    // its type is the one its initializer gives it.
+    assert_eq!(
+        facade_fields(&db, file, &["NAME", "CONST", "renamed"]),
+        vec![
+            // `public static final java.lang.String NAME;`
+            "public static final java.lang.String NAME",
+            // `public static final int CONST;`
+            "public static final int CONST",
+        ]
     );
 }
