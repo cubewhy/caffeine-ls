@@ -824,6 +824,40 @@ impl<'a> InferCtx<'a> {
 
     /// Checks a value bound to a declaration, reporting the mismatch with
     /// kotlinc's wording.
+    /// Whether a type is a *type parameter this model failed to substitute* —
+    /// a variable declared by some *other* declaration, which a call whose type
+    /// arguments the model did not propagate left behind: `updateConfig(v) { … }`
+    /// for `fun <T> updateConfig(newValue: T, setter: (T) -> Unit)` gives
+    /// `setter`'s parameter the callee's `T`, and the enclosing body's write then
+    /// reads as a `T`-against-`String` mismatch. No binding is checked against an
+    /// inference this model does not perform, exactly as no call finding is
+    /// ([`Self::report_call_failure`]).
+    ///
+    /// Both spellings are read: the Kotlin layer's own variables are
+    /// [`TyKind::TypeVar`], and a name the model only *resolved* as a bare
+    /// reference is the other.
+    fn is_foreign_type_parameter(&self, ty: Ty) -> bool {
+        let ty = self.unwrap_flexible(&ty);
+        if let TyKind::TypeVar { scope, .. } = ty.kind(self.db) {
+            let declared = self.resolver.declared_type_params();
+            return !declared.iter().any(|param| param.name == *scope.name());
+        }
+        let TyKind::Reference { name, args, .. } = ty.kind(self.db) else {
+            return false;
+        };
+        if !args.is_empty() {
+            return false;
+        }
+        let name = name.as_str();
+        if self.resolver.type_param(name).is_some() {
+            return false;
+        }
+        // A one-letter name that resolves to nothing is a type parameter the
+        // model did not substitute; anything else is a name its own rule
+        // reports.
+        name.len() == 1 && name.chars().all(|c| c.is_ascii_uppercase())
+    }
+
     fn check_binding(
         &mut self,
         target: MismatchTarget,
@@ -836,6 +870,11 @@ impl<'a> InferCtx<'a> {
         }
         let assignable = super::subtyping::is_assignable(self.db, &self.scope, &actual, &expected);
         if assignable {
+            return;
+        }
+        // A type the model failed to substitute is not a type to report against
+        // ([`Self::is_foreign_type_parameter`]).
+        if self.is_foreign_type_parameter(actual) {
             return;
         }
         // A nullable (or `null`) value where a non-null type is expected is its
@@ -1802,9 +1841,21 @@ impl<'a> InferCtx<'a> {
             }
         };
         let mut last = None;
-        for stmt in &stmts {
+        for (index, stmt) in stmts.iter().enumerate() {
+            // Only the block's *last* statement is its value, so every earlier
+            // one stands as a statement — which is what a `when` there needs no
+            // `else` for ([`Self::in_statement`]).
+            let is_last = index + 1 == stmts.len();
             let ty = match self.bodies.stmt(*stmt).clone() {
-                StmtData::Expr(expr) => Some(self.infer_expr(expr)),
+                StmtData::Expr(expr) => {
+                    let enclosing = std::mem::replace(
+                        &mut self.in_statement,
+                        !is_last || !self.expression_body,
+                    );
+                    let ty = self.infer_expr(expr);
+                    self.in_statement = enclosing;
+                    Some(ty)
+                }
                 _ => {
                     self.infer_stmt(*stmt);
                     None
@@ -2186,7 +2237,27 @@ impl<'a> InferCtx<'a> {
             && let Some(member) =
                 method::declaration_candidate(self.db, &self.scope, file, item, name)
         {
-            candidates.push(member);
+            // A name *another* file declares resolves to one declaration, and a
+            // file may declare several of that name: `sha1(data: String)` and
+            // `sha1(dataFile: File)` are two callables the resolution reports as
+            // one, so judging a call against the one it names would report a
+            // signature the compiler never considered. A name the declaring file
+            // declares once is judged; the enclosing file's own names are
+            // enumerated whole above.
+            let declared = hir::file_symbols(self.db, file)
+                .iter()
+                .filter(|symbol| {
+                    symbol
+                        .name
+                        .as_str()
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|simple| simple == name.as_str())
+                })
+                .count();
+            if declared <= 1 {
+                candidates.push(member);
+            }
         }
         candidates
     }
@@ -2958,7 +3029,16 @@ impl<'a> InferCtx<'a> {
                 };
                 match tree.data(*item) {
                     hir_def::kotlin::item_tree::KotlinItemData::Property(property) => {
-                        property.is_var
+                        // A `val` *without* an initializer is initialized by a
+                        // constructor — `val file: File` assigned in each
+                        // secondary constructor is how a class gives it its
+                        // value on every path, and kotlinc accepts it
+                        // ([KLS
+                        // `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)
+                        // leaves a read-only property one assignment; only a
+                        // property that already *has* its value refuses another
+                        // one).
+                        property.is_var || property.initializer_expr.is_none()
                     }
                     _ => true,
                 }
