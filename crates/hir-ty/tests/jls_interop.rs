@@ -451,7 +451,7 @@ fn jvm_field_shape(
 ///
 /// kotlinc 2.4.20 compiles the fixture clean; `javap -p` reports
 /// `INSTANCE`, the instance `getX`/`getY`/`n`, the statics `getSx`/`sn` and the
-/// static fields `fx`/`fy`/`CX` on `Obj`, with `cx`'s (`const val`) field
+/// static fields `fx`/`fy`/`CX` on `Obj`, `CX`'s (`const val`) field being
 /// `public static final`.
 #[test]
 fn an_objects_members_are_instance_members() {
