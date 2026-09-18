@@ -3,7 +3,9 @@
 //! Every type of a Kotlin declaration is computed by a salsa query keyed on the
 //! interned `(file, item)` pair ([`KotlinItemKey`]), so it is memoized per
 //! declaration and invalidated exactly when the file changes — the same shape
-//! the Java layer uses ([`crate::jvm::db::ItemKey`]).
+//! the Java layer uses ([`crate::jvm::db::ItemKey`]). A `.kts` script's body is
+//! the one exception: no declaration owns it, so its query is keyed on the
+//! *file* ([`script_body_types`]).
 //!
 //! Type *parameters* are not a query: they are derived by walking the item
 //! tree's `parent` chain ([`KotlinResolver::for_item`]), which is a bounded
@@ -40,6 +42,9 @@ enum InFlight {
     ItemType,
     Body,
     Initializer,
+    /// The body of a `.kts` script, which no item owns: guarded per *file*
+    /// (`item` is `None`).
+    ScriptBody,
 }
 
 // The `(file, item)` types currently being computed on this thread, innermost
@@ -55,13 +60,20 @@ enum InFlight {
 // the error type, the re-entrant fetch has already panicked. A re-entrant
 // accessor answers the error type (or an empty result) instead.
 thread_local! {
-    static IN_FLIGHT: std::cell::RefCell<Vec<(FileId, ItemId, InFlight)>> =
+    static IN_FLIGHT: std::cell::RefCell<Vec<(FileId, Option<ItemId>, InFlight)>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Runs `f` for `(file, item)` under the in-flight guard of `query`, or `None`
 /// when that query is already computing the same declaration on this thread.
-fn guarded<R>(file: FileId, item: ItemId, query: InFlight, f: impl FnOnce() -> R) -> Option<R> {
+/// `item` is `None` for a body no declaration owns — a `.kts` script's implicit
+/// `main` — which is guarded by the file alone.
+fn guarded<R>(
+    file: FileId,
+    item: Option<ItemId>,
+    query: InFlight,
+    f: impl FnOnce() -> R,
+) -> Option<R> {
     let in_flight = IN_FLIGHT.with(|stack| {
         stack
             .borrow()
@@ -248,7 +260,7 @@ fn inferred_property_ty(
             Some(class) => item_ty(db, file_id, class),
             None => Ty::null(db),
         };
-        return delegated_value_ty(db, file_id, item_id, resolver, owner, delegate);
+        return delegated_value_ty(db, file_id, Some(item_id), resolver, owner, delegate);
     }
     // `val p get() = expr`: the getter's expression body is the property's type.
     for &accessor in &data.accessors {
@@ -277,7 +289,7 @@ fn inferred_property_ty(
 pub(crate) fn delegated_value_ty(
     db: &dyn TyDatabase,
     file_id: FileId,
-    item_id: ItemId,
+    item_id: Option<ItemId>,
     resolver: &KotlinResolver<'_>,
     owner: Ty,
     delegate: Ty,
@@ -343,7 +355,7 @@ fn body_value_ty(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Ty {
 /// The declared type of a Kotlin item, memoized per `(file, item)`. See
 /// [`kotlin_item_ty_query`].
 pub fn item_ty(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Ty {
-    guarded(file_id, item_id, InFlight::ItemType, || {
+    guarded(file_id, Some(item_id), InFlight::ItemType, || {
         *kotlin_item_ty_query(db, KotlinItemKey::new(db, file_id, item_id))
     })
     .unwrap_or_else(|| Ty::error(db))
@@ -598,8 +610,36 @@ pub fn body_types(
     file_id: FileId,
     item_id: ItemId,
 ) -> Arc<super::infer::KotlinBodyTypes> {
-    guarded(file_id, item_id, InFlight::Body, || {
+    guarded(file_id, Some(item_id), InFlight::Body, || {
         kotlin_body_types_query(db, KotlinItemKey::new(db, file_id, item_id))
+    })
+    .unwrap_or_else(|| Arc::new(super::infer::KotlinBodyTypes::default()))
+}
+
+/// The inferred types of a `.kts` script's body — the body of the implicit
+/// `main` no declaration owns
+/// ([`hir_def::kotlin::item_tree::KotlinItemTree::script_body`]) — memoized per
+/// *file*, which is the only key such a body has
+/// ([`super::infer::infer_script_body`]).
+///
+/// SAFETY: as [`kotlin_body_types_query`].
+#[salsa::tracked(returns(clone))]
+pub(crate) fn kotlin_script_body_types_query<'db>(
+    db: &'db dyn TyDatabase,
+    file: base_db::FileText,
+) -> Arc<super::infer::KotlinBodyTypes> {
+    Arc::new(super::infer::infer_script_body(db, *file.file_id(db)))
+}
+
+/// The inferred types of a `.kts` script's body — the file's own answer for the
+/// body no declaration owns. Empty for a `.kt` file, which has no implicit
+/// `main`.
+pub fn script_body_types(
+    db: &dyn TyDatabase,
+    file_id: FileId,
+) -> Arc<super::infer::KotlinBodyTypes> {
+    guarded(file_id, None, InFlight::ScriptBody, || {
+        kotlin_script_body_types_query(db, db.file_text(file_id))
     })
     .unwrap_or_else(|| Arc::new(super::infer::KotlinBodyTypes::default()))
 }
@@ -627,7 +667,7 @@ pub fn initializer_types(
     file_id: FileId,
     item_id: ItemId,
 ) -> Arc<super::infer::KotlinBodyTypes> {
-    guarded(file_id, item_id, InFlight::Initializer, || {
+    guarded(file_id, Some(item_id), InFlight::Initializer, || {
         kotlin_initializer_types_query(db, KotlinItemKey::new(db, file_id, item_id))
     })
     .unwrap_or_else(|| Arc::new(super::infer::KotlinBodyTypes::default()))

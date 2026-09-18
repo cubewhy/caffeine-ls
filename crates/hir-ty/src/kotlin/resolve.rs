@@ -54,8 +54,11 @@ pub struct KotlinResolver<'a> {
     tree: &'a KotlinItemTree,
     /// The declaration the resolved name is written in: what the enclosing
     /// chain — of nested classifiers and of type parameters — is walked from
-    /// ([`KotlinResolver::local_declaration`]).
-    item: hir_expand::ids::ItemId,
+    /// ([`KotlinResolver::local_declaration`]). `None` for a body no
+    /// declaration owns — a `.kts` script's implicit `main` — whose enclosing
+    /// chain is empty: the file has no classifier and declares no type
+    /// parameters.
+    item: Option<hir_expand::ids::ItemId>,
     scope: hir::ResolutionScope,
     /// The type parameters in scope at the resolved item, innermost last.
     type_params: Vec<TypeParamScope>,
@@ -90,6 +93,29 @@ impl<'a> KotlinResolver<'a> {
         tree: &'a KotlinItemTree,
         item: hir_expand::ids::ItemId,
     ) -> KotlinResolver<'a> {
+        Self::new(db, file, tree, Some(item))
+    }
+
+    /// The resolver of a `.kts` script's body — the body no declaration owns
+    /// ([`KotlinItemTree::script_body`]), whose enclosing chain is empty: the
+    /// *file* declares its statements, so there is no classifier to look
+    /// members up on and no declared type parameters. The item-scoped
+    /// [`Self::for_item`] cannot serve it, because a script's body has no
+    /// [`hir_expand::ids::ItemId`].
+    pub fn for_script(
+        db: &'a dyn TyDatabase,
+        file: FileId,
+        tree: &'a KotlinItemTree,
+    ) -> KotlinResolver<'a> {
+        Self::new(db, file, tree, None)
+    }
+
+    fn new(
+        db: &'a dyn TyDatabase,
+        file: FileId,
+        tree: &'a KotlinItemTree,
+        item: Option<hir_expand::ids::ItemId>,
+    ) -> KotlinResolver<'a> {
         let scope = match hir::source_set_for_file(db, file) {
             Some(source_set) => hir::ResolutionScope::SourceSet(source_set),
             None => hir::ResolutionScope::JdkBuiltins,
@@ -98,11 +124,11 @@ impl<'a> KotlinResolver<'a> {
         // The item's own parameters, then the enclosing classifiers' — the
         // caller of `type_param` looks innermost-*last*, so the chain is built
         // outermost first.
-        let mut chain = vec![item];
+        let mut chain = Vec::new();
         let mut current = item;
-        while let Some(parent) = tree.parent_of(current) {
-            chain.push(parent);
-            current = parent;
+        while let Some(id) = current {
+            chain.push(id);
+            current = tree.parent_of(id);
         }
         for &id in chain.iter().rev() {
             type_params.extend(Self::declared_params(tree, id));
@@ -560,7 +586,7 @@ impl<'a> KotlinResolver<'a> {
         // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)).
         // The item tree records the declaring body as the parent, so the
         // visibility question is ancestry.
-        let mut current = Some(self.item);
+        let mut current = self.item;
         while let Some(id) = current {
             if let Some(found) = self.tree.local_types_of(id).find(|&candidate| {
                 self.tree.data(candidate).name().map(|name| name.as_str()) == Some(simple)
@@ -571,7 +597,7 @@ impl<'a> KotlinResolver<'a> {
         }
         // The enclosing classifiers, innermost first: their members are in
         // scope where the name is written.
-        let mut current = Some(self.item);
+        let mut current = self.item;
         while let Some(id) = current {
             if let Some(declaration) = self.tree.data(id).body().iter().find(|&&member| {
                 self.tree.data(member).name().map(|name| name.as_str()) == Some(simple)

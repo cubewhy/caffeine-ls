@@ -204,15 +204,12 @@ fn infer(
         return KotlinBodyTypes::default();
     }
     let bodies = hir::file_body_tree(db, file);
-    let scope = match hir::source_set_for_file(db, file) {
-        Some(source_set) => hir::ResolutionScope::SourceSet(source_set),
-        None => hir::ResolutionScope::JdkBuiltins,
-    };
+    let scope = file_scope(db, file);
     let resolver = KotlinResolver::for_item(db, file, tree, item);
     let mut ctx = InferCtx {
         db,
         file,
-        item,
+        item: Some(item),
         scope,
         tree,
         bodies: &bodies,
@@ -258,13 +255,73 @@ fn infer(
     ctx.types
 }
 
+/// Infers the body of a `.kts` script — the body no declaration owns
+/// ([`KotlinItemTree::script_body`]): its top-level statements, with the `args`
+/// the compiler binds them to.
+///
+/// The item-scoped entry points cannot serve it, and this is why a second one
+/// exists: [`infer_item`] takes an [`hir_expand::ids::ItemId`] and the memoized
+/// queries and the in-flight guard are keyed on `(file, item)`, while a
+/// script's body has no item — the *file* declares it. The body is therefore
+/// inferred under the file's own key ([`super::db::script_body_types`]), with
+/// no enclosing declaration: no enclosing classifier, so no implicit receivers
+/// and no `this`, no type parameters and no captures.
+pub fn infer_script_body(db: &dyn TyDatabase, file: FileId) -> KotlinBodyTypes {
+    let tree = hir::file_item_tree(db, file);
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
+        return KotlinBodyTypes::default();
+    };
+    let Some(body) = tree.script_body else {
+        return KotlinBodyTypes::default();
+    };
+    let bodies = hir::file_body_tree(db, file);
+    let scope = file_scope(db, file);
+    let resolver = KotlinResolver::for_script(db, file, tree);
+    let mut ctx = InferCtx {
+        db,
+        file,
+        item: None,
+        scope,
+        tree,
+        bodies: &bodies,
+        resolver,
+        types: KotlinBodyTypes {
+            body: Some(body),
+            ..Default::default()
+        },
+        narrowed: FxHashMap::default(),
+        assigned: rustc_hash::FxHashSet::default(),
+        scopes: Vec::new(),
+        lambda_receivers: Vec::new(),
+        expected_lambdas: Vec::new(),
+        // A script's body is no expression body: the runner's `main` returns
+        // `Unit` whatever the last statement is.
+        expression_body: false,
+        in_statement: false,
+    };
+    ctx.infer_body(body);
+    ctx.types
+}
+
+/// The resolution scope of a file's inference: its source set, or the JDK's
+/// builtins for a file that belongs to none.
+fn file_scope(db: &dyn TyDatabase, file: FileId) -> hir::ResolutionScope {
+    match hir::source_set_for_file(db, file) {
+        Some(source_set) => hir::ResolutionScope::SourceSet(source_set),
+        None => hir::ResolutionScope::JdkBuiltins,
+    }
+}
+
 /// The state one body's inference carries.
 struct InferCtx<'a> {
     db: &'a dyn TyDatabase,
     file: FileId,
     /// The declaration the body belongs to: the *call site* every member
-    /// lookup is attributed to ([`method::CallSite`]).
-    item: hir_expand::ids::ItemId,
+    /// lookup is attributed to ([`method::CallSite`]). `None` for a body no
+    /// declaration owns — a `.kts` script's implicit `main` — whose call sites
+    /// are attributed to the file
+    /// ([`method::access_context_of_file`]).
+    item: Option<hir_expand::ids::ItemId>,
     scope: hir::ResolutionScope,
     tree: &'a KotlinItemTree,
     bodies: &'a hir_expand::body::BodyTree,
@@ -412,7 +469,11 @@ impl<'a> InferCtx<'a> {
         // whose owner declares it: an `init` block of an object literal is a
         // member of the literal, and it is the literal that the enclosing body
         // declares.
-        let mut item = self.item;
+        let Some(mut item) = self.item else {
+            // A body no declaration owns — a `.kts` script's implicit `main` —
+            // has no declaring body whose locals it could capture.
+            return;
+        };
         let owner = loop {
             if self.tree.is_local_type(item) {
                 break self.tree.parent_of(item);
@@ -438,7 +499,11 @@ impl<'a> InferCtx<'a> {
     /// `expressions.html#this-expressions`](https://kotlinlang.org/spec/expressions.html#this-expressions)
     /// makes the receiver the implicit `this` of an extension body).
     fn seed_extension_receiver(&mut self) {
-        let receiver = match self.tree.data(self.item) {
+        let Some(item) = self.item else {
+            // A body no declaration owns is no declaration's extension body.
+            return;
+        };
+        let receiver = match self.tree.data(item) {
             KotlinItemData::Function(data) => data.receiver.as_ref(),
             KotlinItemData::Property(data) => data.receiver.as_ref(),
             _ => None,
@@ -461,7 +526,7 @@ impl<'a> InferCtx<'a> {
         // `value`, whose type is the property's ([KLS
         // `declarations.html#getters-and-setters`](https://kotlinlang.org/spec/declarations.html#getters-and-setters)
         // gives the accessor forms; the parameter is the compiler's).
-        let Some(item) = self.tree.parent_of(self.item) else {
+        let Some(item) = self.item.and_then(|item| self.tree.parent_of(item)) else {
             return;
         };
         let KotlinItemData::Class(class) = self.tree.data(item) else {
@@ -1677,7 +1742,12 @@ impl<'a> InferCtx<'a> {
     /// The type the enclosing declaration returns, as the `return` expressions
     /// in its body are used at.
     fn return_expected_ty(&self) -> Option<Ty> {
-        let declared = match self.tree.data(self.item) {
+        let Some(item) = self.item else {
+            // A script's `main` returns `Unit`: no `return` is checked against
+            // a written type.
+            return None;
+        };
+        let declared = match self.tree.data(item) {
             KotlinItemData::Function(data) => data.ret.as_ref(),
             KotlinItemData::Property(data) => data.ty.as_ref(),
             _ => None,
@@ -1901,7 +1971,10 @@ impl<'a> InferCtx<'a> {
                 continue;
             };
             let owner_ty = Ty::reference(self.db, owner, Vec::new());
-            let ctx = method::access_context_for_kotlin(self.db, self.file, self.item);
+            let ctx = match self.item {
+                Some(item) => method::access_context_for_kotlin(self.db, self.file, item),
+                None => method::access_context_of_file(self.db, self.file),
+            };
             let field = match &class {
                 hir::Resolved::Library(_) | hir::Resolved::Source(_) => {
                     crate::jvm::member_set::pick_field(
@@ -1924,7 +1997,8 @@ impl<'a> InferCtx<'a> {
     /// The property a *setter* accessor's body writes, when the body being
     /// inferred is one: the type of the parameter the setter may leave untyped.
     fn accessor_setter_property(&self) -> Option<hir_expand::ids::ItemId> {
-        match self.tree.data(self.item) {
+        let item = self.item?;
+        match self.tree.data(item) {
             KotlinItemData::Accessor(data) if data.is_setter => self.enclosing_accessor_property(),
             _ => None,
         }
@@ -1936,22 +2010,23 @@ impl<'a> InferCtx<'a> {
         let mut accessor = false;
         let mut current = self.item;
         loop {
-            match self.tree.data(current) {
+            let id = current?;
+            match self.tree.data(id) {
                 hir_def::kotlin::item_tree::KotlinItemData::Accessor(_) => accessor = true,
                 // The declaration the accessor belongs to: its own item, when
                 // the body *is* the accessor's, or the enclosing property a
                 // property-body's accessor list holds it in.
                 hir_def::kotlin::item_tree::KotlinItemData::Property(data)
-                    if data.accessors.contains(&self.item) =>
+                    if Some(id) == self.item && data.accessors.contains(&id) =>
                 {
-                    return Some(current);
+                    return Some(id);
                 }
                 hir_def::kotlin::item_tree::KotlinItemData::Property(_) if accessor => {
-                    return Some(current);
+                    return Some(id);
                 }
                 _ => {}
             }
-            current = self.tree.parent_of(current)?;
+            current = self.tree.parent_of(id);
         }
     }
 
@@ -2650,7 +2725,7 @@ impl<'a> InferCtx<'a> {
         let written = qualifier.and_then(|qualifier| qualifier.ty.as_reference_name().cloned());
         // The enclosing classifiers, innermost first.
         let mut classifiers = Vec::new();
-        let mut current = Some(self.item);
+        let mut current = self.item;
         while let Some(id) = current {
             if self.tree.as_class(id).is_some() {
                 classifiers.push(id);
@@ -2718,7 +2793,7 @@ impl<'a> InferCtx<'a> {
     /// extension inside a class body is labeled by the function, not by the
     /// class.
     fn enclosing_extension_receiver(&self, name: &Name) -> Option<Ty> {
-        let mut current = Some(self.item);
+        let mut current = self.item;
         while let Some(id) = current {
             if self.tree.data(id).name() == Some(name) {
                 let receiver = match self.tree.data(id) {
@@ -2746,7 +2821,7 @@ impl<'a> InferCtx<'a> {
         // A lambda's receiver is the innermost one inside its body
         // ([`Self::lambda_receivers`]); the stack holds them innermost last.
         let mut out: Vec<Ty> = self.lambda_receivers.iter().rev().copied().collect();
-        let mut current = Some(self.item);
+        let mut current = self.item;
         while let Some(id) = current {
             if self.tree.as_class(id).is_some() {
                 out.push(super::db::item_ty(self.db, self.file, id));

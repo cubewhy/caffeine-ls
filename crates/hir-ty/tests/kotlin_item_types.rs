@@ -271,17 +271,97 @@ mod subtyping {
 
 // -- body inference ---------------------------------------------------------
 
+/// A `.kts` script's body: its top-level *statements* are the body of the
+/// implicit `main`
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>), which no
+/// declaration owns — the lowering records it as the item tree's `script_body`
+/// — so the type layer infers it under the file's own key
+/// ([`hir_ty::kotlin_script_body_types`]). `kotlinc 2.4.20` compiles the
+/// fixture as a script (`kotlinc Script.kts -d out`).
+#[test]
+fn script_body_types() {
+    insta::assert_snapshot!("kotlin_script_body_types", {
+        let source = r#"class Greeter(val name: String) {
+    fun greet(): String = "Hello, $name!"
+}
+
+fun twice(n: Int): Int = n * 2
+
+val greeter = Greeter("script")
+val local = twice(21)
+
+println(greeter.greet())
+println(local)
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Script.kts", source)]);
+        let rendered = render_script_body(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "nothing of the script's body is unresolved or mismatched: {rendered}"
+        );
+        rendered
+    });
+}
+
+/// The script body's inferred expressions, one line each: the expression's
+/// source range, its type, and the declaration the inference resolved it to —
+/// the evidence that the body is inferred *and* that its names resolve.
+fn render_script_body(db: &TestDatabase, file: FileId) -> String {
+    let bodies = hir::file_body_tree(db, file);
+    let types = hir_ty::kotlin_script_body_types(db, file);
+    let mut lines: Vec<String> = types
+        .exprs
+        .iter()
+        .map(|(expr, ty)| {
+            let range = bodies
+                .expr_range(*expr)
+                .map(|range| format!("@{range:?}"))
+                .unwrap_or_default();
+            let resolved = types
+                .resolved
+                .get(expr)
+                .map(|resolved| match resolved {
+                    hir_ty::KotlinResolvedMember::Local(local) => {
+                        format!("local {}", bodies.local(*local).name)
+                    }
+                    hir_ty::KotlinResolvedMember::Kotlin { item, .. } => {
+                        let tree =
+                            hir::hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
+                        format!(
+                            "item {}",
+                            tree.data(*item)
+                                .name()
+                                .map(|name| name.to_string())
+                                .unwrap_or_default()
+                        )
+                    }
+                    other => format!("{other:?}"),
+                })
+                .unwrap_or_else(|| "-".to_owned());
+            format!(
+                "e{} {range} {} -> {resolved}",
+                expr.0.0,
+                hir_ty::display_kotlin(db, *ty)
+            )
+        })
+        .collect();
+    for diagnostic in &types.diagnostics {
+        lines.push(format!(
+            "{}: {}",
+            diagnostic.code().as_str(),
+            diagnostic.message(db)
+        ));
+    }
+    lines.sort();
+    lines.join("\n")
+}
+
 /// The inferred types and diagnostics of a fixture's bodies, rendered one
 /// line per inferred expression in arena order plus one per error.
 fn render_bodies(db: &TestDatabase, file: FileId) -> String {
     let tree = hir::hir_def::kotlin::plugin::tree(db, file).expect("a Kotlin file");
     let mut lines = Vec::new();
-    for (id, data) in tree.items.iter() {
-        let Some(body) = data.body_id() else {
-            continue;
-        };
-        let _ = body;
-        let types = hir_ty::kotlin_body_types(db, file, hir_expand::ids::ItemId(id));
+    let mut render = |types: &hir_ty::KotlinBodyTypes, lines: &mut Vec<String>| {
         for (expr, ty) in types.exprs.iter() {
             lines.push(format!(
                 "e{}: {}",
@@ -296,6 +376,19 @@ fn render_bodies(db: &TestDatabase, file: FileId) -> String {
                 diagnostic.message(db)
             ));
         }
+    };
+    for (id, data) in tree.items.iter() {
+        let Some(_body) = data.body_id() else {
+            continue;
+        };
+        let types = hir_ty::kotlin_body_types(db, file, hir_expand::ids::ItemId(id));
+        render(&types, &mut lines);
+    }
+    // A `.kts` script's implicit `main` is no item's body: its types come from
+    // the file-keyed query.
+    if tree.script_body.is_some() {
+        let types = hir_ty::kotlin_script_body_types(db, file);
+        render(&types, &mut lines);
     }
     lines.sort();
     lines.join("\n")
@@ -1933,10 +2026,10 @@ class Holder {
         &hir_expand::name::Name::new("toInt"),
         hir_ty::kotlin::method::CallSite {
             file,
-            item: hir_expand::ids::ItemId({
+            item: Some(hir_expand::ids::ItemId({
                 let mut ids = tree.items.iter().map(|(id, _)| id);
                 ids.next().expect("a declaration")
-            }),
+            })),
         },
     );
     assert_eq!(

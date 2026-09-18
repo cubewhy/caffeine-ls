@@ -484,7 +484,10 @@ fn check_class(
     location: Location,
     out: &mut Vec<DeclDiagnostic>,
 ) {
-    let site = CallSite { file, item };
+    let site = CallSite {
+        file,
+        item: Some(item),
+    };
     let class_ty = super::db::item_ty(db, file, item);
     check_class_modifiers(db, file, tree, item, class, location, out);
     check_supertype_initializers(db, file, tree, scope, item, class, out);

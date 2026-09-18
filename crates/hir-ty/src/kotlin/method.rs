@@ -608,7 +608,12 @@ pub enum MemberKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallSite {
     pub file: FileId,
-    pub item: hir_expand::ids::ItemId,
+    /// The declaration the call is written in, or `None` for a body no
+    /// declaration owns: a `.kts` script's implicit `main`
+    /// ([`KotlinItemTree::script_body`]), whose call sites are attributed to
+    /// the file — [`access_context_of_file`] — exactly as a Kotlin file's top
+    /// level is.
+    pub item: Option<hir_expand::ids::ItemId>,
 }
 
 /// One written argument of a call: its type, and the parameter name it was
@@ -663,7 +668,7 @@ pub fn declared_members(
     name: &Name,
     site: CallSite,
 ) -> Vec<Member> {
-    let ctx = access_context_for_kotlin(db, site.file, site.item);
+    let ctx = access_context_of_site(db, site);
     let mut out = Vec::new();
     let mut seen = rustc_hash::FxHashSet::default();
     let constructors = names_the_class(db, scope, receiver, name);
@@ -724,7 +729,7 @@ fn collect_extension_members(
         return;
     };
     // 1. The enclosing classifiers' own extensions, innermost first.
-    let mut current = Some(site.item);
+    let mut current = site.item;
     while let Some(item) = current {
         if tree.as_class(item).is_some() {
             let resolver = KotlinResolver::for_item(db, site.file, tree, item);
@@ -744,7 +749,7 @@ fn collect_extension_members(
         library_extension_members(db, scope, site.file, receiver, name, out);
     }
     // 3. The file's own top-level extensions.
-    let resolver = KotlinResolver::for_item(db, site.file, tree, site.item);
+    let resolver = resolver_of_site(db, site.file, tree, site.item);
     for &top in &tree.top {
         if let Some(extension) =
             extension_of(db, scope, site.file, tree, top, name, &resolver, receiver)
@@ -1534,6 +1539,51 @@ fn capitalize(name: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+/// The access-control context of a call site: the context of the declaration
+/// the call is written in, or the *file's* when no declaration owns the body —
+/// a `.kts` script's implicit `main`, whose statements are a file's top level
+/// and see the classpath exactly as one does.
+fn access_context_of_site(db: &dyn TyDatabase, site: CallSite) -> InvocationContext {
+    match site.item {
+        Some(item) => access_context_for_kotlin(db, site.file, item),
+        None => access_context_of_file(db, site.file),
+    }
+}
+
+/// The resolver of a call site: the declaration the call is written in, or the
+/// file's script body when no declaration owns it
+/// ([`KotlinResolver::for_script`]).
+fn resolver_of_site<'a>(
+    db: &'a dyn TyDatabase,
+    file: FileId,
+    tree: &'a KotlinItemTree,
+    item: Option<hir_expand::ids::ItemId>,
+) -> KotlinResolver<'a> {
+    match item {
+        Some(item) => KotlinResolver::for_item(db, file, tree, item),
+        None => KotlinResolver::for_script(db, file, tree),
+    }
+}
+
+/// The access-control context of a Kotlin file's *top level*: its package, with
+/// no enclosing classifier and no subclass relation. A `.kts` script's
+/// statements are such a body — the file declares them
+/// ([`KotlinItemTree::script_body`]) — so their call sites are attributed here.
+pub fn access_context_of_file(db: &dyn TyDatabase, file: FileId) -> InvocationContext {
+    let outer = hir::file_item_tree(db, file);
+    let package = hir_def::kotlin::plugin::model(&outer).and_then(|tree| {
+        tree.package
+            .as_ref()
+            .map(|package| package.as_str().to_owned())
+    });
+    InvocationContext {
+        mode: InvocationMode::Virtual,
+        enclosing_class: None,
+        package,
+        subclass_of: None,
     }
 }
 

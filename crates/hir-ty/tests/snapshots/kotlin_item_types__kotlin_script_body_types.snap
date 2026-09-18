@@ -1,0 +1,9 @@
+---
+source: crates/hir-ty/tests/kotlin_item_types.rs
+expression: "{\n    let source =\n    r#\"class Greeter(val name: String) {\n    fun greet(): String = \"Hello, $name!\"\n}\n\nfun twice(n: Int): Int = n * 2\n\nval greeter = Greeter(\"script\")\nval local = twice(21)\n\nprintln(greeter.greet())\nprintln(local)\n\"#;\n    let (db, file) =\n    kotlin_fixture(&[(\"/src/main/kotlin/Script.kts\", source)]); let rendered =\n    render_script_body(&db, file);\n    assert!(!rendered.contains(\"kotlin.\"),\n    \"nothing of the script's body is unresolved or mismatched: {rendered}\");\n    rendered\n}"
+---
+e12 @174..181 Greeter -> item greeter
+e14 @174..189 String -> item greet
+e15 @166..190 <error> -> -
+e17 @199..204 Int -> item local
+e18 @191..205 <error> -> -

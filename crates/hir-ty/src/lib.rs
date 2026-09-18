@@ -124,13 +124,14 @@ pub use kotlin::db::body_types as kotlin_body_types;
 pub use kotlin::db::type_params as kotlin_type_params;
 pub use kotlin::db::{
     declaration_types as kotlin_declaration_types, initializer_types as kotlin_initializer_types,
-    item_ty as kotlin_item_ty, supertypes as kotlin_supertypes,
+    item_ty as kotlin_item_ty, script_body_types as kotlin_script_body_types,
+    supertypes as kotlin_supertypes,
 };
 /// The Kotlin declaration checks ([`kotlin::decl_check::DeclDiagnostic`]), the
 /// twin of [`class_diagnostics`] for a Kotlin file.
 pub use kotlin::decl_check::class_diagnostics as kotlin_class_diagnostics;
 pub use kotlin::diagnostics::KotlinTypeError;
-pub use kotlin::infer::KotlinResolvedMember;
+pub use kotlin::infer::{KotlinBodyTypes, KotlinResolvedMember};
 pub use kotlin::method::declared_members as kotlin_declared_members;
 pub use kotlin::resolve::KotlinResolver;
 pub use kotlin::subtyping::{is_assignable as kotlin_assignable, is_subtype as kotlin_subtype};
