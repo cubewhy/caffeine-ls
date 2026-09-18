@@ -22,6 +22,7 @@
 //! | `@JvmName("y")` on a function / `@get:JvmName("y")` on an accessor | the member is named `y` |
 //! | `@file:JvmName("Y")` | the facade is named `Y` |
 //! | `@JvmOverloads fun f(a: Int, b: Int = 0)` | one further method per parameter that declares a default |
+//! | `@Throws(IOException::class) fun f()` | the method declares `throws IOException` |
 //! | an `enum class` entry | a static field of the enum type |
 //! | a constructor | `<init>`, and a parameterless `<init>()` for an all-defaults primary |
 //!
@@ -605,6 +606,7 @@ impl<'a> Shapes<'a> {
         // (<https://kotlinlang.org/docs/java-interop.html#overloads-generation>).
         let jvm_overloads =
             has_annotation(resolver, &function.annotations, JvmAnnotation::Overloads);
+        let throws = throws_of(self.db, resolver, &function.annotations, None);
         let defaulted: Vec<bool> = function.defaults.iter().map(Option::is_some).collect();
         for list in overload_lists(&params, &defaulted, jvm_overloads) {
             out.push(MethodData {
@@ -616,7 +618,7 @@ impl<'a> Shapes<'a> {
                 params: list,
                 param_names: None,
                 ret,
-                throws: Vec::new(),
+                throws: throws.clone(),
                 is_static,
                 abstract_: function.modifiers.modality == KotlinModality::Abstract,
                 is_final: function.modifiers.modality == KotlinModality::Final,
@@ -662,6 +664,7 @@ impl<'a> Shapes<'a> {
             .is_some_and(|param| param.param.varargs);
         let jvm_overloads =
             has_annotation(resolver, &constructor.annotations, JvmAnnotation::Overloads);
+        let throws = throws_of(self.db, resolver, &constructor.annotations, None);
         let defaulted: Vec<bool> = constructor.defaults.iter().map(Option::is_some).collect();
         for list in overload_lists(&params, &defaulted, jvm_overloads) {
             out.push(MethodData {
@@ -673,7 +676,7 @@ impl<'a> Shapes<'a> {
                 params: list,
                 param_names: None,
                 ret: Ty::void(self.db),
-                throws: Vec::new(),
+                throws: throws.clone(),
                 is_static: false,
                 abstract_: false,
                 is_final: false,
@@ -712,7 +715,18 @@ impl<'a> Shapes<'a> {
             param_names: None,
             // A setter returns `void`; a getter the property's type.
             ret: if is_setter { Ty::void(self.db) } else { ty },
-            throws: Vec::new(),
+            // `@get:Throws(…)`/`@set:Throws(…)` is the annotation's form on an
+            // accessor — its targets are the function, the getter, the setter
+            // and the constructor.
+            throws: throws_of(
+                self.db,
+                resolver,
+                &property.annotations,
+                Some(match is_setter {
+                    true => "set",
+                    false => "get",
+                }),
+            ),
             varargs: false,
             is_static,
             abstract_: property.modifiers.modality == KotlinModality::Abstract,
@@ -882,6 +896,46 @@ fn parameterless_constructor(modifiers: KotlinModifiers) -> ConstructorData {
         body: None,
         ast: hir_expand::ast_id_map::FileAstId::placeholder(),
     }
+}
+
+/// The checked exceptions the `@Throws(…)` of an annotation list declares —
+/// the exceptions the compiler writes into the classfile's `Exceptions`
+/// attribute
+/// (<https://kotlinlang.org/docs/java-interop.html#checked-exceptions>), which
+/// is what a *Java* caller's §11.2 liability is computed from: Kotlin's own
+/// exceptions are unchecked, so only the annotation imposes one.
+///
+/// `target` selects the application the declaration carries its exceptions on:
+/// the `get`/`set` of an accessor (`@get:Throws(…)`, the annotation's targets
+/// being the function, the getter, the setter and the constructor), and `None`
+/// for a function's or a constructor's own application. Each exception is an
+/// argument's class literal (`IOException::class`,
+/// [`ItemAnnotationValue::ClassLit`]), resolved like any other written type.
+fn throws_of(
+    db: &dyn TyDatabase,
+    resolver: &KotlinResolver<'_>,
+    annotations: &[KotlinAnnotationRef],
+    target: Option<&str>,
+) -> Vec<Ty> {
+    let mut out = Vec::new();
+    for application in annotations {
+        let applies = match target {
+            Some(target) => application
+                .target
+                .as_ref()
+                .is_some_and(|written| written.as_str() == target),
+            None => application.target.is_none(),
+        };
+        if !applies || !is_jvm_annotation(resolver, application, JvmAnnotation::Throws) {
+            continue;
+        }
+        for arg in &application.annotation.args {
+            if let ItemAnnotationValue::ClassLit(ty) = &arg.value {
+                out.push(ty_from_kotlin(db, ty_from_type_ref(db, resolver, &ty.ty)));
+            }
+        }
+    }
+    out
 }
 
 /// The parameter lists of the classfile methods a Kotlin declaration with

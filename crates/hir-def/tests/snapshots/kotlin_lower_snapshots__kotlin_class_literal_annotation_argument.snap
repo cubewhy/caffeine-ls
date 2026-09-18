@@ -1,0 +1,28 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+package a
+
+import java.io.IOException
+
+@Throws(java.io.IOException::class)
+fun read(path: String): String = path
+
+class Reader {
+    @get:Throws(IOException::class, IllegalStateException::class)
+    val name: String = "reader"
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin) package a
+import java.io.IOException; @12..40
+fun read(path: String): String @40..113
+  @Throws(value = java.io.IOException::class)
+class Reader @115..229
+  val name: String @134..228
+    @get:Throws(value = IOException::class, value = IllegalStateException::class)

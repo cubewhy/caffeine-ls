@@ -785,3 +785,94 @@ class Overloaded @JvmOverloads constructor(val a: Int = 0)
         "the Java body reaches the implicit constructor: {diagnostics}"
     );
 }
+
+/// The JVM methods `name` names on the Kotlin classifier `fqn`, as their
+/// `throws` clauses — the classfile's `Exceptions` attribute.
+fn jvm_method_throws(
+    db: &TestDatabase,
+    source_set: &hir::SourceSetId,
+    fqn: &str,
+    name: &str,
+) -> Vec<Vec<String>> {
+    let scope = hir::ResolutionScope::SourceSet(source_set.clone());
+    let ctx = hir_ty::InvocationContext::external(&scope);
+    let ty = Ty::reference(db, fqn, Vec::new());
+    hir_ty::member_set(db, &scope, &ty, name, &ctx)
+        .iter()
+        .map(|method| {
+            method
+                .throws
+                .iter()
+                .map(|thrown| thrown.display(db).to_string())
+                .collect()
+        })
+        .collect()
+}
+
+/// `@Throws(IOException::class)` is what gives a Java caller a checked
+/// exception to discharge: Kotlin's own exceptions are unchecked, and the
+/// annotation is the only thing that writes the classfile's `Exceptions`
+/// attribute
+/// (<https://kotlinlang.org/docs/java-interop.html#checked-exceptions>).
+///
+/// kotlinc 2.4.20 compiles the fixture clean; `javap -p` reports the declared
+/// `throws java.io.IOException` on the facade's `read`, and `javac` accepts a
+/// Java body only where the liability is declared or caught.
+#[test]
+fn a_java_caller_must_discharge_a_thrown_exception() {
+    const THROWS_KT: &str = r#"
+package a
+
+@Throws(java.io.IOException::class)
+fun read(path: String): String = path
+
+class Reader {
+    @get:Throws(java.io.IOException::class)
+    val name: String = "reader"
+}
+"#;
+    const USE_THROWS_JAVA: &str = r#"
+package a;
+
+import java.io.IOException;
+
+public class UseThrows {
+    int handled() throws IOException {
+        return ThrowsKt.read("x").length();
+    }
+
+    int unhandled() {
+        return ThrowsKt.read("y").length();
+    }
+
+    int accessor() throws IOException {
+        Reader reader = new Reader();
+        return reader.getName().length();
+    }
+}
+"#;
+    let files = [
+        ("/src/main/kotlin/a/Throws.kt", THROWS_KT),
+        ("/src/main/java/a/UseThrows.java", USE_THROWS_JAVA),
+    ];
+    let (db, source_set) = interop_fixture(&files);
+    assert_eq!(
+        jvm_method_throws(&db, &source_set, "a.ThrowsKt", "read"),
+        vec![vec!["java.io.IOException".to_owned()]],
+        "the classfile's throws clause is the annotation's class literals"
+    );
+    assert_eq!(
+        jvm_method_throws(&db, &source_set, "a.Reader", "getName"),
+        vec![vec!["java.io.IOException".to_owned()]],
+        "a getter declares the exceptions `@get:Throws` writes"
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        diagnostics.contains("method unhandled"),
+        "a Java body that neither catches nor declares the exception is reported: {diagnostics}"
+    );
+    assert!(
+        !diagnostics.contains("method handled") && !diagnostics.contains("method accessor"),
+        "a declared or caught liability is discharged: {diagnostics}"
+    );
+}

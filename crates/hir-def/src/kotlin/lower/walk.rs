@@ -1413,6 +1413,8 @@ fn lower_annotation_value(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemAn
                 ItemAnnotationValue::EnumConstant { qualifier, member }
             } else if let Some(annotation) = nested_annotation(ctx, node) {
                 ItemAnnotationValue::Annotation(Box::new(annotation))
+            } else if let Some(ty) = qualified_class_literal(ctx, node) {
+                ItemAnnotationValue::ClassLit(Box::new(ty))
             } else {
                 unresolved(node)
             }
@@ -1483,6 +1485,57 @@ fn enum_constant(node: &SyntaxNode<Lang>) -> Option<(Option<Name>, Name)> {
         return None;
     }
     Some((base_identifier(node), member))
+}
+
+/// The type of a *qualified* class literal — `java.io.IOException::class`
+/// ([KLS
+/// `reflection.html#class-references`](https://kotlinlang.org/spec/reflection.html#class-references)).
+///
+/// A class literal whose receiver is a single identifier parses as a
+/// [`K::CALLABLE_REFERENCE`]; a *qualified* one parses as a navigation chain
+/// whose last suffix is the `::class` access — `java` `.io` `.IOException`
+/// `::class` — since the callable-reference lookahead reads one identifier
+/// ([`lower_annotation_value`] lowers both to the same
+/// [`ItemAnnotationValue::ClassLit`]). The chain must be a dotted name and
+/// nothing else: any other token (`Foo<Int>::class`, `(x).y::class`) is not a
+/// class literal this reads, and lowers as unresolved.
+fn qualified_class_literal(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemTypeRef> {
+    let mut name = base_identifier(node)?.to_string();
+    let suffixes: Vec<SyntaxNode<Lang>> = node
+        .children()
+        .filter(|child| is(child, K::NAVIGATION_SUFFIX))
+        .collect();
+    let (last, leading) = suffixes.split_last()?;
+    for suffix in leading {
+        let member = suffix
+            .children_with_tokens()
+            .filter_map(NodeOrToken::into_token)
+            .find(|token| is_token(token, K::IDENTIFIER))?;
+        name.push('.');
+        name.push_str(member.text());
+    }
+    let mut tokens = last
+        .children_with_tokens()
+        .filter_map(NodeOrToken::into_token);
+    if !tokens
+        .next()
+        .is_some_and(|token| is_token(&token, K::COLON_COLON))
+        || !tokens
+            .next()
+            .is_some_and(|token| is_token(&token, K::CLASS_KW))
+    {
+        return None;
+    }
+    let name = Name::new(&name);
+    Some(ItemTypeRef {
+        ty: TypeRef::Reference {
+            name: name.clone(),
+            generic_args: Vec::new(),
+        },
+        refs: vec![name],
+        type_use_annotations: Vec::new(),
+        node: ast_id_or_placeholder(ctx.map, node),
+    })
 }
 
 /// The identifier of a `PRIMARY_EXPRESSION` base — a name written as a token.

@@ -804,6 +804,28 @@ class Uses
 "#,
 }
 
+/// A class-literal argument, written with a *qualified* receiver and with a
+/// simple one: both are the annotation's `ClassLit` value, and kotlinc 2.4.20
+/// reads either as the type the literal names (the fixture compiles clean with
+/// the two imports).
+lower_snapshot_lang! {
+    kotlin_class_literal_annotation_argument,
+    LanguageKind::Kotlin,
+    r#"
+package a
+
+import java.io.IOException
+
+@Throws(java.io.IOException::class)
+fun read(path: String): String = path
+
+class Reader {
+    @get:Throws(IOException::class, IllegalStateException::class)
+    val name: String = "reader"
+}
+"#,
+}
+
 lower_snapshot_lang! {
     kotlin_annotation_qualified_name,
     LanguageKind::Kotlin,

@@ -543,6 +543,7 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
         annotation("kotlin/jvm/JvmStatic"),
         annotation("kotlin/jvm/JvmField"),
         annotation("kotlin/jvm/JvmOverloads"),
+        annotation("kotlin/jvm/Throws"),
     ]
 }
 

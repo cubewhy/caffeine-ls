@@ -55,6 +55,12 @@ pub enum JvmAnnotation {
     /// declares a default value
     /// (<https://kotlinlang.org/docs/java-interop.html#overloads-generation>).
     Overloads,
+    /// `kotlin.jvm.Throws`: the checked exceptions the classfile method
+    /// declares in its `throws` clause — the ones a Java caller's
+    /// checked-exception liability is computed from, which Kotlin's own
+    /// (unchecked) exceptions never impose
+    /// (<https://kotlinlang.org/docs/java-interop.html#checked-exceptions>).
+    Throws,
 }
 
 impl JvmAnnotation {
@@ -66,6 +72,7 @@ impl JvmAnnotation {
             JvmAnnotation::Static => "kotlin.jvm.JvmStatic",
             JvmAnnotation::Field => "kotlin.jvm.JvmField",
             JvmAnnotation::Overloads => "kotlin.jvm.JvmOverloads",
+            JvmAnnotation::Throws => "kotlin.jvm.Throws",
         }
     }
 
