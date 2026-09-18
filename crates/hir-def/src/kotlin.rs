@@ -17,17 +17,18 @@
 //! follows the compiler and records the deviation in the doc comment with the
 //! compiler message.
 //!
-//! # What is not implemented yet
+//! # What is lowered
 //!
-//! The Kotlin *body* IR: `.kt` files lower their declarations, and the bodies
-//! of functions, accessors, initializers and enum-entry arguments are not yet
-//! lowered (every `body`/`initializer_expr`/`delegate_expr`/`argument_exprs`
-//! field is empty — see [`crate::kotlin::lower::lower_kotlin_source`]).
+//! Both halves of a file: the declaration model
+//! ([`item_tree::KotlinItemTree`]) and the body IR
+//! ([`hir_expand::body::BodyTree`]), which holds the bodies of functions,
+//! accessors, initializers, `init` blocks, enum-entry arguments and — for a
+//! `.kts` script — the top-level statements of its implicit `main`
+//! ([`lower::lower_kotlin_source`]).
 //!
-//! `.kts` scripts are out of scope: a script's top-level statements declare no
-//! file item, so [`crate::lower::lower_source`] leaves a
-//! [`LanguageKind::KotlinScript`](base_db::LanguageKind::KotlinScript) file
-//! empty.
+//! The lowered model carries no source offsets: a declaration anchors itself to
+//! its syntax node with a [`FileAstId`](hir_expand::ast_id_map::FileAstId) and
+//! the ranges are resolved on demand ([`ranges`]).
 
 pub mod annotations;
 pub mod db;

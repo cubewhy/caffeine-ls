@@ -1,12 +1,13 @@
 //! Kotlin semantic highlighting.
 //!
-//! Kotlin has no HIR yet — [`hir_def::kotlin::lower`] is a placeholder and a
-//! Kotlin CST lowers to an empty item tree — so every token is classified from
-//! the CST, by node kind: the lexical layer for keywords, modifiers, literals,
-//! operators and comments ([`lexical`]), and one identifier pass for
-//! declarations, references and types ([`identifiers`]). When the Kotlin
-//! lowering lands this module is replaced the way
-//! [`crate::nav::kotlin`] documents for navigation.
+//! Every token is classified from the CST, by node kind: the lexical layer for
+//! keywords, modifiers, literals, operators and comments ([`lexical`]), and one
+//! identifier pass for declarations, references and types ([`identifiers`]).
+//! This pass is not ported to the Kotlin model yet — the item tree the
+//! declaration layer lowers ([`hir::hir_def::kotlin::item_tree`]), the body IR
+//! and the inference, which is what [`crate::highlight::java`] reads — so
+//! everything below the literal layer is a syntactic approximation rather than
+//! a resolved one.
 //!
 //! # The uppercase rule
 //!
@@ -16,9 +17,9 @@
 //! capitalise class and object names and lowercase function and property names,
 //! so the first character of the identifier is the available signal, and it is
 //! the only convention-based approximation in this module. It disappears
-//! together with the rest of the CST pass when the Kotlin lowering lands.
+//! together with the rest of the CST pass when this pass reads the model.
 //!
-//! Because there is no resolution, a reference to an *enum constant*
+//! Because nothing is resolved here, a reference to an *enum constant*
 //! (`Color.RED`) is classified by that same convention too, so it reads as a
 //! class — the declaration keeps its `enumMember` tag, which comes from the CST
 //! shape.

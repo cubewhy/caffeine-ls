@@ -28,7 +28,10 @@ pub enum SyntaxKind {
     FLOAT_LITERAL,
     CHAR_LITERAL,
 
-    // TODO: string interpolation
+    // String interpolation is lexed with the template start tokens above
+    // (`TEMPLATE_SHORT_START`, `TEMPLATE_EXPR_START`) and parsed into a
+    // `STRING_TEMPLATE` node ([KLS
+    // `expressions.html#string-templates`](https://kotlinlang.org/spec/expressions.html#string-templates)).
 
     // Operators and special symbols
     // https://kotlinlang.org/docs/keyword-reference.html#operators-and-special-symbols

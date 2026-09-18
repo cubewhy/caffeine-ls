@@ -13,12 +13,14 @@
 //!   declared type, a receiver type, a type-parameter bound, a type alias's
 //!   target or an annotation's name ([`type_resolution`]).
 //!
-//! Everything else — a name inside a function body, a property initializer or
-//! an annotation argument — is an *expression* reference: it needs the body IR
-//! and the type layer, so this module answers nothing for it yet. The
-//! parameter-name surface ([`super::declared_parameter_names`]) is empty for
-//! the same reason: it names the parameters of a *resolved* callable, and
-//! Kotlin has no resolved-call table until then.
+//! A name inside a function body, a property initializer or an annotation
+//! argument is an *expression* reference instead: it is resolved by the type
+//! layer — the member bridge, the local scope and the inference — and read back
+//! from the record that resolution left
+//! ([`hir_ty::KotlinBodyTypes::resolved`], [`recorded_reference`]). The
+//! parameter-name surface ([`super::declared_parameter_names`]) reads the same
+//! resolved callables: a Kotlin source one carries its names in the item tree,
+//! a classpath one in its declaring source.
 //!
 //! # Name resolution
 //!
@@ -91,12 +93,12 @@ pub(crate) fn definition(
 /// the declarations [`resolutions`] produces for it are ones the query
 /// resolves to, so `references` can never disagree with `definition`.
 ///
-/// Body references are *not* sites yet: a name inside a body is an expression
-/// reference the type layer has to resolve, and the sweep only visits the
-/// declaration skeleton. What is swept is therefore exactly what the forward
-/// pipeline answers for — the declaration's own name (when
-/// `include_declaration`), the names of its supertypes and declared types, the
-/// import paths that bind it and the annotation names that apply it.
+/// The sweep visits every identifier token of every Kotlin file, so a site is
+/// whatever the forward pipeline answers for at that token — the declaration's
+/// own name (when `include_declaration`), the names of its supertypes and
+/// declared types, the import paths that bind it, the annotation names that
+/// apply it, and a *body* name the type layer resolved (a local, a member of
+/// the enclosing classifier, a call's callee, another file's declaration).
 pub(crate) fn references(
     db: &RootDatabase,
     file: FileId,
@@ -625,8 +627,8 @@ fn file_references(
     let Some(ctx) = Ctx::new(db, file) else {
         return Vec::new();
     };
-    // Only the declaration skeleton can name a declaration from *another*
-    // file; a body reference needs the type layer (see the module docs).
+    // Every identifier token is a candidate — a body name resolves through the
+    // type layer like a type reference does, so the sweep cannot skip a body.
     let mut out = Vec::new();
     for element in ctx.root.descendants_with_tokens() {
         let Some(token) = element.as_token() else {

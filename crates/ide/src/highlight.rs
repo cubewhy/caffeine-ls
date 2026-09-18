@@ -10,8 +10,8 @@
 //! declarations and the resolution the type layer recorded for the bodies —
 //! with the parser's CST used only for what the HIR cannot represent
 //! (keywords, modifiers, literals, operators, comments) and as a
-//! declaration gap-fill. Kotlin has no HIR yet, so all of its tokens come from
-//! the CST ([`kotlin`]).
+//! declaration gap-fill. Kotlin's tokens come from the CST too ([`kotlin`]):
+//! its highlighting pass has not been ported to the model yet.
 //!
 //! # Invariants
 //!

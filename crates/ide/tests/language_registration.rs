@@ -46,11 +46,12 @@ const COVERAGE: &[Coverage] = &[
     Coverage {
         // A `.kts` script is Kotlin to every layer that reads *source* — it is
         // parsed with the `script` production, its type layer and IDE features
-        // are Kotlin's — but its top-level statements declare no file item to
-        // hang a declaration model off, so no language lowers it.
+        // are Kotlin's — and its top-level statements lower as the body of the
+        // implicit `main`
+        // (<https://kotlinlang.org/docs/command-line.html#run-scripts>).
         kind: LanguageKind::KotlinScript,
         syntax: true,
-        lowering: false,
+        lowering: true,
         types: true,
         index: true,
         ide: true,

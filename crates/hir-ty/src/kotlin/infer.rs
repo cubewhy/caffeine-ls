@@ -28,14 +28,15 @@
 //!
 //! # What is approximate, and why
 //!
-//! Recorded deviations, each visible in the snapshots: a lambda's
-//! parameter type without a declaration is the *error* type (the expected
-//! function type is not propagated into the literal yet); an `if`/`when`/`try`
+//! Recorded deviations, each visible in the snapshots: an `if`/`when`/`try`
 //! join is the first branch's type when the branches are not identical (KLS's
 //! least upper bound is the constraint solver's `lub`, which lands with the
 //! full inference); and `1..2` types as its endpoint's type, because
 //! `kotlin.ranges.IntRange` is only reachable when the standard library is on
-//! the classpath — the fixtures that pin it ship one.
+//! the classpath — the fixtures that pin it ship one. A lambda's parameters and
+//! its `it` are typed from the function type the selected callable declares at
+//! their position (`InferCtx::expected_lambdas`): a lambda with no expected
+//! type — an untargeted one — takes the *error* type rather than a guess.
 
 use rustc_hash::FxHashMap;
 use vfs::FileId;
