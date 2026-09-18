@@ -1,0 +1,76 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun f() {
+    when (x) { ] }
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "f"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+WHEN_KW "when"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "x"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+R_BRACKET "]"
+WHITESPACE " "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..31
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..30
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..5 "f"
+    VALUE_PARAMETERS@5..7
+      L_PAREN@5..6 "("
+      R_PAREN@6..7 ")"
+    WHITESPACE@7..8 " "
+    BLOCK@8..30
+      L_BRACE@8..9 "{"
+      NEWLINE@9..10 "\n"
+      WHITESPACE@10..14 "    "
+      EXPRESSION_STATEMENT@14..28
+        WHEN_EXPRESSION@14..28
+          WHEN_KW@14..18 "when"
+          WHITESPACE@18..19 " "
+          WHEN_SUBJECT@19..22
+            L_PAREN@19..20 "("
+            PRIMARY_EXPRESSION@20..21
+              IDENTIFIER@20..21 "x"
+            R_PAREN@21..22 ")"
+          WHITESPACE@22..23 " "
+          L_BRACE@23..24 "{"
+          WHITESPACE@24..25 " "
+          WHEN_ENTRY@25..25
+            PRIMARY_EXPRESSION@25..25
+            MISSING@25..25
+            EXPRESSION_STATEMENT@25..25
+              PRIMARY_EXPRESSION@25..25
+          R_BRACKET@25..26 "]"
+          WHITESPACE@26..27 " "
+          R_BRACE@27..28 "}"
+      NEWLINE@28..29 "\n"
+      R_BRACE@29..30 "}"
+  NEWLINE@30..31 "\n"

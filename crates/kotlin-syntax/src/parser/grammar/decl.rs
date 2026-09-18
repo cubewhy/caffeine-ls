@@ -972,6 +972,13 @@ fn type_alias(p: &mut Parser) {
 
 /// `classBody`: '{' {NL} classMemberDeclarations {NL} '}'
 /// [spec: grammar-rule-classBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-classBody
+///
+/// The loop consumes a token every iteration: the separator arm eats a
+/// `;`/`NL` run, and `classMemberDeclaration` always reaches a production that
+/// bumps — `declaration` dispatches on the keyword it is *at*, so
+/// `property_declaration`/`function_declaration`/`class_declaration` consume
+/// the `val`/`fun`/`class` the lookahead saw, and its default arm reports the
+/// construct and bumps whatever else is there.
 pub(super) fn class_body(p: &mut Parser) {
     let m = p.start();
     p.expect(L_BRACE);
@@ -1148,6 +1155,8 @@ fn enum_class_body(p: &mut Parser) {
     if p.at(SEMICOLON) {
         semis(p);
         eat_nl(p);
+        // As in `classBody`, every iteration consumes a token:
+        // `class_member_declaration` reaches a production that bumps.
         while !p.at(R_BRACE) && !p.is_at_end() {
             class_member_declaration(p);
             semis(p);

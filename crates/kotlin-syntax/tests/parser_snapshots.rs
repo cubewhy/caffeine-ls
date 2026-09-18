@@ -232,6 +232,28 @@ parser_snapshot!(
     "#}
 );
 
+/// A `when` body token no `whenEntry` production can consume — here a stray
+/// `]` — must not stall the entry loop: `whenEntry` cannot reach the token
+/// (its body's `primaryExpression` reports an error without bumping), so the
+/// loop skips it and this parse terminates.
+parser_snapshot!(
+    parse_when_unexpected_r_bracket,
+    indoc! {r#"
+        fun f() {
+            when { ] }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_when_subject_unexpected_r_bracket,
+    indoc! {r#"
+        fun f() {
+            when (x) { ] }
+        }
+    "#}
+);
+
 parser_snapshot!(
     parse_annotated_statement,
     indoc! {r#"

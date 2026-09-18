@@ -677,6 +677,9 @@ fn lambda_parameter(p: &mut Parser) {
 /// opening to the closing quote, wrapping `$name` / `${...}` runs in
 /// STRING_TEMPLATE nodes.
 fn string_literal(p: &mut Parser) {
+    // Both loops consume a token every iteration: `stringTemplateEntry` wraps
+    // the `$name`/`${…}` forms and bumps everything else, so only the closing
+    // quote — which the loop stops on — can leave it without progress.
     if p.at(OPEN_RAW_QUOTE) {
         p.bump();
         eat_nl(p);
@@ -821,8 +824,20 @@ fn when_expression(p: &mut Parser) {
     eat_nl(p);
     p.expect(L_BRACE);
     eat_nl(p);
+    // The loop consumes a token every iteration: `when_entry` is skipped by
+    // hand whenever it leaves the reader where it found it. An entry body of
+    // `]` reaches `primaryExpression`'s error arm, which completes an empty
+    // `PRIMARY_EXPRESSION` without bumping, so the entry itself cannot make
+    // progress; an enclosing production owns that recovery, exactly as
+    // `declaration`'s default arm does.
+    // ([spec: grammar-rule-whenEntry]) https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-whenEntry
     while !p.at(R_BRACE) && !p.is_at_end() {
+        let before = p.checkpoint().source_pos;
         when_entry(p);
+        if p.checkpoint().source_pos == before {
+            p.error_message("expected a when entry");
+            p.bump();
+        }
         eat_nl(p);
     }
     eat_nl(p);
