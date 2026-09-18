@@ -3,7 +3,11 @@
 
 use rowan::{GreenNode, SyntaxNode};
 
-use crate::{LanguageKind, Parse, SourceFile, SyntaxError, diagnostics::DiagnosticCode, kotlin};
+use crate::{
+    KotlinDiagnosticCode, LanguageKind, Parse, SourceFile, SyntaxError,
+    diagnostics::DiagnosticCode,
+    kotlin::{self, LexicalErrorKind, ParseErrorKind},
+};
 
 pub(crate) struct Kotlin;
 
@@ -62,7 +66,53 @@ fn syntax_error(err: kotlin::SyntaxError) -> SyntaxError {
     }
 }
 
-fn syntax_code(_kind: &kotlin::SyntaxErrorKind) -> Option<DiagnosticCode> {
-    // TODO: add kotlin syntax code
-    None
+/// The code of a syntax error, so a client keys on it independently of the
+/// message's wording ([`KotlinDiagnosticCode`]), exactly as the Java half does
+/// ([`crate::lang::java`]).
+///
+/// A lexer error is the diagnostic it names; a parser error is the production
+/// it was raised for — the expected token, the expected contextual keyword, the
+/// expected construct — and a *recovery* message ([`ParseErrorKind::Message`])
+/// is [`KotlinDiagnosticCode::SyntaxError`], the one shape no narrower code
+/// describes.
+fn syntax_code(kind: &kotlin::SyntaxErrorKind) -> Option<DiagnosticCode> {
+    let code = match kind {
+        kotlin::SyntaxErrorKind::Lexer(kind) => match kind {
+            LexicalErrorKind::UnterminatedBlockComment => {
+                KotlinDiagnosticCode::UnterminatedBlockComment
+            }
+            LexicalErrorKind::UnterminatedString => KotlinDiagnosticCode::UnterminatedString,
+            LexicalErrorKind::EmptyCharLiteral => KotlinDiagnosticCode::EmptyCharLiteral,
+            LexicalErrorKind::UnterminatedCharLiteral => {
+                KotlinDiagnosticCode::UnterminatedCharLiteral
+            }
+            LexicalErrorKind::TooManyCharsInCharLiteral => {
+                KotlinDiagnosticCode::TooManyCharsInCharLiteral
+            }
+            LexicalErrorKind::UnsupportedEscapeSequence => {
+                KotlinDiagnosticCode::UnsupportedEscapeSequence
+            }
+            LexicalErrorKind::EmptyIdentifier => KotlinDiagnosticCode::EmptyIdentifier,
+            LexicalErrorKind::UnterminatedIdentifier => {
+                KotlinDiagnosticCode::UnterminatedIdentifier
+            }
+            LexicalErrorKind::UnexpectedChar(_) => KotlinDiagnosticCode::UnexpectedChar,
+            LexicalErrorKind::LeadingZerosNotAllowed => {
+                KotlinDiagnosticCode::LeadingZerosNotAllowed
+            }
+            LexicalErrorKind::WrongLongSuffixCase => KotlinDiagnosticCode::WrongLongSuffixCase,
+            LexicalErrorKind::IllegalUnderscore => KotlinDiagnosticCode::IllegalUnderscore,
+            LexicalErrorKind::MissingExponentDigits => KotlinDiagnosticCode::MissingExponentDigits,
+            LexicalErrorKind::MissingNumericDigits => KotlinDiagnosticCode::MissingNumericDigits,
+        },
+        kotlin::SyntaxErrorKind::Parser(kind) => match kind {
+            ParseErrorKind::ExpectedToken { .. } => KotlinDiagnosticCode::ExpectedToken,
+            ParseErrorKind::ExpectedContextualKeyword { .. } => {
+                KotlinDiagnosticCode::ExpectedKeyword
+            }
+            ParseErrorKind::ExpectedConstruct(_) => KotlinDiagnosticCode::ExpectedConstruct,
+            ParseErrorKind::Message(_) => KotlinDiagnosticCode::SyntaxError,
+        },
+    };
+    Some(DiagnosticCode::Kotlin(code))
 }

@@ -3,7 +3,7 @@ source: crates/caffeine-ls/tests/lsp_snapshots.rs
 expression: diagnostics
 ---
 {
-  "resultId": "9a32cbe9605177fc",
+  "resultId": "a5cf877405291c35",
   "items": [
     {
       "range": {
@@ -17,6 +17,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
+      "code": "kotlin.unterminated-string",
       "source": "caffeine-ls",
       "message": "unclosed string literal"
     },
@@ -32,6 +33,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
+      "code": "kotlin.expected-token",
       "source": "caffeine-ls",
       "message": "CLOSE_QUOTE expected"
     },
@@ -47,6 +49,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
+      "code": "kotlin.expected-token",
       "source": "caffeine-ls",
       "message": "R_BRACE expected"
     }

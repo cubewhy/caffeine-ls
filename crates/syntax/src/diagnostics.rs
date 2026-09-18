@@ -531,12 +531,12 @@ pub enum JavaDiagnosticCode {
     NotAStatement,
 }
 
-/// The Kotlin type-system diagnostic codes.
+/// The Kotlin diagnostic codes.
 ///
 /// Each names the error kotlinc reports for the same source, so the code and
 /// the message agree: the message is the compiler's wording (see
-/// `hir_ty::kotlin::diagnostics`), and the code is the stable identifier a
-/// client keys on.
+/// `hir_ty::kotlin::diagnostics` for a body's and `hir_ty::kotlin::decl_check`
+/// for a declaration's), and the code is the stable identifier a client keys on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KotlinDiagnosticCode {
     /// `unresolved reference '<name>'.`
@@ -547,6 +547,68 @@ pub enum KotlinDiagnosticCode {
     NullabilityMismatch,
     /// `'val' cannot be reassigned.`
     ValReassignment,
+    /// `'<name>' overrides nothing.`
+    OverridesNothing,
+    /// `'<name>' hides member of supertype '<S>' and needs an 'override'
+    /// modifier.`
+    NeedsOverrideModifier,
+    /// `'<name>' in '<S>' is final and cannot be overridden.`
+    FinalMemberOverridden,
+    /// `class '<C>' is not abstract and does not implement abstract
+    /// [base class] member:` followed by the member.
+    UnimplementedAbstractMember,
+    /// `this type has a constructor, so it must be initialized here.`
+    SupertypeNotInitialized,
+    /// `conflicting overloads:` followed by the other declaration.
+    ConflictingOverloads,
+    /// `conflicting declarations:` followed by the other declaration.
+    ConflictingDeclarations,
+    /// `modifier '<m>' is not applicable to '<target>'.`
+    ModifierNotApplicable,
+    /// `'lateinit' modifier is allowed only on mutable properties.`
+    LateinitOnImmutableProperty,
+    /// `'lateinit' modifier is not allowed on properties with initializer.`
+    LateinitWithInitializer,
+    /// `'lateinit' modifier is not allowed on properties of primitive types.`
+    LateinitOnPrimitive,
+    // Lexer.
+    /// An unterminated `/* … */` comment.
+    UnterminatedBlockComment,
+    /// An unterminated string literal.
+    UnterminatedString,
+    /// An empty character literal (`''`).
+    EmptyCharLiteral,
+    /// An unterminated character literal.
+    UnterminatedCharLiteral,
+    /// A character literal with more than one character.
+    TooManyCharsInCharLiteral,
+    /// An escape sequence the language does not define.
+    UnsupportedEscapeSequence,
+    /// An empty identifier (`` ` ` ``).
+    EmptyIdentifier,
+    /// An unterminated backtick identifier.
+    UnterminatedIdentifier,
+    /// A character no Kotlin token starts with.
+    UnexpectedChar,
+    /// A numeric literal with a leading zero.
+    LeadingZerosNotAllowed,
+    /// A `long` suffix the language spells `L` only.
+    WrongLongSuffixCase,
+    /// An underscore at a position a numeric literal does not allow.
+    IllegalUnderscore,
+    /// A floating-point literal without exponent digits (`1e`).
+    MissingExponentDigits,
+    /// A radix literal without digits (`0x`).
+    MissingNumericDigits,
+    // Parse.
+    /// A token the production expected is not the one written.
+    ExpectedToken,
+    /// A contextual keyword the production expected is not the one written.
+    ExpectedKeyword,
+    /// A construct the production expected (a declaration, an expression).
+    ExpectedConstruct,
+    /// A recovery message the parser raised (`expected a when entry`).
+    SyntaxError,
 }
 
 impl KotlinDiagnosticCode {
@@ -557,6 +619,41 @@ impl KotlinDiagnosticCode {
             KotlinDiagnosticCode::TypeMismatch => "kotlin.type-mismatch",
             KotlinDiagnosticCode::NullabilityMismatch => "kotlin.nullability-mismatch",
             KotlinDiagnosticCode::ValReassignment => "kotlin.val-reassignment",
+            KotlinDiagnosticCode::OverridesNothing => "kotlin.overrides-nothing",
+            KotlinDiagnosticCode::NeedsOverrideModifier => "kotlin.needs-override-modifier",
+            KotlinDiagnosticCode::FinalMemberOverridden => "kotlin.final-member-overridden",
+            KotlinDiagnosticCode::UnimplementedAbstractMember => {
+                "kotlin.unimplemented-abstract-member"
+            }
+            KotlinDiagnosticCode::SupertypeNotInitialized => "kotlin.supertype-not-initialized",
+            KotlinDiagnosticCode::ConflictingOverloads => "kotlin.conflicting-overloads",
+            KotlinDiagnosticCode::ConflictingDeclarations => "kotlin.conflicting-declarations",
+            KotlinDiagnosticCode::ModifierNotApplicable => "kotlin.modifier-not-applicable",
+            KotlinDiagnosticCode::LateinitOnImmutableProperty => {
+                "kotlin.lateinit-on-immutable-property"
+            }
+            KotlinDiagnosticCode::LateinitWithInitializer => "kotlin.lateinit-with-initializer",
+            KotlinDiagnosticCode::LateinitOnPrimitive => "kotlin.lateinit-on-primitive",
+            KotlinDiagnosticCode::UnterminatedBlockComment => "kotlin.unterminated-block-comment",
+            KotlinDiagnosticCode::UnterminatedString => "kotlin.unterminated-string",
+            KotlinDiagnosticCode::EmptyCharLiteral => "kotlin.empty-char-literal",
+            KotlinDiagnosticCode::UnterminatedCharLiteral => "kotlin.unterminated-char-literal",
+            KotlinDiagnosticCode::TooManyCharsInCharLiteral => {
+                "kotlin.too-many-chars-in-char-literal"
+            }
+            KotlinDiagnosticCode::UnsupportedEscapeSequence => "kotlin.unsupported-escape-sequence",
+            KotlinDiagnosticCode::EmptyIdentifier => "kotlin.empty-identifier",
+            KotlinDiagnosticCode::UnterminatedIdentifier => "kotlin.unterminated-identifier",
+            KotlinDiagnosticCode::UnexpectedChar => "kotlin.unexpected-char",
+            KotlinDiagnosticCode::LeadingZerosNotAllowed => "kotlin.leading-zeros-not-allowed",
+            KotlinDiagnosticCode::WrongLongSuffixCase => "kotlin.wrong-long-suffix-case",
+            KotlinDiagnosticCode::IllegalUnderscore => "kotlin.illegal-underscore",
+            KotlinDiagnosticCode::MissingExponentDigits => "kotlin.missing-exponent-digits",
+            KotlinDiagnosticCode::MissingNumericDigits => "kotlin.missing-numeric-digits",
+            KotlinDiagnosticCode::ExpectedToken => "kotlin.expected-token",
+            KotlinDiagnosticCode::ExpectedKeyword => "kotlin.expected-keyword",
+            KotlinDiagnosticCode::ExpectedConstruct => "kotlin.expected-construct",
+            KotlinDiagnosticCode::SyntaxError => "kotlin.syntax-error",
         }
     }
 }
