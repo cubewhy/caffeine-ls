@@ -24,7 +24,6 @@ pub enum SyntaxKind {
     STRING_CONTENT,
 
     STRING_LITERAL,
-    TEXT_BLOCK,
     INTEGER_LITERAL,
     FLOAT_LITERAL,
     CHAR_LITERAL,
@@ -139,7 +138,6 @@ pub enum SyntaxKind {
     // Modifiers and annotations
     MODIFIER_LIST,
     ANNOTATION,
-    MULTI_ANNOTATION,
     ANNOTATION_USE_SITE_TARGET,
 
     // Names and paths

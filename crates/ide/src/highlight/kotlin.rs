@@ -354,7 +354,7 @@ fn is_annotation_name(user_type: &SyntaxNode<Lang>) -> bool {
     user_type.kind() == K::USER_TYPE
         && user_type
             .parent()
-            .is_some_and(|parent| matches!(parent.kind(), K::ANNOTATION | K::MULTI_ANNOTATION))
+            .is_some_and(|parent| matches!(parent.kind(), K::ANNOTATION))
 }
 
 /// A name written in a `package` or `import` directive. Every segment is a

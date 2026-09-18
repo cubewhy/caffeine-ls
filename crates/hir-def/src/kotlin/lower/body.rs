@@ -1034,7 +1034,7 @@ fn string_template(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang
         let text = node
             .children_with_tokens()
             .filter_map(NodeOrToken::into_token)
-            .filter(|token| matches!(token.kind(), K::STRING_CONTENT | K::TEXT_BLOCK))
+            .filter(|token| token.kind() == K::STRING_CONTENT)
             .map(|token| decode_string_content(token.text()))
             .collect::<String>();
         return ExprData::Literal(Literal::Str(text));

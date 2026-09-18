@@ -375,29 +375,6 @@ impl<'a> Parser<'a> {
             .enumerate()
             .all(|(i, &kind)| self.nth(i) == Some(kind))
     }
-
-    pub(crate) fn split_token(
-        &mut self,
-        first_kind: SyntaxKind,
-        first_len: u32,
-        rest_kind: SyntaxKind,
-    ) {
-        let Some(old_token) = self.source.nth(0) else {
-            return;
-        };
-        let (head, tail) = old_token.lexeme.split_at(first_len as usize);
-
-        self.events.push(Event::AddVirtualToken {
-            kind: first_kind,
-            lexeme: head,
-        });
-
-        self.override_token = Some(Token {
-            kind: rest_kind,
-            lexeme: tail,
-            offset: old_token.offset + TextSize::new(first_len),
-        });
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -459,19 +436,8 @@ impl ParseErrorKind {
 pub enum ExpectedConstruct {
     #[display("a declaration (e.g., class, variable, or method)")]
     Declaration,
-    #[display("a type declaration (e.g., class, interface, enum)")]
-    TypeDeclaration,
-    #[display("a class member (e.g., field or method)")]
-    MemberDeclaration,
     #[display("an expression (e.g., a calculation or value)")]
     Expression,
-    #[display("a statement")]
-    Statement,
-    #[display("a type")]
-    Type,
-    #[display("a qualified name (e.g., java.util.List)")]
-    QualifiedName,
-    // TODO: kotlin constructions
 }
 
 #[derive(Clone, Copy)]
