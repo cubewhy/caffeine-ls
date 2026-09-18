@@ -420,10 +420,10 @@ pub(super) fn postfix_unary_suffixes(p: &mut Parser) -> Option<PostfixSuffix> {
             s.complete(p, CALL_EXPRESSION);
             PostfixSuffix::Call
         } else if p.at(LESS) && at_type_arguments(p) {
-            // typeArguments
-            let s = p.start();
+            // typeArguments — the production completes its own
+            // `TYPE_ARGUMENTS` node, so wrapping it again would put one
+            // `TYPE_ARGUMENTS` inside another.
             type_arguments(p);
-            s.complete(p, TYPE_ARGUMENTS);
             PostfixSuffix::TypeArguments
         } else if matches!(p.current(), Some(DOT | SAFE_ACCESS | COLON_COLON))
             || (p.at(NEWLINE) && matches!(p.nth(1), Some(DOT | SAFE_ACCESS)))
