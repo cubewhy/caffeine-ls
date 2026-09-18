@@ -232,6 +232,60 @@ parser_snapshot!(
     "#}
 );
 
+/// KLS `assignment` takes its destination from an `assignableExpression`, so
+/// only the shapes `directlyAssignableExpression` admits can precede `=`
+/// ([spec: grammar-rule-directlyAssignableExpression]): a bare identifier, a
+/// postfix chain that ends in an `assignableSuffix` (`a.b`, `a[0]`, `a<b>`,
+/// `a!!.b`, `f().x`, `this.x`), or a parenthesized one. Every `=` statement
+/// here is an `ASSIGNMENT_STATEMENT`, and `kotlinc` 2.4.20 compiles all of them
+/// clean.
+///
+/// The compound operators take `assignableExpression`
+/// ([spec: grammar-rule-assignableExpression]), which is
+/// `{unaryPrefix} postfixUnaryExpression` — wider than the `=` alternative, so
+/// `!flag += 1` and `a!! += 1` are assignments where `!flag = 1` is not.
+/// `kotlinc` 2.4.20 parses both of them as assignments as well and then rejects
+/// their *operands* (`unresolved reference 'plusAssign' on receiver of type
+/// 'Boolean'`, `variable expected.`).
+parser_snapshot!(
+    parse_assignable_destinations,
+    indoc! {r#"
+        fun f(a: Int, arr: IntArray, p: P, flag: Boolean) {
+            this.field = 1
+            p.field = 1
+            arr[0] = 1
+            (p).field = 1
+            p!!.field = 1
+            make().field = 1
+            !flag += 1
+            a!! += 1
+        }
+    "#}
+);
+
+/// Destinations an `assignableExpression` cannot read up to the operator. `a +
+/// b` is one `BINARY_EXPRESSION`, so the production stops after `a`; `-a` is a
+/// `prefixUnaryExpression`, which only the `assignmentAndOperator` alternative
+/// admits; and `f()` is a postfix chain whose last suffix is a call, not an
+/// `assignableSuffix`. Each statement is therefore an `EXPRESSION_STATEMENT` —
+/// never an `ASSIGNMENT_STATEMENT` whose destination is not a place — and the
+/// operator carries a recovery.
+///
+/// `kotlinc` 2.4.20 instead reads all three as assignments and reports
+/// `error: variable expected.` at the left-hand side; this parser deliberately
+/// stops one step earlier, so that the body model never sees an assignment
+/// whose destination is a value.
+parser_snapshot!(
+    parse_not_an_assignable_destination,
+    indoc! {r#"
+        fun f(a: Int, b: Int, c: Int) {
+            a + b = c
+            -a = 1
+            f() = 1
+        }
+    "#}
+);
+
 /// An `objectLiteral` needs neither a delegation-specifier list nor a class
 /// body ([spec: grammar-rule-objectLiteral]): `object : Runnable` is a complete
 /// object, and its members are whatever an `L_BRACE` opens. `kotlinc` 2.4.20

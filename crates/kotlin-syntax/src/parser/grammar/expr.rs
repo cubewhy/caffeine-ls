@@ -290,7 +290,7 @@ fn as_expression(p: &mut Parser) {
 /// `{unaryPrefix} postfixUnaryExpression`
 /// `unaryPrefix`: annotation | label | prefixUnaryOperator
 /// [spec: grammar-rule-prefixUnaryExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-prefixUnaryExpression
-fn prefix_unary_expression(p: &mut Parser) {
+pub(super) fn prefix_unary_expression(p: &mut Parser) {
     let m = p.start();
     let mut wrapped = false;
     while at_prefix_unary_prefix(p) {
@@ -325,30 +325,81 @@ fn at_prefix_unary_prefix(p: &Parser) -> bool {
     ) || (p.at(IDENTIFIER) && p.nth(1) == Some(AT))
 }
 
+/// The kind of one `postfixUnarySuffix`
+/// [spec: grammar-rule-postfixUnarySuffix] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-postfixUnarySuffix
+#[derive(Clone, Copy)]
+pub(super) enum PostfixSuffix {
+    /// `postfixUnaryOperator`: `++`, `--`, `!!`.
+    Operator,
+    /// `typeArguments`
+    TypeArguments,
+    /// `callSuffix` — both `valueArguments` and an `annotatedLambda`.
+    Call,
+    /// `indexingSuffix`
+    Indexing,
+    /// `navigationSuffix`
+    Navigation,
+}
+
+impl PostfixSuffix {
+    /// Whether KLS lists this suffix under `assignableSuffix`
+    /// ([spec: grammar-rule-assignableSuffix] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-assignableSuffix):
+    /// `typeArguments | indexingSuffix | navigationSuffix`. A `++`/`--`/`!!` or
+    /// a call does not make the expression a destination.
+    pub(super) fn is_assignable(self) -> bool {
+        matches!(
+            self,
+            Self::TypeArguments | Self::Indexing | Self::Navigation
+        )
+    }
+}
+
 /// `primaryExpression {postfixUnarySuffix}`
 /// [spec: grammar-rule-postfixUnaryExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-postfixUnaryExpression
-fn postfix_unary_expression(p: &mut Parser) {
+///
+/// Returns the kind of the *last* suffix consumed, or `None` when the
+/// expression has none, in which case the tree keeps the bare
+/// `PRIMARY_EXPRESSION`. The assignable-expression productions need that last
+/// suffix: `directlyAssignableExpression` is
+/// `postfixUnaryExpression assignableSuffix`
+/// ([spec: grammar-rule-directlyAssignableExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-directlyAssignableExpression),
+/// so only the final suffix decides whether the chain is a destination.
+pub(super) fn postfix_unary_expression(p: &mut Parser) -> Option<PostfixSuffix> {
     let m = p.start();
     primary_expression(p);
-    let mut wrapped = false;
+    let last = postfix_unary_suffixes(p);
+
+    if last.is_some() {
+        m.complete(p, POSTFIX_UNARY_EXPRESSION);
+    } else {
+        m.abandon(p);
+    }
+    last
+}
+
+/// The `{postfixUnarySuffix}` of a `postfixUnaryExpression`, on top of a
+/// primary expression the caller has already parsed. Returns the last suffix
+/// consumed, or `None` when the chain is empty.
+pub(super) fn postfix_unary_suffixes(p: &mut Parser) -> Option<PostfixSuffix> {
+    let mut last = None;
 
     loop {
-        if p.at(PLUS_PLUS) || p.at(MINUS_MINUS) || p.at(NOT_NULL_ASSERT) {
+        let suffix = if p.at(PLUS_PLUS) || p.at(MINUS_MINUS) || p.at(NOT_NULL_ASSERT) {
             // postfixUnaryOperator
             p.bump();
-            wrapped = true;
+            PostfixSuffix::Operator
         } else if p.at(L_PAREN) {
             // callSuffix: valueArguments
             let s = p.start();
             value_arguments(p);
             s.complete(p, CALL_EXPRESSION);
-            wrapped = true;
+            PostfixSuffix::Call
         } else if p.at(L_BRACKET) {
             // indexingSuffix
             let s = p.start();
             indexing_suffix(p);
             s.complete(p, INDEXING_EXPRESSION);
-            wrapped = true;
+            PostfixSuffix::Indexing
         } else if (p.at(L_BRACE) || p.at(AT) || (p.at(IDENTIFIER) && p.nth(1) == Some(AT)))
             && p.trailing_lambda_allowed()
         {
@@ -367,34 +418,39 @@ fn postfix_unary_expression(p: &mut Parser) {
             }
             lambda_literal(p);
             s.complete(p, CALL_EXPRESSION);
-            wrapped = true;
+            PostfixSuffix::Call
         } else if p.at(LESS) && at_type_arguments(p) {
             // typeArguments
             let s = p.start();
             type_arguments(p);
             s.complete(p, TYPE_ARGUMENTS);
-            wrapped = true;
+            PostfixSuffix::TypeArguments
         } else if matches!(p.current(), Some(DOT | SAFE_ACCESS | COLON_COLON))
             || (p.at(NEWLINE) && matches!(p.nth(1), Some(DOT | SAFE_ACCESS)))
         {
-            // navigationSuffix (may continue across a line break)
-            eat_nl(p);
-            let s = p.start();
-            p.bump();
-            eat_nl(p);
-            navigation_member(p);
-            s.complete(p, NAVIGATION_SUFFIX);
-            wrapped = true;
+            navigation_suffix(p);
+            PostfixSuffix::Navigation
         } else {
             break;
-        }
+        };
+        last = Some(suffix);
     }
 
-    if wrapped {
-        m.complete(p, POSTFIX_UNARY_EXPRESSION);
-    } else {
-        m.abandon(p);
-    }
+    last
+}
+
+/// `navigationSuffix`: `{NL} memberAccessOperator {NL} navigationMember`
+/// [spec: grammar-rule-navigationSuffix] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-navigationSuffix
+///
+/// The `{NL}` before the operator is what lets a long chain continue on the
+/// next line (`foo\n    .bar()`).
+fn navigation_suffix(p: &mut Parser) {
+    eat_nl(p);
+    let s = p.start();
+    p.bump();
+    eat_nl(p);
+    navigation_member(p);
+    s.complete(p, NAVIGATION_SUFFIX);
 }
 
 /// The member after `.`, `?.` or `::`: simpleIdentifier | 'class' |

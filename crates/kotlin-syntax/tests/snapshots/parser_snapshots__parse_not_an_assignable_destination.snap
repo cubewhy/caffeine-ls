@@ -1,0 +1,158 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun f(a: Int, b: Int, c: Int) {
+    a + b = c
+    -a = 1
+    f() = 1
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "f"
+L_PAREN "("
+IDENTIFIER "a"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "b"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "c"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "a"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "c"
+NEWLINE "\n"
+WHITESPACE "    "
+MINUS "-"
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "f"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..71
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..70
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..5 "f"
+    VALUE_PARAMETERS@5..29
+      L_PAREN@5..6 "("
+      VALUE_PARAMETER@6..12
+        IDENTIFIER@6..7 "a"
+        COLON@7..8 ":"
+        WHITESPACE@8..9 " "
+        TYPE@9..12
+          USER_TYPE@9..12
+            IDENTIFIER@9..12 "Int"
+      COMMA@12..13 ","
+      WHITESPACE@13..14 " "
+      VALUE_PARAMETER@14..20
+        IDENTIFIER@14..15 "b"
+        COLON@15..16 ":"
+        WHITESPACE@16..17 " "
+        TYPE@17..20
+          USER_TYPE@17..20
+            IDENTIFIER@17..20 "Int"
+      COMMA@20..21 ","
+      WHITESPACE@21..22 " "
+      VALUE_PARAMETER@22..28
+        IDENTIFIER@22..23 "c"
+        COLON@23..24 ":"
+        WHITESPACE@24..25 " "
+        TYPE@25..28
+          USER_TYPE@25..28
+            IDENTIFIER@25..28 "Int"
+      R_PAREN@28..29 ")"
+    WHITESPACE@29..30 " "
+    BLOCK@30..70
+      L_BRACE@30..31 "{"
+      NEWLINE@31..32 "\n"
+      WHITESPACE@32..36 "    "
+      EXPRESSION_STATEMENT@36..41
+        BINARY_EXPRESSION@36..41
+          PRIMARY_EXPRESSION@36..37
+            IDENTIFIER@36..37 "a"
+          WHITESPACE@37..38 " "
+          PLUS@38..39 "+"
+          WHITESPACE@39..40 " "
+          PRIMARY_EXPRESSION@40..41
+            IDENTIFIER@40..41 "b"
+      WHITESPACE@41..42 " "
+      EQUAL@42..43 "="
+      WHITESPACE@43..44 " "
+      EXPRESSION_STATEMENT@44..45
+        PRIMARY_EXPRESSION@44..45
+          IDENTIFIER@44..45 "c"
+      NEWLINE@45..46 "\n"
+      WHITESPACE@46..50 "    "
+      EXPRESSION_STATEMENT@50..52
+        PREFIX_UNARY_EXPRESSION@50..52
+          MINUS@50..51 "-"
+          PRIMARY_EXPRESSION@51..52
+            IDENTIFIER@51..52 "a"
+      WHITESPACE@52..53 " "
+      EQUAL@53..54 "="
+      WHITESPACE@54..55 " "
+      EXPRESSION_STATEMENT@55..56
+        PRIMARY_EXPRESSION@55..56
+          INTEGER_LITERAL@55..56 "1"
+      NEWLINE@56..57 "\n"
+      WHITESPACE@57..61 "    "
+      EXPRESSION_STATEMENT@61..64
+        POSTFIX_UNARY_EXPRESSION@61..64
+          PRIMARY_EXPRESSION@61..62
+            IDENTIFIER@61..62 "f"
+          CALL_EXPRESSION@62..64
+            VALUE_ARGUMENTS@62..64
+              L_PAREN@62..63 "("
+              R_PAREN@63..64 ")"
+      WHITESPACE@64..65 " "
+      EQUAL@65..66 "="
+      WHITESPACE@66..67 " "
+      EXPRESSION_STATEMENT@67..68
+        PRIMARY_EXPRESSION@67..68
+          INTEGER_LITERAL@67..68 "1"
+      NEWLINE@68..69 "\n"
+      R_BRACE@69..70 "}"
+  NEWLINE@70..71 "\n"
