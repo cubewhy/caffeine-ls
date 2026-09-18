@@ -49,6 +49,15 @@ impl crate::lang::LanguageFileIndex for Kotlin {
         out
     }
 
+    /// The package the file declares ([KLS
+    /// `packages-and-imports.html#packages`](https://kotlinlang.org/spec/packages-and-imports.html#packages)),
+    /// `None` for the unnamed package — the namespace the file's declarations
+    /// are indexed under, and the one the compiler's synthesized facade class
+    /// lives in.
+    fn file_package(&self, db: &dyn HirDatabase, file: FileId) -> Option<Name> {
+        hir_def::kotlin::plugin::tree(db, file)?.package.clone()
+    }
+
     fn file_facade_class(&self, db: &dyn HirDatabase, file: FileId) -> Option<Name> {
         // The compiler's name for the facade (`FooKt`, or the `@file:JvmName`
         // the file writes).

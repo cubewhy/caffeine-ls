@@ -366,11 +366,22 @@ fn a_java_caller_reaches_a_default_facade() {
             "package a;\n\npublic class UseSample {\n    int run() {\n        return SampleKt.doubled(SampleKt.LIMIT);\n    }\n}\n",
         ),
     ];
-    let (db, _) = interop_fixture(&files);
+    let (db, source_set) = interop_fixture(&files);
     assert_eq!(
         hir::file_facade_class(&db, FileId::from_raw(1)).map(|facade| facade.to_string()),
         Some("SampleKt".to_owned()),
         "the compiler names a facade after the file"
+    );
+    // The facade is a *source-set class of the file's package*: `a.SampleKt` is
+    // what a Java caller names, and the file index files the file under the
+    // package it declares.
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+    assert!(
+        matches!(
+            hir::fqn_resolve(&db, &scope, "a.SampleKt"),
+            Some(hir::Resolved::Facade { .. })
+        ),
+        "the facade resolves by its fully qualified name"
     );
     let diagnostics = render_body_diagnostic_spans(&db, &files);
     assert!(
