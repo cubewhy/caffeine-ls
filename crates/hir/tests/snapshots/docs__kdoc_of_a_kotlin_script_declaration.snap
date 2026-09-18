@@ -1,0 +1,9 @@
+---
+source: crates/hir/tests/docs.rs
+expression: "docs.join(\"\\n\")"
+---
+greeting → "/**\n * The greeting of the script.\n */"
+Greeter → <none>
+Greeter → <none>
+Greeter.name → <none>
+Greeter.greet → "/** The greeting of a name. */"

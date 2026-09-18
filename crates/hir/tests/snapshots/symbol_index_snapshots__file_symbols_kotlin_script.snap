@@ -1,0 +1,10 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_symbols(&file_symbols(&db, FileId::from_raw(1)))"
+---
+property   side public=true item0
+class      Greeter public=true item1
+constructor Greeter public=true item2
+property   Greeter.name public=true item3
+function   Greeter.greet public=true item4
+property   greeting public=true item5

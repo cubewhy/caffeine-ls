@@ -1,0 +1,6 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "format!(\"ScriptKt → {}\\nScript → {}\",\nrender_resolved(&db,\nfqn_resolve(&db, &ResolutionScope::SourceSet(main_source_set()),\n\"ScriptKt\").as_ref()),\nrender_resolved(&db,\nfqn_resolve(&db, &ResolutionScope::SourceSet(main_source_set()),\n\"Script\").as_ref()),)"
+---
+ScriptKt → <none>
+Script → <none>

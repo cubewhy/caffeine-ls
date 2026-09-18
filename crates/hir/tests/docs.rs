@@ -156,3 +156,49 @@ fn file_docs_recompute_after_edit() {
         format!("before:\n{before}\n\nafter:\n{after}")
     );
 }
+
+/// A `.kts` script's KDoc: a script's top-level declarations are the file's
+/// top-level declarations ([spec: grammar-rule-script]), so `file_docs` indexes
+/// their comments exactly as a `.kt` file's, while the script's other
+/// statements — the body of the implicit `main`
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>) — declare no
+/// item and carry none.
+///
+/// `kotlinc 2.4.20` compiles the fixture as a script
+/// (`kotlinc Script.kts -d out`), and its KDoc is the standard library's.
+#[test]
+fn kdoc_of_a_kotlin_script_declaration() {
+    let script = r#"/**
+ * The greeting of the script.
+ */
+val greeting: String = "hello"
+
+class Greeter(val name: String) {
+    /** The greeting of a name. */
+    fun greet(): String = "Hello, $name!"
+}
+
+println(greeting)
+"#;
+    let db = build(
+        &[Root {
+            source_set: main_source_set(),
+            files: vec![file(1, "/src/main/kotlin/Script.kts", script)],
+            classpath: vec![],
+        }],
+        &[],
+    );
+    let docs: Vec<String> = hir::file_symbols(&db, file_id())
+        .into_iter()
+        .map(|symbol| {
+            format!(
+                "{} → {}",
+                symbol.name,
+                hir::item_doc(&db, file_id(), symbol.item)
+                    .map(|doc| format!("{doc:?}"))
+                    .unwrap_or_else(|| "<none>".to_owned())
+            )
+        })
+        .collect();
+    assert_snapshot!("kdoc_of_a_kotlin_script_declaration", docs.join("\n"));
+}

@@ -114,6 +114,78 @@ private class Hidden
     );
 }
 
+/// A `.kts` script's declarations. A script is the `script` production
+/// ([spec: grammar-rule-script]), whose statements include the declaration
+/// forms: its top-level declarations are the file's top-level declarations,
+/// while its other top-level statements — the body of the implicit `main` the
+/// compiler wraps them in
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>) — declare
+/// nothing and are not indexed. A script declares no package, so its
+/// declarations are indexed in the unnamed package.
+///
+/// The fixture is the shape a Gradle script has, and `kotlinc 2.4.20` compiles
+/// it as a script (`kotlinc Script.kts -d out`): the classfile carries one
+/// member per declaration the index reports and none for `println`.
+#[test]
+fn file_symbols_kotlin_script() {
+    let src = r#"/** The side of the square. */
+val side = 4.0
+
+class Greeter(val name: String) {
+    fun greet(): String = "Hello, $name!"
+}
+
+val greeting = Greeter("script").greet()
+
+println(greeting)
+"#;
+    let db = build(
+        &[Root {
+            source_set: main_source_set(),
+            files: vec![file(1, "/src/main/kotlin/Script.kts", src)],
+            classpath: vec![],
+        }],
+        &[],
+    );
+    assert_snapshot!(
+        "file_symbols_kotlin_script",
+        render_symbols(&file_symbols(&db, FileId::from_raw(1)))
+    );
+
+    // A script has no *facade* class of statics: `Script.kts` compiles to
+    // `Script`, whose members are the script's instance members
+    // (`javap -p` on kotlinc 2.4.20's output for `fun helper(): Int = 1` in a
+    // script is `public final int helper()`, against `public static final int
+    // f()` on `LowerKt` for the same declaration in `lower.kt`). A Java caller
+    // names no class of the script's declarations, so neither the compiler's
+    // script class nor a synthesized `ScriptKt` resolves as a facade — the
+    // script's class is not a declaration of the file's model either.
+    assert_snapshot!(
+        "fqn_resolve_kotlin_script_facade",
+        format!(
+            "ScriptKt → {}\nScript → {}",
+            render_resolved(
+                &db,
+                fqn_resolve(
+                    &db,
+                    &ResolutionScope::SourceSet(main_source_set()),
+                    "ScriptKt"
+                )
+                .as_ref()
+            ),
+            render_resolved(
+                &db,
+                fqn_resolve(
+                    &db,
+                    &ResolutionScope::SourceSet(main_source_set()),
+                    "Script"
+                )
+                .as_ref()
+            ),
+        )
+    );
+}
+
 #[test]
 fn file_symbols_mixed_declarations() {
     let src = r#"package com.example;

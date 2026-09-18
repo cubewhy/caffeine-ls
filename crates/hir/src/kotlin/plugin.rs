@@ -1,7 +1,7 @@
 //! Kotlin as the file-index layer's registry entry: the symbols, the doc
 //! comments and the facade class a Kotlin file contributes to the workspace.
 
-use base_db::{LanguageKind, parse};
+use base_db::{LanguageKind, file_language_kind, parse};
 use hir_def::jvm::decl::ItemAnnotationValue;
 use hir_def::kotlin::annotations::JvmAnnotation;
 use hir_def::kotlin::item_tree::{KotlinClassKind, KotlinItemData, KotlinItemTree};
@@ -39,7 +39,12 @@ impl crate::lang::LanguageFileIndex for Kotlin {
         let Some(tree) = hir_def::kotlin::plugin::tree(db, file) else {
             return Vec::new();
         };
-        let language = LanguageKind::Kotlin;
+        // The *file's* kind, not the language: the id map and the parse are
+        // keyed by `(file, kind)` together (`crate::db::item_tree_query`), and
+        // the tree's anchors were resolved against the entry of the file's own
+        // kind — for a `.kts` script the `script` production
+        // ([spec: grammar-rule-script]), for a `.kt` file the `kotlinFile` one.
+        let language = file_language_kind(db, file).unwrap_or(LanguageKind::Kotlin);
         let map = hir_def::db::ast_id_map(db, file, language);
         let source = parse(db, file, language).syntax_node(language);
         let mut out = Vec::new();
@@ -80,7 +85,21 @@ impl crate::lang::LanguageFileIndex for Kotlin {
 /// `JvmName` that the file's own package or an import binds is the file's own
 /// annotation, and renames nothing. The file's *name* is what decides the
 /// default, `Foo.kt` compiling to `FooKt`.
+///
+/// A `.kts` script has **no** facade: it compiles to a class of its own — the
+/// file's name, `hello.kts` to `Hello` and `build.gradle.kts` to
+/// `Build_gradle`, which `@file:JvmName` does not rename — whose *members are
+/// the script's instance members*, not statics: `fun helper(): Int = 1` in a
+/// script is `public final int helper()`, while the same declaration in a `.kt`
+/// file is `public static final int helper()` on `HelperKt` (`javap -p` on
+/// kotlinc 2.4.20's output for both). A Java caller has no class of statics to
+/// name, so the answer is `None` rather than the script class: naming the
+/// script class here would resolve a *facade* lookup against members that are
+/// not statics.
 fn facade_class(db: &dyn HirDatabase, file: FileId, tree: &KotlinItemTree) -> Option<Name> {
+    if tree.language == LanguageKind::KotlinScript {
+        return None;
+    }
     if let Some(name) = file_jvm_name(db, file, tree) {
         return Some(Name::new(&name));
     }
