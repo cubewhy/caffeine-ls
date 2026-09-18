@@ -938,3 +938,22 @@ class Holder(val items: List<Int>) {
 fun topLevel(): Int = 1
 "#,
 }
+
+/// A subject-less `when` writes `in`/`is` conditions the arm cannot test
+/// against anything, and both stay *conditions* of the arm: the containment
+/// keeps a missing element exactly as the type test keeps a missing expression,
+/// so neither arm is read as the `else` an empty condition list means.
+///
+/// The source is not valid Kotlin — `kotlinc` 2.4.20 reports `condition of type
+/// 'Boolean' expected.` for both arms — and is here for the model only.
+body_snapshot_lang! {
+    kotlin_body_when_without_subject,
+    LanguageKind::Kotlin,
+    r#"
+fun f(x: Int): Int = when {
+    in 1..5 -> 1
+    is Int -> 2
+    else -> 3
+}
+"#,
+}

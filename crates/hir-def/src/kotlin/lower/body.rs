@@ -1624,13 +1624,20 @@ fn when_arm(
                     continue;
                 };
                 let container = expr(ctx, owner, &container);
-                if let Some(element) = subject {
-                    conditions.push(WhenCondition::Containment {
-                        element,
-                        container,
-                        negated,
-                    });
-                }
+                // A subject-less `when` writes `when { in 1..5 -> … }`, which is
+                // not valid Kotlin — the condition must be a `Boolean` — but the
+                // arm still carries a containment whose element the source does
+                // not write, exactly as the type test below does. Dropping the
+                // condition instead would make the arm indistinguishable from
+                // an `else`, which is the one shape [`WhenArm`] reads from an
+                // *empty* condition list.
+                let element = subject
+                    .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, child.text_range()));
+                conditions.push(WhenCondition::Containment {
+                    element,
+                    container,
+                    negated,
+                });
             }
             K::TYPE_TEST => {
                 let negated = child

@@ -1,0 +1,32 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun f(x: Int): Int = when {
+    in 1..5 -> 1
+    is Int -> 2
+    else -> 3
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun f(x: Int): Int @1..77
+
+BODIES:
+fun f body b0:
+  param l0: x: Int
+  s0: expr e8
+  local l0: x: Int
+  expr e0: literal Int(1) 
+  expr e1: literal Int(5) 
+  expr e2: range [e0, e1]
+  expr e3: <missing> 
+  expr e4: literal Int(1) 
+  expr e5: <missing> 
+  expr e6: literal Int(2) 
+  expr e7: literal Int(3) 
+  expr e8: when (3 arms) [e3, e4, e5, e6, e7]
