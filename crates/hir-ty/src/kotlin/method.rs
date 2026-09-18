@@ -123,7 +123,9 @@ impl Member {
                     .first()
                     .copied()
                     .unwrap_or_else(|| ty_from_java(db, method.ret)),
-                _ => ty_from_java(db, method.ret),
+                // A `suspend` function answers the type its continuation
+                // carries, not the erased `Object` the classfile writes.
+                _ => suspend_return(db, method).unwrap_or_else(|| ty_from_java(db, method.ret)),
             },
             MemberTarget::JavaField(field) => ty_from_java(db, field.ty),
             // A built-in member's type is the one the language declares for it.
@@ -184,6 +186,292 @@ impl Member {
         }
         self.ty(db).substitute(db, &binding)
     }
+
+    /// [`Self::call_ty`] with the *type arguments the call writes*
+    /// (`mutableListOf<File>()`) and the type the call is used *at*:
+    /// [`Self::type_vars`] are bound from the written arguments first, then
+    /// from what the written arguments determine
+    /// ([`argument_binding`] — the positional approximation), and from what the
+    /// expected type determines last ([KLS
+    /// `type-inference.html#call-completion`](https://kotlinlang.org/spec/type-inference.html#call-completion)
+    /// completes a call's type arguments from the type it is used at, and a
+    /// *written* type argument always wins over an inferred one).
+    pub fn call_ty_with(
+        &self,
+        db: &dyn TyDatabase,
+        scope: &hir::ResolutionScope,
+        args: &[Ty],
+        written: &[Ty],
+        expected: Option<&Ty>,
+    ) -> Ty {
+        let call_args: Vec<CallArg<'_>> = args
+            .iter()
+            .map(|ty| CallArg {
+                name: None,
+                ty: *ty,
+                trailing: false,
+            })
+            .collect();
+        let mut binding = argument_binding(db, self, &call_args);
+        bind_written(db, &self.type_vars(db, scope), written, &mut binding);
+        if let Some(expected) = expected {
+            let mut inferred = rustc_hash::FxHashMap::default();
+            unify(
+                db,
+                &self.ty(db),
+                &expected_type(db, expected),
+                &mut inferred,
+            );
+            // What the *written* arguments and the written type arguments
+            // determined stays: the expected type only fills what is left open.
+            for (scope, ty) in inferred {
+                binding.entry(scope).or_insert(ty);
+            }
+        }
+        if binding.is_empty() {
+            return self.ty(db);
+        }
+        self.ty(db).substitute(db, &binding)
+    }
+
+    /// The type variables the member's own declaration declares, in declaration
+    /// order — what a written type argument is matched against, positionally
+    /// ([KLS
+    /// `type-system.html#type-parameters`](https://kotlin.org/spec/type-system.html#type-parameters)).
+    ///
+    /// A constructor's are the *class's*: `LinkedList<File>(…)` writes the
+    /// class's parameter, not a parameter of the constructor.
+    pub fn type_vars(&self, db: &dyn TyDatabase, scope: &hir::ResolutionScope) -> Vec<Ty> {
+        match &self.target {
+            MemberTarget::Kotlin { file, item } => {
+                super::db::type_params(db, *file, *item).to_vec()
+            }
+            MemberTarget::Java(method) => match self.kind {
+                MemberKind::Constructor => match method.owner.as_fqn() {
+                    Some(owner) => class_type_vars(db, scope, owner),
+                    None => Vec::new(),
+                },
+                _ => method
+                    .type_params
+                    .iter()
+                    .map(|param| Ty::type_var(db, param.scope.clone(), param.bounds.clone()))
+                    .collect(),
+            },
+            // A built-in member is declared by the language and declares no
+            // parameters of its own.
+            MemberTarget::Builtin { .. } | MemberTarget::JavaField(_) => Vec::new(),
+        }
+    }
+}
+
+/// The type a constructor call constructs: the classifier with the type
+/// arguments the call *writes*, or — when it writes none — the ones the type
+/// the call is used at determines ([KLS
+/// `type-inference.html#call-completion`](https://kotlinlang.org/spec/type-inference.html#call-completion)
+/// completes a call's type arguments from the type it is used at).
+///
+/// The class's *own* parameters are what both bind: `val list:
+/// MutableList<Component> = LinkedList()` constructs a `LinkedList<Component>`,
+/// because the expected type's arguments stand for the class's parameters
+/// positionally — the same approximation [`Member::call_ty_with`] makes for a
+/// callee's, and one the assignability check at the declaration corrects when
+/// the expected type is not one of the class's supertypes.
+pub fn constructed_ty(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    class: &Ty,
+    member: &Member,
+    written: &[Ty],
+    expected: Option<&Ty>,
+) -> Ty {
+    let TyKind::Reference {
+        name,
+        args: _,
+        local,
+    } = class.kind(db).clone()
+    else {
+        return *class;
+    };
+    let vars = member.type_vars(db, scope);
+    if vars.is_empty() {
+        return *class;
+    }
+    let mut binding = rustc_hash::FxHashMap::default();
+    bind_written(
+        db,
+        &vars,
+        &written[..vars.len().min(written.len())],
+        &mut binding,
+    );
+    if let Some(expected) = expected {
+        // The class *with its own variables* is what the expected type is
+        // unified against: the receiver names the class uninstantiated, and its
+        // parameters are what the expected type's arguments stand for.
+        let with_vars = match local {
+            Some(local) => Ty::local_reference(db, local, name.clone(), vars.clone()),
+            None => Ty::reference(db, name.clone(), vars.clone()),
+        };
+        let mut inferred = rustc_hash::FxHashMap::default();
+        unify(db, &with_vars, &expected_type(db, expected), &mut inferred);
+        for (scope, ty) in inferred {
+            binding.entry(scope).or_insert(ty);
+        }
+    }
+    if binding.is_empty() {
+        return *class;
+    }
+    let args: Vec<Ty> = vars
+        .iter()
+        .map(|var| var.substitute(db, &binding))
+        .collect();
+    match local {
+        Some(local) => Ty::local_reference(db, local, name, args),
+        None => Ty::reference(db, name, args),
+    }
+}
+
+/// The return type a *suspend* function has for a Kotlin caller.
+///
+/// A `suspend` function compiles to a method whose trailing parameter is a
+/// continuation and whose own return type is the erased `Object`
+/// (<https://kotlinlang.org/docs/java-to-kotlin-interop.html#suspending-functions>):
+/// `suspend fun <T> withContext(…): T` is
+/// `Object withContext(…, Continuation<? super T>)`. The `Object` the signature
+/// writes *is* the `T` the continuation carries, and a Kotlin caller reads that
+/// — `withContext(Dispatchers.IO) { … }` answers the lambda's type, and
+/// `return withContext(…) { return@withContext … }` is not an `Any!`.
+///
+/// `None` for every other method, including one that merely takes a
+/// continuation and returns something else.
+fn suspend_return(db: &dyn TyDatabase, method: &MethodData) -> Option<Ty> {
+    // The erased return is `Object` — the shape the compiler emits — and the
+    // marker is the trailing `kotlin.coroutines.Continuation` parameter.
+    if !matches!(
+        method.ret.kind(db),
+        TyKind::Reference { name, .. } if name.as_str() == "java.lang.Object"
+    ) {
+        return None;
+    }
+    let last = method.params.last()?;
+    let TyKind::Reference { name, args, .. } = last.kind(db) else {
+        return None;
+    };
+    if name.as_str() != "kotlin.coroutines.Continuation" {
+        return None;
+    }
+    // A classfile writes the continuation's parameter as `? super T`, which is
+    // the function's own return; an invariant `Continuation<T>` is one too.
+    let arg = *args.first()?;
+    let arg = match arg.kind(db) {
+        TyKind::Wildcard(Some(bound)) => bound.ty,
+        _ => arg,
+    };
+    Some(ty_from_java(db, arg))
+}
+
+/// Binds a declaration's own type variables to the type arguments a call
+/// writes, positionally ([KLS
+/// `type-system.html#type-parameters`](https://kotlinlang.org/spec/type-system.html#type-parameters)):
+/// `mutableListOf<File>()` is the call that writes the one parameter of the
+/// declaration it selects.
+fn bind_written(
+    db: &dyn TyDatabase,
+    vars: &[Ty],
+    written: &[Ty],
+    binding: &mut rustc_hash::FxHashMap<crate::ty::TypeVarScope, Ty>,
+) {
+    for (var, ty) in vars.iter().zip(written) {
+        if let TyKind::TypeVar { scope, .. } = var.kind(db) {
+            binding.insert(scope.clone(), *ty);
+        }
+    }
+}
+
+/// The type the value of `expected` has when it is *read* — what a call
+/// completed from an expected type is completed from: `String?` contributes
+/// `String`, and a platform type its lower half.
+fn expected_type(db: &dyn TyDatabase, expected: &Ty) -> Ty {
+    let mut ty = *expected;
+    loop {
+        match ty.kind(db) {
+            TyKind::Nullable(inner) => ty = *inner,
+            TyKind::Flexible { lower, .. } => ty = *lower,
+            TyKind::DefinitelyNonNull(inner) => ty = *inner,
+            _ => return ty,
+        }
+    }
+}
+
+/// The type variables a classifier declares, in declaration order: what an
+/// uninstantiated class type is built from, and what a call's type arguments
+/// and an expected type bind ([KLS
+/// `type-system.html#classifier-types`](https://kotlinlang.org/spec/type-system.html#classifier-types)).
+///
+/// A Kotlin source class answers from its item tree ([`super::db::type_params`]),
+/// a classfile class from its `Signature` attribute
+/// ([`hir::class_generic_info`]), and a *mapped* classifier the compiler
+/// declares over a JVM type — `kotlin.collections.MutableList` is
+/// `java.util.List`, and has no classfile of its own
+/// ([`super::builtins`]) — from the JVM type's.
+///
+/// A *Java source* class's parameters are not read here: their scope belongs to
+/// the Java layer's own resolution, and a recorded gap keeps the type
+/// uninstantiated rather than guessing.
+pub fn class_type_vars(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn: &Name) -> Vec<Ty> {
+    let resolve = |name: &str| hir::fqn_resolve(db, scope, name);
+    let resolved = resolve(fqn.as_str())
+        .or_else(|| super::builtins::jvm_class(fqn.as_str()).and_then(|jvm| resolve(jvm)));
+    match resolved {
+        Some(hir::Resolved::Library(library)) => {
+            let Some(info) = hir::class_generic_info(db, &hir::Resolved::Library(library.clone()))
+            else {
+                return Vec::new();
+            };
+            let interner = &db.hir_state().interner;
+            let owner = Name::new(interner.resolve(&library.entry.fqn));
+            info.type_params
+                .iter()
+                .map(|param| {
+                    let name = Name::new(interner.resolve(&param.name));
+                    let bounds = param
+                        .bounds
+                        .iter()
+                        .map(|bound| {
+                            let ctx = crate::java::resolve::LibrarySignature::class(&owner);
+                            super::ty::ty_from_java(
+                                db,
+                                crate::java::resolve::ty_from_library_signature(db, bound, &ctx),
+                            )
+                        })
+                        .collect();
+                    Ty::type_var(
+                        db,
+                        crate::ty::TypeVarScope::library(&owner, None, &name),
+                        bounds,
+                    )
+                })
+                .collect()
+        }
+        Some(hir::Resolved::Source(class)) => {
+            match hir_def::kotlin::plugin::model(&hir::file_item_tree(db, class.file)) {
+                Some(_) => super::db::type_params(db, class.file, class.item).to_vec(),
+                None => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Whether `ty` is the classifier `kotlin.Array`, written with its element
+/// type: the Kotlin spelling of the JVM array type `X[]`
+/// (<https://kotlinlang.org/docs/java-interop.html#mapped-types>), and the
+/// spelling a source file writes where a classfile signature says `[TX;`.
+fn is_kotlin_array(db: &dyn TyDatabase, ty: &Ty) -> bool {
+    matches!(
+        ty.kind(db),
+        TyKind::Reference { name, args, .. }
+            if name.as_str() == "kotlin.Array" && args.len() == 1
+    )
 }
 
 /// The unification of a candidate's parameter types against a call's argument
@@ -251,7 +539,9 @@ fn unify(
         // while the call writes its elements one by one: `mutableListOf("a")`
         // determines `T` from `"a"` against the *element* type the array
         // parameter holds.
-        (TyKind::Array(param), TyKind::Reference { .. } | TyKind::TypeVar { .. }) => {
+        (TyKind::Array(param), TyKind::Reference { .. } | TyKind::TypeVar { .. })
+            if !is_kotlin_array(db, arg) =>
+        {
             unify(db, param, arg, binding);
         }
         // A *projection* in the parameter position — `Iterable<? extends T>`,
@@ -570,6 +860,13 @@ fn receiver_key(db: &dyn TyDatabase, ty: &Ty) -> Option<ReceiverKey> {
         } => Some(ReceiverKey::Local(local.clone())),
         TyKind::Reference { name, .. } => Some(ReceiverKey::Named(name.clone())),
         TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => receiver_key(db, inner),
+        // A *platform* type is the type a Kotlin file sees a classfile type as
+        // ([`super::ty::ty_from_java`]), and the members it resolves are the
+        // *lower* half's: `process.onExit()` answers a
+        // `CompletableFuture<Process>!`, whose `thenAccept` is that class's
+        // own member. Without this the walk stops before it starts, and every
+        // call on a library or Java call's result resolves no member at all.
+        TyKind::Flexible { lower, .. } => receiver_key(db, &lower),
         _ => None,
     }
 }
@@ -583,6 +880,10 @@ pub fn local_class_of(db: &dyn TyDatabase, ty: &Ty) -> Option<hir::SourceClass> 
             local: Some(local), ..
         } => Some(local.clone()),
         TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => local_class_of(db, inner),
+        // Read as the lower half, exactly as [`receiver_key`] reads a platform
+        // type ([Kotlin's flexible types](https://kotlinlang.org/spec/type-system.html#flexible-types)
+        // give `L..U` the members of `L`).
+        TyKind::Flexible { lower, .. } => local_class_of(db, &lower),
         _ => None,
     }
 }
@@ -648,6 +949,14 @@ fn collect_members(
                 })
                 .or_else(|| {
                     super::builtins::mutable_iterator(
+                        db,
+                        fqn.as_str(),
+                        &receiver_args,
+                        name.as_str(),
+                    )
+                })
+                .or_else(|| {
+                    super::builtins::renamed_member_return(
                         db,
                         fqn.as_str(),
                         &receiver_args,
@@ -781,7 +1090,14 @@ fn kotlin_members(
     out: &mut Vec<Member>,
     include_companion: bool,
 ) {
-    let _ = receiver;
+    // The members are declared over the *class's* own type parameters and the
+    // receiver instantiates them: `Box<Method>.use` takes a
+    // `Method.() -> Unit`, not a `T.() -> Unit`, so each member's parameters are
+    // substituted with the receiver's arguments
+    // ([KLS
+    // `type-system.html#type-containment`](https://kotlinlang.org/spec/type-system.html#type-containment)),
+    // exactly as a supertype list is ([`super::subtyping`]).
+    let binding = super::subtyping::class_binding_of(db, file, item, receiver);
     // A classifier's *primary* constructor is not one of its body members — it
     // hangs off the header — but it is what `Foo(1)` resolves to for a class
     // that declares one ([KLS
@@ -825,9 +1141,15 @@ fn kotlin_members(
         let member_name = data.name();
         match data {
             KotlinItemData::Function(function) if member_name == Some(name) => {
-                out.push(kotlin_function_member(
-                    db, file, member, name, tree, function,
-                ));
+                let mut member = kotlin_function_member(db, file, member, name, tree, function);
+                if !binding.is_empty() {
+                    member.params = member
+                        .params
+                        .iter()
+                        .map(|param| param.substitute(db, &binding))
+                        .collect();
+                }
+                out.push(member);
             }
             // `Foo(1)`: the constructors of the class the receiver denotes.
             KotlinItemData::Constructor(constructor) if constructors => {
@@ -997,10 +1319,26 @@ fn java_members(
     // "everything the type declares", which is the Java layer's
     // `TypeQualified` (the one mode that filters nothing).
     let ctx = &ctx.with_mode(InvocationMode::TypeQualified);
-    // The *properties* come first: a name read position takes the property
-    // (`container.layout` is `getLayout()`'s property even where the class also
-    // declares a `void layout()` method), while a *call* filters to the
-    // functions anyway, so both `x.layout` and `x.layout()` resolve.
+    // A Java *field* of the name is the property before any accessor pair is:
+    // kotlinc 2.4.20 reads `val w: Int = java.awt.Dimension().width` as the
+    // `int` field, not as `getWidth()`'s `double`. The accessors follow, so a
+    // name read position still takes the property of a class that declares only
+    // a getter (`container.layout` is `getLayout()`'s property even where the
+    // class also declares a `void layout()` method), and a *call* filters to
+    // the functions anyway, so both `x.layout` and `x.layout()` resolve.
+    if let Some(field) = crate::jvm::member_set::pick_field(db, scope, receiver, name.as_str(), ctx)
+    {
+        out.push(Member {
+            target: MemberTarget::JavaField(Box::new(field)),
+            name: name.clone(),
+            kind: MemberKind::Property,
+            params: Vec::new(),
+            param_names: Arc::from(Vec::new()),
+            defaulted: Arc::from(Vec::new()),
+            vararg: false,
+            extension: false,
+        });
+    }
     for accessor in property_getters(name) {
         for method in
             crate::jvm::member_set::member_set(db, scope, receiver, accessor.as_str(), ctx)
@@ -1024,21 +1362,6 @@ fn java_members(
                 method,
             ));
         }
-    }
-    // A Java field is the Kotlin property of its own name — Kotlin reads a Java
-    // field directly — and comes before a method of the same name.
-    if let Some(field) = crate::jvm::member_set::pick_field(db, scope, receiver, name.as_str(), ctx)
-    {
-        out.push(Member {
-            target: MemberTarget::JavaField(Box::new(field)),
-            name: name.clone(),
-            kind: MemberKind::Property,
-            params: Vec::new(),
-            param_names: Arc::from(Vec::new()),
-            defaulted: Arc::from(Vec::new()),
-            vararg: false,
-            extension: false,
-        });
     }
     for method in crate::jvm::member_set::member_set(db, scope, receiver, name.as_str(), ctx) {
         out.push(member_of_method(
@@ -1497,11 +1820,19 @@ fn as_extension(
     let mut binding = rustc_hash::FxHashMap::default();
     unify(db, &first, receiver, &mut binding);
     let first = first.substitute(db, &binding);
-    // The unification *is* the check when it determined anything: the receiver
-    // position was a type variable (`T`, `Array<T>`), and what it stands for is
-    // what the receiver satisfies. Otherwise the position is a concrete class
-    // and the receiver has to be assignable to it.
-    if binding.is_empty() && !super::subtyping::is_assignable(db, scope, receiver, &first) {
+    // The receiver then has to be assignable to the substituted position, and
+    // the check is not implied by the unification: a position that is a *bare*
+    // type variable (`fun <T> T.let(…)`, the shape an extension over any
+    // receiver has) substitutes to the receiver itself, while `Array<T>` — the
+    // parameter a classfile gives a `vararg`, and equally the parameter of an
+    // extension over an array — substitutes to an array of whatever the
+    // unification made of the receiver. Reading the second shape as an
+    // extension of a non-array receiver is exactly what makes a *top-level*
+    // library function with a `vararg` look like an extension of every
+    // receiver: `mutableListOf(vararg elements: T)` would otherwise be
+    // `AppPaths.mutableListOf()`, with `T` bound to the enclosing classifier
+    // and the call's own type parameter lost.
+    if !super::subtyping::is_assignable(db, scope, receiver, &first) {
         return None;
     }
     let mut member = member;
@@ -1714,7 +2045,20 @@ fn applies(
         // `T[]` parameter is the array signature of a `vararg`, and matching it
         // against a scalar argument (`"a" + "b"` against `Array<T> plus(Array<T>,
         // Array<out T>)`) would let an inapplicable candidate answer the call.
+        // A `vararg` parameter takes its arguments one by one, so an argument
+        // written for it is an *element* of the array the classfile declares
+        // ([KLS
+        // `declarations.html#variable-length-parameters`](https://kotlinlang.org/spec/declarations.html#variable-length-parameters)):
+        // `getDeclaredMethod(name, clazz)` passes a `Class<*>` where the
+        // classfile says `Class<?>[]`. A `*cs` spread or a whole array stays
+        // what the array type accepts, so both are tried.
+        let element = (member.vararg && index + 1 == member.params.len())
+            .then(|| member.varargs_element(db))
+            .flatten();
         if !crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &member.params[index])
+            && !element.is_some_and(|element| {
+                crate::kotlin::subtyping::is_assignable(db, scope, &arg.ty, &element)
+            })
             && !(contains_type_var(db, &member.params[index])
                 && same_shape(db, &arg.ty, &member.params[index]))
         {

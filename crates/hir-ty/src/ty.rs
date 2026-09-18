@@ -366,6 +366,20 @@ impl Ty {
         Self::new(db, TyKind::Flexible { lower, upper })
     }
 
+    /// The type a *platform* type `L..U` is when a value of it is used: its
+    /// lower half. A flexible type accepts either half
+    /// ([KLS
+    /// `type-system.html#flexible-types`](https://kotlinlang.org/spec/type-system.html#flexible-types)),
+    /// and every *lookup* on one reads it as the lower half — the members a
+    /// Kotlin file resolves on the classfile type `CompletableFuture<Process>!`
+    /// that `process.onExit()` answers are `CompletableFuture`'s.
+    pub fn flexible_lower(&self, db: &dyn TyDatabase) -> Ty {
+        match self.kind(db) {
+            TyKind::Flexible { lower, .. } => *lower,
+            _ => *self,
+        }
+    }
+
     /// The inner type of a nullable or definitely-non-nullable wrapper, or
     /// `self` for every other type — the type with its `?`/`!!` notation
     /// stripped.

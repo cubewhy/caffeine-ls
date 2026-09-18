@@ -499,7 +499,11 @@ impl<'a> InferCtx<'a> {
                     .ty
                     .as_ref()
                     .map(|ty| super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty));
-                let actual = initializer.map(|expr| self.infer_expr(expr));
+                // The declared type is the type the initializer is *used* at:
+                // its arguments complete a call the initializer is
+                // ([KLS
+                // `type-inference.html#call-completion`](https://kotlinlang.org/spec/type-inference.html#call-completion)).
+                let actual = initializer.map(|expr| self.infer_expr_with(expr, declared));
                 let range = initializer.and_then(|expr| self.bodies.expr_range(expr));
                 let ty = match (declared, actual) {
                     (Some(declared), Some(actual)) => {
@@ -756,7 +760,23 @@ impl<'a> InferCtx<'a> {
         });
     }
 
+    /// [`Self::infer_expr_with`] for an expression whose type nothing
+    /// constrains.
     fn infer_expr(&mut self, expr: ExprId) -> Ty {
+        self.infer_expr_with(expr, None)
+    }
+
+    /// The type of `expr`, where the position it stands in expects `expected`:
+    /// a call's type arguments are completed from that type when the call's own
+    /// arguments do not determine them ([KLS
+    /// `type-inference.html#call-completion`](https://kotlinlang.org/spec/type-inference.html#call-completion)).
+    ///
+    /// The expectation reaches only the expression itself — a subexpression is
+    /// inferred without it, because the type a *call's* value is used at says
+    /// nothing about what its receiver or its arguments must be — and it is
+    /// bounded to the positions that write a type: a declared local, a `return`,
+    /// and a call argument whose parameter writes one.
+    fn infer_expr_with(&mut self, expr: ExprId, expected: Option<Ty>) -> Ty {
         let data = self.bodies.expr(expr).clone();
         let ty = match data {
             ExprData::Literal(literal) => match literal {
@@ -808,7 +828,7 @@ impl<'a> InferCtx<'a> {
                 // ([KLS `expressions.html#navigation-operators`](https://kotlinlang.org/spec/expressions.html#navigation-operators)):
                 // `x?.port` of a non-null `x` is an `Int`, and kotlinc accepts
                 // it where one is expected.
-                let member_ty = self.safe_member_ty(member, &receiver_ty);
+                let member_ty = self.safe_member_ty(member, &receiver_ty, expected);
                 match receiver_ty.is_nullable(self.db) {
                     true => Ty::nullable(self.db, member_ty),
                     false => member_ty,
@@ -821,11 +841,20 @@ impl<'a> InferCtx<'a> {
             ExprData::MethodCall {
                 receiver,
                 name,
+                type_args,
                 args,
                 arg_names,
                 trailing,
-                ..
             } => {
+                // The type arguments the call *writes*
+                // ([spec: grammar-rule-typeArguments]): they bind the callee's
+                // own type parameters positionally, and are what the call falls
+                // back to when neither the arguments nor the expected type
+                // determine them.
+                let written: Vec<Ty> = type_args
+                    .iter()
+                    .map(|ty| super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty))
+                    .collect();
                 // A lambda literal that declares no parameters takes them from
                 // the *expected* function type ([KLS
                 // `type-inference.html#function-literals`](https://kotlinlang.org/spec/type-inference.html#function-literals),
@@ -849,6 +878,8 @@ impl<'a> InferCtx<'a> {
                         &arg_names,
                         trailing,
                         index,
+                        &written,
+                        expected,
                     ),
                     None => {
                         let arg_types: Vec<Ty> =
@@ -874,6 +905,8 @@ impl<'a> InferCtx<'a> {
                                             &arg_types,
                                             &arg_names,
                                             trailing,
+                                            &written,
+                                            expected,
                                         )
                                     }
                                     None => {
@@ -885,12 +918,14 @@ impl<'a> InferCtx<'a> {
                                             &arg_types,
                                             &arg_names,
                                             trailing,
+                                            &written,
+                                            expected,
                                         )
                                     }
                                 }
                             }
                             None => self.call_without_receiver(
-                                expr, &name, &arg_types, &arg_names, trailing,
+                                expr, &name, &arg_types, &arg_names, trailing, &written, expected,
                             ),
                         }
                     }
@@ -903,7 +938,7 @@ impl<'a> InferCtx<'a> {
             } => {
                 let receiver_ty = self.infer_expr(receiver);
                 let arg_ty = self.infer_expr(arg);
-                self.call_ty(expr, &receiver_ty, &name, &[arg_ty], &[], None)
+                self.call_ty(expr, &receiver_ty, &name, &[arg_ty], &[], None, &[], None)
             }
             ExprData::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.infer_expr(lhs);
@@ -1047,7 +1082,31 @@ impl<'a> InferCtx<'a> {
                         self.builtin("Any")
                     }
                 };
+                // `x::class` — the class reference of the *value* `x`
+                // (<https://kotlinlang.org/docs/reflection.html#class-references>)
+                // — is the `KClass` of its type, not a member of it.
+                if name.as_str() == "class" {
+                    return self.class_of(receiver_ty);
+                }
                 self.member_ty(expr, &receiver_ty, &name)
+            }
+            ExprData::ClassLit(ty) => {
+                // `Foo::class` — the class reference of the classifier it names
+                // — is a `KClass` of that type
+                // (<https://kotlinlang.org/docs/reflection.html#class-references>).
+                // The grammar writes a `userType` for *either* receiver, so a
+                // name that is not a classifier is the value it names:
+                // `x::class` is a `KClass` of `x`'s type, exactly as the
+                // `x::class` a navigation writes is ([`Self::class_of`]).
+                let named = super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty);
+                let inner = match named.kind(self.db) {
+                    TyKind::Error => match ty.ty.as_reference_name() {
+                        Some(name) => self.infer_name(expr, name),
+                        None => named,
+                    },
+                    _ => named,
+                };
+                self.class_of(inner)
             }
             ExprData::Range {
                 lhs,
@@ -1073,7 +1132,7 @@ impl<'a> InferCtx<'a> {
             // ([KLS `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)).
             ExprData::Jump { kind, value, label } => {
                 if let Some(value) = value {
-                    let actual = self.infer_expr(value);
+                    let actual = self.infer_expr_with(value, self.return_expected_ty());
                     // A `return`'s value answers the return type the enclosing
                     // declaration writes ([KLS
                     // `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)).
@@ -1425,17 +1484,25 @@ impl<'a> InferCtx<'a> {
     /// `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)).
     /// A declaration that writes none has nothing to check against — its own
     /// type is what the body inference produces ([`super::db`]).
-    fn check_return(&mut self, actual: Ty, value: ExprId) {
+    /// The type the enclosing declaration returns, as the `return` expressions
+    /// in its body are used at.
+    fn return_expected_ty(&self) -> Option<Ty> {
         let declared = match self.tree.data(self.item) {
             KotlinItemData::Function(data) => data.ret.as_ref(),
             KotlinItemData::Property(data) => data.ty.as_ref(),
-            KotlinItemData::Accessor(_) => None,
             _ => None,
-        };
-        let Some(declared) = declared else {
+        }?;
+        Some(super::ty::ty_from_type_ref(
+            self.db,
+            &self.resolver,
+            &declared.ty,
+        ))
+    }
+
+    fn check_return(&mut self, actual: Ty, value: ExprId) {
+        let Some(expected) = self.return_expected_ty() else {
             return;
         };
-        let expected = super::ty::ty_from_type_ref(self.db, &self.resolver, &declared.ty);
         let range = self.bodies.expr_range(value);
         self.check_binding(MismatchTarget::Return, expected, actual, range);
     }
@@ -1710,16 +1777,21 @@ impl<'a> InferCtx<'a> {
     /// receiver the access guards: the member expression the lowering writes for
     /// `x?.m` carries no receiver of its own, so the guard's receiver is what it
     /// resolves on.
-    fn safe_member_ty(&mut self, member: ExprId, receiver: &Ty) -> Ty {
+    fn safe_member_ty(&mut self, member: ExprId, receiver: &Ty, expected: Option<Ty>) -> Ty {
         let ty = match self.bodies.expr(member).clone() {
             ExprData::FieldAccess { name, .. } => self.member_ty(member, receiver, &name),
             ExprData::MethodCall {
                 name,
+                type_args,
                 args,
                 arg_names,
                 trailing,
                 ..
             } => {
+                let written: Vec<Ty> = type_args
+                    .iter()
+                    .map(|ty| super::ty::ty_from_type_ref(self.db, &self.resolver, &ty.ty))
+                    .collect();
                 // A lambda argument's expected type is the candidate's parameter,
                 // exactly as for a call with a written receiver: `p?.let { it }`
                 // binds `it` from `let`'s function type.
@@ -1734,11 +1806,16 @@ impl<'a> InferCtx<'a> {
                         &arg_names,
                         trailing,
                         index,
+                        &written,
+                        expected,
                     ),
                     None => {
                         let arg_tys: Vec<Ty> =
                             args.iter().map(|arg| self.infer_expr(*arg)).collect();
-                        self.call_ty(member, receiver, &name, &arg_tys, &arg_names, trailing)
+                        self.call_ty(
+                            member, receiver, &name, &arg_tys, &arg_names, trailing, &written,
+                            expected,
+                        )
                     }
                 }
             }
@@ -1767,6 +1844,7 @@ impl<'a> InferCtx<'a> {
     /// The type of a call: the return type of the candidate the arguments
     /// select, or the error type when the receiver's members declare no such
     /// callable — a call kotlinc reports as `unresolved reference`.
+    #[allow(clippy::too_many_arguments)]
     fn call_ty(
         &mut self,
         expr: ExprId,
@@ -1775,11 +1853,14 @@ impl<'a> InferCtx<'a> {
         arg_tys: &[Ty],
         arg_names: &[Option<Name>],
         trailing: Option<usize>,
+        written: &[Ty],
+        expected: Option<Ty>,
     ) -> Ty {
         let args = call_args(arg_tys, arg_names, trailing);
         match method::pick_callable(self.db, &self.scope, receiver, name, &args, self.site()) {
             Some(member) => {
-                let ty = member.call_ty(self.db, arg_tys);
+                let ty =
+                    member.call_ty_with(self.db, &self.scope, arg_tys, written, expected.as_ref());
                 self.record_member(expr, &member);
                 // A constructor call's type is the class it constructs — the
                 // receiver, with the arguments the call wrote — not the
@@ -1799,6 +1880,7 @@ impl<'a> InferCtx<'a> {
     /// candidate's parameter at its index, which is why the lambda is inferred
     /// second — and the lambda's `it` is that function type's first parameter
     /// type.
+    #[allow(clippy::too_many_arguments)]
     fn call_with_expected_lambda(
         &mut self,
         expr: ExprId,
@@ -1808,13 +1890,18 @@ impl<'a> InferCtx<'a> {
         arg_names: &[Option<Name>],
         trailing: Option<usize>,
         index: usize,
+        written: &[Ty],
+        expected: Option<Ty>,
     ) -> Ty {
-        self.expected_lambda_call(expr, receiver, name, args, arg_names, trailing, index)
+        self.expected_lambda_call(
+            expr, receiver, name, args, arg_names, trailing, index, written, expected,
+        )
     }
 
     /// [`Self::call_with_expected_lambda`], whose receiver is either the
     /// expression a written receiver is — which this infers — or a type the
     /// caller already has (a safe access infers its own receiver).
+    #[allow(clippy::too_many_arguments)]
     fn expected_lambda_call(
         &mut self,
         expr: ExprId,
@@ -1824,6 +1911,8 @@ impl<'a> InferCtx<'a> {
         arg_names: &[Option<Name>],
         trailing: Option<usize>,
         index: usize,
+        written: &[Ty],
+        call_expected: Option<Ty>,
     ) -> Ty {
         // Every argument but the lambda; the lambda's own type is the error
         // type here, which is applicable to whatever parameter the candidate
@@ -1957,7 +2046,13 @@ impl<'a> InferCtx<'a> {
         }
         match candidate {
             Some(member) => {
-                let ty = member.call_ty(self.db, &arg_types);
+                let ty = member.call_ty_with(
+                    self.db,
+                    &self.scope,
+                    &arg_types,
+                    written,
+                    call_expected.as_ref(),
+                );
                 self.record_member(expr, &member);
                 ty
             }
@@ -2042,6 +2137,7 @@ impl<'a> InferCtx<'a> {
     ///   whose candidate set is the class's constructors;
     /// * otherwise the callee is a member of an enclosing classifier (innermost
     ///   first) or a top-level declaration of the file.
+    #[allow(clippy::too_many_arguments)]
     fn call_without_receiver(
         &mut self,
         expr: ExprId,
@@ -2049,16 +2145,21 @@ impl<'a> InferCtx<'a> {
         arg_tys: &[Ty],
         arg_names: &[Option<Name>],
         trailing: Option<usize>,
+        written: &[Ty],
+        expected: Option<Ty>,
     ) -> Ty {
         let args = call_args(arg_tys, arg_names, trailing);
         if let Some(class) = self.class_receiver(name) {
-            return self.constructor_ty(expr, &class, name, &arg_tys, arg_names, trailing);
+            return self.constructor_ty(
+                expr, &class, name, &arg_tys, arg_names, trailing, written, expected,
+            );
         }
         for receiver in self.implicit_receivers() {
             if let Some(member) =
                 method::pick_callable(self.db, &self.scope, &receiver, name, &args, self.site())
             {
-                let ty = member.call_ty(self.db, arg_tys);
+                let ty =
+                    member.call_ty_with(self.db, &self.scope, arg_tys, written, expected.as_ref());
                 self.record_member(expr, &member);
                 return ty;
             }
@@ -2066,7 +2167,7 @@ impl<'a> InferCtx<'a> {
         if let Some(member) =
             method::top_level_callable(self.db, &self.scope, self.file, name, &args)
         {
-            let ty = member.call_ty(self.db, arg_tys);
+            let ty = member.call_ty_with(self.db, &self.scope, arg_tys, written, expected.as_ref());
             self.record_member(expr, &member);
             return ty;
         }
@@ -2078,7 +2179,7 @@ impl<'a> InferCtx<'a> {
         if let Some(member) =
             method::library_top_level_callable(self.db, &self.scope, self.file, name, &args)
         {
-            let ty = member.call_ty(self.db, arg_tys);
+            let ty = member.call_ty_with(self.db, &self.scope, arg_tys, written, expected.as_ref());
             self.record_member(expr, &member);
             return ty;
         }
@@ -2088,11 +2189,27 @@ impl<'a> InferCtx<'a> {
             && let Some(member) =
                 method::declaration_callable(self.db, &self.scope, file, item, name, &args)
         {
-            let ty = member.call_ty(self.db, arg_tys);
+            let ty = member.call_ty_with(self.db, &self.scope, arg_tys, written, expected.as_ref());
             self.record_member(expr, &member);
             return ty;
         }
         self.error()
+    }
+
+    /// The class reference of a type: `KClass<T>`, what `x::class` and
+    /// `Foo::class` are
+    /// (<https://kotlinlang.org/docs/reflection.html#class-references>).
+    ///
+    /// A nullable value's type is stripped: `x::class` for an `x: T?` is a
+    /// `KClass<out T>`, and the classifier is what its members are read on —
+    /// `x::class.java` is the `Class<T>` the `kotlin.jvm.java` extension
+    /// property answers.
+    fn class_of(&self, ty: Ty) -> Ty {
+        Ty::reference(
+            self.db,
+            "kotlin.reflect.KClass",
+            vec![ty.strip_nullability(self.db)],
+        )
     }
 
     /// The dotted name an expression writes, when it is a *name path*: a
@@ -2118,6 +2235,7 @@ impl<'a> InferCtx<'a> {
     /// The type of a *constructor* call on the classifier type `class` under
     /// the class's own name: the member set of a class type under that name is
     /// its constructors, and the call's type is the class it constructs.
+    #[allow(clippy::too_many_arguments)]
     fn constructor_ty(
         &mut self,
         expr: ExprId,
@@ -2126,24 +2244,30 @@ impl<'a> InferCtx<'a> {
         arg_tys: &[Ty],
         arg_names: &[Option<Name>],
         trailing: Option<usize>,
+        written: &[Ty],
+        expected: Option<Ty>,
     ) -> Ty {
         let args = call_args(arg_tys, arg_names, trailing);
         match method::pick_callable(self.db, &self.scope, class, name, &args, self.site()) {
             Some(member) => {
                 self.record_member(expr, &member);
-                class.clone()
+                // The constructed class takes the type arguments the call
+                // writes, or the ones the type it is *used* at determines:
+                // `val list: MutableList<Component> = LinkedList()` constructs a
+                // `LinkedList<Component>`, which is the type the expected type's
+                // arguments give the class's own parameters
+                // ([KLS
+                // `type-inference.html#call-completion`](https://kotlinlang.org/spec/type-inference.html#call-completion)).
+                method::constructed_ty(
+                    self.db,
+                    &self.scope,
+                    class,
+                    &member,
+                    written,
+                    expected.as_ref(),
+                )
             }
-            None => {
-                eprintln!(
-                    "CTOR-NONE {name} class={} members={:?}",
-                    crate::display_kotlin(self.db, *class),
-                    method::declared_members(self.db, &self.scope, class, name, self.site())
-                        .iter()
-                        .map(|m| format!("{:?}", m.kind))
-                        .collect::<Vec<_>>()
-                );
-                self.error()
-            }
+            None => self.error(),
         }
     }
 
@@ -2212,6 +2336,19 @@ impl<'a> InferCtx<'a> {
             return *receiver;
         }
         if !super_ {
+            // A qualifier that names the declaration whose body this is
+            // (`this@ext4` inside `fun File.ext4()`) is that declaration's own
+            // receiver — the *extended* type, which is what
+            // `this@stringAsync.string()` resolves `string` on
+            // ([KLS
+            // `expressions.html#this-expressions`](https://kotlinlang.org/spec/expressions.html#this-expressions)
+            // makes the label name the declaration, and the declaration's
+            // receiver is what `this@label` is).
+            if let Some(written) = &written
+                && let Some(receiver) = self.enclosing_extension_receiver(written)
+            {
+                return receiver;
+            }
             let chosen = written
                 .as_ref()
                 .and_then(|written| {
@@ -2232,6 +2369,33 @@ impl<'a> InferCtx<'a> {
             None => supertypes.first(),
         };
         chosen.copied().unwrap_or_else(|| self.error())
+    }
+
+    /// The extension receiver of the enclosing declaration the label `name`
+    /// gives — `this@ext4` inside `fun File.ext4()`, or inside a lambda in its
+    /// body — when that declaration is an extension. `None` when no enclosing
+    /// declaration carries the name, or the one that does is not an extension.
+    ///
+    /// A label is the *declaration's* own name, so the walk is the declaration
+    /// chain, not the classifiers': a lambda has no name of its own, and an
+    /// extension inside a class body is labeled by the function, not by the
+    /// class.
+    fn enclosing_extension_receiver(&self, name: &Name) -> Option<Ty> {
+        let mut current = Some(self.item);
+        while let Some(id) = current {
+            if self.tree.data(id).name() == Some(name) {
+                let receiver = match self.tree.data(id) {
+                    KotlinItemData::Function(data) => data.receiver.as_ref(),
+                    KotlinItemData::Property(data) => data.receiver.as_ref(),
+                    _ => None,
+                };
+                return receiver.map(|receiver| {
+                    super::ty::ty_from_type_ref(self.db, &self.resolver, &receiver.ty)
+                });
+            }
+            current = self.tree.parent_of(id);
+        }
+        None
     }
 
     /// The types of the *implicit* receivers of an unqualified name: the

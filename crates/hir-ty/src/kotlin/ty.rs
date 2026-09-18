@@ -126,18 +126,35 @@ pub fn ty_from_java(db: &dyn TyDatabase, ty: Ty) -> Ty {
         // `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)).
         TyKind::Void => Ty::reference(db, "kotlin.Unit", Vec::new()),
         TyKind::Reference { name, args, local } => {
-            let args = args.iter().map(|arg| ty_from_java(db, *arg)).collect();
+            let args: Vec<Ty> = args.iter().map(|arg| ty_from_java(db, *arg)).collect();
             // A local class keeps its declaration: it is the type's identity
             // ([JLS §6.7]), and a local class has no canonical name to map.
             let mapped = match local {
-                Some(class) => Ty::local_reference(db, *class, mapped_type_name(name), args),
-                None => Ty::reference(db, mapped_type_name(name), args),
+                Some(class) => {
+                    Ty::local_reference(db, *class, mapped_type_name(name), args.clone())
+                }
+                None => Ty::reference(db, mapped_type_name(name), args.clone()),
             };
             if local.is_none() && !name.as_str().starts_with("kotlin.") {
                 // A classfile type: the compiler knows nothing about its
-                // nullability, so it is a platform type.
+                // nullability, so it is a platform type. A *collection
+                // interface* is the JVM type of two Kotlin classifiers — the
+                // read-only view and the mutable one, which [`MAPPED_TYPES`]
+                // names as two entries — and the platform type a Java value has
+                // is `(Mutable)List<T>!`, usable as either. The mutable half is
+                // what a Java *class*'s supertype edge means (a class that
+                // implements `java.util.List` implements the mutable
+                // interface): it is what makes `val list: MutableList<Component>
+                // = LinkedList()` legal, and it is how kotlinc 2.4.20 reads the
+                // same source.
+                let lower = mapped_mutable_name(name)
+                    .map(|mutable| match local {
+                        Some(class) => Ty::local_reference(db, *class, mutable, args.clone()),
+                        None => Ty::reference(db, mutable, args.clone()),
+                    })
+                    .unwrap_or(mapped);
                 let upper = Ty::nullable(db, mapped);
-                Ty::flexible(db, mapped, upper)
+                Ty::flexible(db, lower, upper)
             } else {
                 mapped
             }
@@ -340,6 +357,22 @@ pub const MAPPED_TYPES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The *mutable* Kotlin classifier a classfile collection interface is the JVM
+/// type of, when the compiler maps that JVM type onto two — the read-only view
+/// and the mutable one ([`MAPPED_TYPES`] lists both for every collection entry,
+/// <https://kotlinlang.org/docs/java-interop.html#mapped-types>).
+///
+/// `None` for a JVM type the table names once: `java.util.ArrayList` is a
+/// *class*, and an `ArrayList` is a mutable list by its own declaration rather
+/// than by the interface it implements.
+pub fn mapped_mutable_name(name: &Name) -> Option<Name> {
+    MAPPED_TYPES
+        .iter()
+        .filter(|(java, _)| name.as_str() == *java)
+        .nth(1)
+        .map(|(_, kotlin)| Name::new(*kotlin))
+}
+
 /// The declaration-site variance of the mapped standard-library classifiers
 /// ([KLS
 /// `type-system.html#declaration-site-variance`](https://kotlinlang.org/spec/type-system.html#declaration-site-variance)),
@@ -364,6 +397,24 @@ pub const MAPPED_VARIANCE: &[(&str, &[Option<Variance>])] = &[
     ("kotlin.collections.Iterable", &[Some(Variance::Out)]),
     ("kotlin.collections.Iterator", &[Some(Variance::Out)]),
     ("kotlin.collections.Sequence", &[Some(Variance::Out)]),
+    // The mutable views and the two interfaces above them. The *covariant* ones
+    // are the interfaces Kotlin declares `out` because nothing writes through
+    // them ([`MutableIterator`] only removes, `Collection` only reads): kotlinc
+    // 2.4.20 accepts `val any: MutableIterator<Any> = iteratorOfInts` and
+    // `val any: Collection<Any> = ints`. The rest are invariant, which is what
+    // the absence of an entry means as well — they are named here so that their
+    // *arity* is readable too ([`super::resolve`] reads it to tell one
+    // star-imported candidate from another).
+    ("kotlin.collections.Collection", &[Some(Variance::Out)]),
+    ("kotlin.collections.ListIterator", &[Some(Variance::Out)]),
+    ("kotlin.collections.MutableIterable", &[Some(Variance::Out)]),
+    ("kotlin.collections.MutableIterator", &[Some(Variance::Out)]),
+    ("kotlin.collections.MutableCollection", &[None]),
+    ("kotlin.collections.MutableList", &[None]),
+    ("kotlin.collections.MutableListIterator", &[None]),
+    ("kotlin.collections.MutableSet", &[None]),
+    ("kotlin.collections.MutableMap", &[None, None]),
+    ("kotlin.collections.MutableMap.MutableEntry", &[None, None]),
 ];
 
 /// The declaration-site variance of a classifier named by `fqn`, if the table

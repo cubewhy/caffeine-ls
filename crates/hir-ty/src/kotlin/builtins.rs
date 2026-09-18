@@ -445,6 +445,37 @@ pub fn collection_property(
     }
 }
 
+/// The type of a member the *language* declares on a built-in classifier under
+/// a name the classfile spells differently — the `@JvmName`-renamed accessors
+/// of the standard library, whose Kotlin name lives in the library's
+/// `@Metadata` (which this model does not decode) and whose JVM name is all the
+/// classpath records.
+///
+/// `KClass<T>.java` is the one a Kotlin file uses everywhere: the
+/// `kotlin.jvm.java` extension property
+/// (<https://kotlinlang.org/docs/reflection.html#class-references>) compiles to
+/// `JvmClassMappingKt.getJavaClass(KClass)`, so the accessor a name lookup would
+/// have to try is `getJavaClass` — not the `getJava` the getter convention
+/// derives. The table is what stands in for the metadata, and is a recorded
+/// deviation.
+pub fn renamed_member_return(
+    db: &dyn TyDatabase,
+    receiver: &str,
+    args: &[Ty],
+    member: &str,
+) -> Option<Ty> {
+    match (receiver, member) {
+        // `val <T : Any> KClass<T>.java: Class<T>` — the classfile's
+        // `getJavaClass`.
+        ("kotlin.reflect.KClass", "java") => Some(Ty::reference(
+            db,
+            "java.lang.Class",
+            vec![args.first().copied()?],
+        )),
+        _ => None,
+    }
+}
+
 /// The `iterator()` a *mutable* collection declares, which Kotlin types as the
 /// mutable iterator — the JVM interface's own method returns `java.util.Iterator`
 /// ([KLS

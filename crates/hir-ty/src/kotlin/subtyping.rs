@@ -198,6 +198,42 @@ fn class_binding(
         .collect()
 }
 
+/// [`class_binding`] for a caller that has the classifier's file and item rather
+/// than a [`hir::SourceClass`] — the member walk, which substitutes the
+/// receiver's arguments into the members it is about to answer with. Public to
+/// this crate so the two stay one rule.
+pub(crate) fn class_binding_of(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: hir_expand::ids::ItemId,
+    ty: &Ty,
+) -> rustc_hash::FxHashMap<crate::ty::TypeVarScope, Ty> {
+    let TyKind::Reference { args, .. } = ty.kind(db) else {
+        return rustc_hash::FxHashMap::default();
+    };
+    let tree = hir::file_item_tree(db, file);
+    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
+        return rustc_hash::FxHashMap::default();
+    };
+    let KotlinItemData::Class(data) = tree.data(item) else {
+        return rustc_hash::FxHashMap::default();
+    };
+    data.type_params
+        .iter()
+        .zip(args.iter().copied())
+        .map(|(param, arg)| {
+            (
+                crate::ty::TypeVarScope::Class {
+                    file,
+                    item,
+                    name: param.name.clone(),
+                },
+                arg,
+            )
+        })
+        .collect()
+}
+
 /// The least upper bound of `a` and `b` — the type a branch join has
 /// ([KLS
 /// `type-system.html#subtyping`](https://kotlinlang.org/spec/type-system.html#subtyping)
@@ -265,6 +301,40 @@ fn lub_non_nullable(db: &dyn TyDatabase, scope: &hir::ResolutionScope, a: &Ty, b
     }
     if is_subtype(db, scope, b, a) {
         return *a;
+    }
+    // Two instantiations of one classifier join to that classifier with the
+    // arguments joined: the common supertype of `Class<Boolean>` and `Class<T>`
+    // is a `Class<…>`, and the supertype walk below would answer the first
+    // *interface* both satisfy (`Constable`) instead, losing the argument every
+    // later member lookup needs — `when (value) { is Boolean ->
+    // Boolean::class.java; else -> T::class.java }` is what
+    // `getDeclaredMethod(name, clazz)` is called with.
+    if let (
+        TyKind::Reference {
+            name: a_name,
+            args: a_args,
+            local: a_local,
+        },
+        TyKind::Reference {
+            name: b_name,
+            args: b_args,
+            local: b_local,
+        },
+    ) = (a.kind(db), b.kind(db))
+        && a_local == b_local
+        && !a_args.is_empty()
+        && a_args.len() == b_args.len()
+        && super::ty::mapped_type_name(a_name) == super::ty::mapped_type_name(b_name)
+    {
+        let args = a_args
+            .iter()
+            .zip(b_args)
+            .map(|(a, b)| lub_non_nullable(db, scope, a, b))
+            .collect();
+        return match a_local {
+            Some(class) => Ty::local_reference(db, class.clone(), a_name.clone(), args),
+            None => Ty::reference(db, a_name.clone(), args),
+        };
     }
     // The first supertype of `a`'s closure that `b` satisfies — the least common
     // supertype of the two when the relation can answer it.
@@ -430,10 +500,37 @@ pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, s
         (_, TyKind::TypeVar { bounds, .. }) => {
             bounds.iter().any(|bound| is_subtype(db, scope, sub, bound))
         }
+        // A written `Array<X>` is the classifier the JVM spells `X[]`
+        // (<https://kotlinlang.org/docs/java-interop.html#mapped-types>): the two
+        // spellings are one type, and either side stands for the other. The
+        // comparison is the array-to-array one, so the invariance of a Kotlin
+        // array is what a mixed pair keeps as well.
+        (TyKind::Array(sub_inner), TyKind::Reference { name, args, .. })
+            if name.as_str() == "kotlin.Array" && args.len() == 1 =>
+        {
+            is_subtype(db, scope, &sub_inner, &args[0])
+                && is_subtype(db, scope, &args[0], &sub_inner)
+        }
+        (TyKind::Reference { name, args, .. }, TyKind::Array(sup_inner))
+            if name.as_str() == "kotlin.Array" && args.len() == 1 =>
+        {
+            is_subtype(db, scope, &args[0], &sup_inner)
+                && is_subtype(db, scope, &sup_inner, &args[0])
+        }
         (TyKind::Array(sub_inner), TyKind::Array(sup_inner)) => {
             // Kotlin's array types are invariant
-            // ([KLS `built-in-types-and-their-semantics.html#built-in-array-types`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html#built-in-array-types)).
-            sub_inner == sup_inner
+            // ([KLS `built-in-types-and-their-semantics.html#built-in-array-types`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html#built-in-array-types)),
+            // so the two element types have to be the same — the relation is
+            // asked in both directions rather than compared for equality, so
+            // that a *platform* element type still counts as its own non-null
+            // half: the classfile `ActionListener[]` a Java getter declares
+            // arrives as `Array<ActionListener!>`
+            // ([`ty_from_java`], element by element), and `Array<ActionListener>`
+            // is what the library's `Array<T>.forEach` binds `T` to. The two
+            // directions agree on a concrete pair (`String` and `CharSequence`
+            // are subtypes one way only, which is the invariance this keeps).
+            is_subtype(db, scope, sub_inner, sup_inner)
+                && is_subtype(db, scope, sup_inner, sub_inner)
         }
         (TyKind::Primitive(sub_primitive), TyKind::Primitive(sup_primitive)) => {
             sub_primitive == sup_primitive
@@ -487,6 +584,20 @@ fn arguments_are_subtypes(
     if sub_args.is_empty() && !sup_args.is_empty() {
         return true;
     }
+    // A *raw* supertype — an argument list nothing wrote, which is what a
+    // receiver the model could not instantiate produces
+    // ([`Ty::reference`] with no arguments, usually a `class_receiver` that
+    // nothing parameterized) — accepts every parameterization, exactly as it
+    // does in Java ([JLS
+    // §4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)
+    // makes the raw type's members erased, and an unchecked conversion lets a
+    // `List<String>` stand where a raw `List` is expected). kotlinc 2.4.20
+    // accepts `JList(DefaultListModel<String>())` the same way — inferring the
+    // constructor's type argument from the argument, which this model leaves
+    // uninstantiated instead.
+    if sup_args.is_empty() {
+        return true;
+    }
     if sub_args.len() != sup_args.len() {
         return false;
     }
@@ -495,21 +606,41 @@ fn arguments_are_subtypes(
         .zip(sup_args)
         .enumerate()
         .all(|(index, (sub, sup))| {
+            // A use-site projection is an anonymous declaration: `out T`
+            // covariant, `in T` contravariant, `*` accepts anything
+            // ([KLS
+            // `type-system.html#use-site-variance`](https://kotlinlang.org/spec/type-system.html#use-site-variance)).
+            // It is read before the classifier's own variance, because a
+            // classfile writes the *use* of a parameter as a projection even
+            // where the Kotlin declaration is covariant: a library
+            // `List<T>.dropLastWhile` carries `java.util.List<? extends T>`,
+            // and `List<String>` satisfies it — the projection is what the
+            // comparison has to follow, not the `out` the Kotlin declaration
+            // declares.
+            if let TyKind::Wildcard(bound) = sup.kind(db).clone() {
+                return match bound {
+                    Some(bound) => match &bound.kind {
+                        crate::ty::BoundKind::Upper => is_subtype(db, scope, sub, &bound.ty),
+                        crate::ty::BoundKind::Lower => is_subtype(db, scope, &bound.ty, sub),
+                    },
+                    None => true,
+                };
+            }
             let variance = variances.and_then(|variances| variances.get(index).copied().flatten());
             match variance {
                 Some(KotlinVariance::Out) => is_subtype(db, scope, sub, sup),
                 Some(KotlinVariance::In) => is_subtype(db, scope, sup, sub),
-                None => match sup.kind(db).clone() {
-                    // A use-site projection is an anonymous declaration: `out
-                    // T` covariant, `in T` contravariant, `*` accepts anything.
-                    TyKind::Wildcard(Some(bound)) => match &bound.kind {
-                        crate::ty::BoundKind::Upper => is_subtype(db, scope, sub, &bound.ty),
-                        crate::ty::BoundKind::Lower => is_subtype(db, scope, &bound.ty, sub),
-                    },
-                    TyKind::Wildcard(None) => true,
-                    // An invariant parameter: the arguments must be equal.
-                    _ => sub == sup,
-                },
+                // An invariant parameter: the arguments are the same class
+                // type, and the relation is asked in both directions rather
+                // than compared for equality, so a *platform* argument counts
+                // as its own non-null half — a Java `Component` written as a
+                // type argument arrives as `Component!`
+                // ([`ty_from_java`]), and `List<Component!>` is a
+                // `List<Component>` in Kotlin exactly as `Component!` is a
+                // `Component` ([`is_subtype`]'s flexible rules). A concrete
+                // pair still only passes one way: `String` is a
+                // `CharSequence` and not the other way round.
+                None => is_subtype(db, scope, sub, sup) && is_subtype(db, scope, sup, sub),
             }
         })
 }

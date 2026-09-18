@@ -255,7 +255,7 @@ impl<'a> KotlinResolver<'a> {
         if let Some(local) = self.local_class_reference(simple, args.clone()) {
             return local;
         }
-        match self.class_fqn(text) {
+        match self.class_fqn_with_arity(text, args.len()) {
             // A *classfile* name is rewritten to the Kotlin classifier it
             // denotes, so the two spellings of one type are one type:
             // `java.util.List` **is** `kotlin.collections.List`
@@ -326,6 +326,28 @@ impl<'a> KotlinResolver<'a> {
     /// segment read as an import binding or as a package the file's own
     /// package is a prefix of.
     pub fn class_fqn(&self, name: &str) -> Option<Name> {
+        self.class_fqn_with_arity(name, 0)
+    }
+
+    /// [`Self::class_fqn`] for a reference that *writes* `arity` type
+    /// arguments: only a classifier with that many type parameters can be the
+    /// one it names, so a candidate whose declaration declares another number
+    /// is passed over while the lookup keeps going.
+    ///
+    /// The distinction is what a star import makes: `import java.awt.*` beside
+    /// the default `kotlin.collections.*` gives the name `List` two candidates
+    /// — the AWT component, which declares no type parameter, and the Kotlin
+    /// interface — and `List<Component>` is the interface. kotlinc 2.4.20 reads
+    /// it that way: a `java.awt.List()` value is reported as `actual
+    /// 'java.awt.List'` where the context expects the interface
+    /// ([KLS
+    /// `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)
+    /// resolves an imported name to the declaration it denotes).
+    ///
+    /// A candidate whose arity this layer cannot read — a Java *source* class's
+    /// parameters belong to the Java layer's resolution — stays in the running,
+    /// so the lookup is never stricter than the order alone would make it.
+    pub fn class_fqn_with_arity(&self, name: &str, arity: usize) -> Option<Name> {
         let segments: Vec<&str> = name.split('.').collect();
         let simple = segments[0];
         if segments.len() == 1
@@ -343,6 +365,7 @@ impl<'a> KotlinResolver<'a> {
             }
             return self.local_fqn(simple);
         }
+        let mut fallback = None;
         for candidate in self.tree.candidate_fqns(name) {
             // A *built-in* Kotlin classifier — `kotlin.Int`, `kotlin.Any`,
             // `kotlin.collections.List` — is a type of the language and has no
@@ -350,16 +373,51 @@ impl<'a> KotlinResolver<'a> {
             // classpath class of the same simple name (`java.util.List` under a
             // `java.util.*` star import) wins where Kotlin's own import order
             // says it does.
-            if let Some(fqn) = self.fqn_resolve(&candidate) {
+            let fqn = match self.fqn_resolve(&candidate) {
+                Some(fqn) => fqn,
+                None if super::builtins::is_builtin(&candidate)
+                    || super::builtins::jvm_class(&candidate).is_some() =>
+                {
+                    Name::new(&candidate)
+                }
+                None => continue,
+            };
+            if arity == 0 || self.declared_arity(&fqn).is_none_or(|count| count == arity) {
                 return Some(fqn);
             }
-            if super::builtins::is_builtin(&candidate)
-                || super::builtins::jvm_class(&candidate).is_some()
-            {
-                return Some(Name::new(&candidate));
-            }
+            fallback.get_or_insert(fqn);
         }
-        None
+        // No candidate declares the written parameter list: the first one
+        // stands, so nothing the source wrote is left unresolved.
+        fallback
+    }
+
+    /// The number of type parameters the classifier `fqn` declares, as far as
+    /// this layer reads it: a standard-library classifier the compiler declares
+    /// over a JVM type from [`super::ty::mapped_variances`]
+    /// (`kotlin.collections.List` declares one), a classfile class from its
+    /// `Signature` attribute ([`hir::class_generic_info`]), and a Kotlin source
+    /// class from its item tree. `None` when the declaration is not readable
+    /// here.
+    fn declared_arity(&self, fqn: &Name) -> Option<usize> {
+        if let Some(variances) = super::ty::mapped_variances(fqn) {
+            return Some(variances.len());
+        }
+        let resolved = hir::fqn_resolve(self.db, &self.scope, fqn.as_str())?;
+        match &resolved {
+            hir::Resolved::Library(_) => {
+                let info = hir::class_generic_info(self.db, &resolved)?;
+                Some(info.type_params.len())
+            }
+            hir::Resolved::Source(class) => {
+                let tree = hir::file_item_tree(self.db, class.file);
+                match hir_def::kotlin::plugin::model(&tree)?.data(class.item) {
+                    KotlinItemData::Class(data) => Some(data.type_params.len()),
+                    _ => None,
+                }
+            }
+            hir::Resolved::Facade { .. } => None,
+        }
     }
 
     /// The *top-level* declaration a written name denotes in this file's scope:

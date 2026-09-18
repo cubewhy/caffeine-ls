@@ -1355,11 +1355,24 @@ fn navigation(
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .any(|token| is_token(&token, K::COLON_COLON));
+    // `x::class`: the navigation member is the `class` keyword, and the
+    // reference names the *class* of `x`
+    // (<https://kotlinlang.org/docs/reflection.html#class-references>). The
+    // name is the keyword's own text so the type layer can tell the form from
+    // an ordinary member reference; the `Foo::class` spelling, whose receiver is
+    // a written type, is a class literal of its own
+    // ([`ExprData::ClassLit`], [`callable_reference`]).
     let name = node
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .find(|token| is_token(token, K::IDENTIFIER))
         .map(|token| Name::new(token.text()))
+        .or_else(|| {
+            node.children_with_tokens()
+                .filter_map(NodeOrToken::into_token)
+                .any(|token| is_token(&token, K::CLASS_KW))
+                .then(|| Name::new("class"))
+        })
         .unwrap_or_else(|| Name::new("<missing>"));
     if callable {
         return ExprData::CallableReference {

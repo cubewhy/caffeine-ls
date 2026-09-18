@@ -339,7 +339,13 @@ fn member_set_impl(
     declaration: bool,
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
-    let receiver = capture_conversion(db, scope, *receiver);
+    // A *platform* type is what a Kotlin file sees a classfile type as
+    // ([`crate::kotlin::ty::ty_from_java`]), and the members it resolves on one
+    // are the *lower* half's: `process.onExit()` answers a
+    // `CompletableFuture<Process>!`, whose `thenAccept` and `isDone` are that
+    // class's own members — the walk below reads a class only from a
+    // *reference*, so an unwrapped platform receiver is what reaches them.
+    let receiver = capture_conversion(db, scope, *receiver).flexible_lower(db);
     // §9.2/[§9.4.1]/[§8.2]: a static method declared in an interface is a
     // member of *that interface only* — an interface inherits no static
     // methods from its superinterfaces ([§9.2]) and a class inherits none
@@ -1220,7 +1226,10 @@ fn pick_field_impl(
     strict_access: bool,
 ) -> Option<FieldData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
-    let receiver = capture_conversion(db, scope, *receiver);
+    // A *platform* type's fields are its lower half's, exactly as its methods
+    // are ([`member_set_impl`]): `container.preferredSize.width` reads the
+    // `int` field of the `Dimension` a Java getter answered.
+    let receiver = capture_conversion(db, scope, *receiver).flexible_lower(db);
     // §4.4: an unbounded type variable's effective upper bound is
     // `java.lang.Object`, so its fields are the fields of `Object` (none).
     //
