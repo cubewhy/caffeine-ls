@@ -784,7 +784,20 @@ fn expr_label(expr: &ExprData) -> String {
             None => "super".to_owned(),
         },
         ExprData::FieldAccess { name, .. } => format!("field {name}"),
-        ExprData::MethodCall { name, .. } => format!("call {name}"),
+        // A call that writes its type arguments (`mutableListOf<File>()`) shows
+        // them, so a snapshot pins them as the call's type.
+        ExprData::MethodCall {
+            name, type_args, ..
+        } => {
+            if type_args.is_empty() {
+                format!("call {name}")
+            } else {
+                format!(
+                    "call {name}<{}>",
+                    render_join(type_args.iter().map(|ty| render_type(&ty.ty)))
+                )
+            }
+        }
         ExprData::InfixCall { name, .. } => format!("infix {name}"),
         ExprData::New { ty, .. } => format!("new {}", render_type(&ty.ty)),
         ExprData::CtorCall { .. } => "ctor-call".to_owned(),

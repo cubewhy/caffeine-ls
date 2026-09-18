@@ -40,7 +40,7 @@ use hir_expand::{
 };
 
 use super::LowerCtx;
-use super::walk::{LoweredType, lower_type_node};
+use super::walk::{LoweredType, lower_projection, lower_type_node};
 
 /// Lowers the body of a function declaration: its `BLOCK`, its expression body
 /// (`fun f() = expr`) or nothing for a declaration without one.
@@ -1082,6 +1082,10 @@ fn postfix(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
     // suffix needs it as a sub-expression.
     let mut pending: Option<ExprData> = None;
     let mut seen_base = false;
+    // The `typeArguments` written before the suffix being lowered: `f<Int>(1)`
+    // is a `TYPE_ARGUMENTS` node and a `CALL_EXPRESSION` node, and the suffix
+    // that consumes them is the one that follows.
+    let mut written_type_args: Option<SyntaxNode<Lang>> = None;
     for element in node.children_with_tokens() {
         match element {
             NodeOrToken::Node(child) => {
@@ -1089,13 +1093,18 @@ fn postfix(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
                     seen_base = true;
                     continue;
                 }
-                if is_type_node(child.kind()) || is(&child, K::TYPE_ARGUMENTS) {
+                if is(&child, K::TYPE_ARGUMENTS) {
+                    written_type_args = Some(child);
+                    continue;
+                }
+                if is_type_node(child.kind()) {
                     continue;
                 }
                 if let Some(data) = pending.take() {
                     current = alloc_expr(ctx, data, child.text_range());
                 }
-                pending = Some(suffix_data(ctx, owner, current, &child));
+                let arguments = written_type_args.take();
+                pending = Some(suffix_data(ctx, owner, current, &child, arguments.as_ref()));
             }
             NodeOrToken::Token(token) => {
                 let step = match token.kind() {
@@ -1134,10 +1143,11 @@ fn suffix_data(
     owner: ItemId,
     value: ExprId,
     suffix: &SyntaxNode<Lang>,
+    type_arguments: Option<&SyntaxNode<Lang>>,
 ) -> ExprData {
     match suffix.kind() {
         K::NAVIGATION_SUFFIX => navigation(ctx, owner, value, suffix),
-        K::CALL_EXPRESSION => call(ctx, owner, value, suffix),
+        K::CALL_EXPRESSION => call(ctx, owner, value, suffix, type_arguments),
         K::INDEXING_EXPRESSION => match child_expression(suffix) {
             Some(index) => ExprData::ArrayAccess {
                 array: value,
@@ -1163,7 +1173,14 @@ fn call(
     owner: ItemId,
     callee: ExprId,
     suffix: &SyntaxNode<Lang>,
+    written_type_args: Option<&SyntaxNode<Lang>>,
 ) -> ExprData {
+    // The type arguments the call *writes* (`mutableListOf<File>()`) are the
+    // only place a call without inferable arguments says what its type
+    // parameters are ([spec: grammar-rule-typeArguments]).
+    let type_args: Vec<SpannedTypeRef> = written_type_args
+        .map(|arguments| call_type_arguments(ctx, arguments))
+        .unwrap_or_default();
     let parenthesized = suffix
         .children()
         .any(|child| is(&child, K::VALUE_ARGUMENTS));
@@ -1198,7 +1215,7 @@ fn call(
         ExprData::FieldAccess { target, name } => ExprData::MethodCall {
             receiver: target,
             name,
-            type_args: Vec::new(),
+            type_args,
             args: trailing_args,
             arg_names: trailing_names,
             // A lambda written *without* parentheses is the call's trailing
@@ -1231,7 +1248,7 @@ fn call(
                 ExprData::MethodCall {
                     receiver: None,
                     name,
-                    type_args: Vec::new(),
+                    type_args,
                     args: existing_args,
                     arg_names: existing_names,
                     trailing,
@@ -1275,7 +1292,7 @@ fn call(
         ExprData::Var(name) => ExprData::MethodCall {
             receiver: None,
             name,
-            type_args: Vec::new(),
+            type_args,
             args: trailing_args,
             arg_names: trailing_names,
             trailing: trailing_index,
@@ -1285,12 +1302,33 @@ fn call(
         _ => ExprData::MethodCall {
             receiver: Some(callee),
             name: Name::new("invoke"),
-            type_args: Vec::new(),
+            type_args,
             args: trailing_args,
             arg_names: trailing_names,
             trailing: None,
         },
     }
+}
+
+/// A call suffix's written type arguments as [`SpannedTypeRef`]s, one per
+/// `typeProjection` ([spec: grammar-rule-typeArguments]).
+///
+/// The projections are lowered exactly as a declaration's are
+/// ([`walk`]'s `lower_projection`), so a call's `<out T>`, `<*>` and `<@A T>`
+/// carry the same type and the same reference names a type position would.
+fn call_type_arguments(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {
+    node.children()
+        .filter(|child| is(child, K::TYPE_PROJECTION))
+        .map(|projection| {
+            let (ty, refs, _annotations) = lower_projection(ctx, &projection);
+            SpannedTypeRef::new(
+                ty,
+                refs.into_iter()
+                    .map(|(name, range)| NameRef::new(name, range))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 /// A navigation suffix `.name`, `?.name` or `::name`

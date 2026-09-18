@@ -884,3 +884,27 @@ class Foo
 class Annotated
 "#,
 }
+
+// -- a call's written type arguments ----------------------------------------
+
+/// A call's `typeArguments` prefix every kind of call suffix and are the only
+/// place such a call states its type parameters
+/// ([spec: grammar-rule-typeArguments]): a bare name, a member call and a
+/// constructor all carry them, and `kotlinc` 2.4.20 compiles this file clean.
+body_snapshot_lang! {
+    kotlin_body_call_type_arguments,
+    LanguageKind::Kotlin,
+    r#"
+fun f(a: Int): Int = a
+
+class Box<T>(val value: T)
+
+fun use(xs: List<Int>): Int {
+    val a = mutableListOf<Int>()
+    val b = xs.map<Int, Int> { it }
+    val c = Box<Int>(1)
+    val d = f<Int>(2)
+    return a.size + b.size + c.value + d
+}
+"#,
+}

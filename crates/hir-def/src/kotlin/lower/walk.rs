@@ -1136,7 +1136,7 @@ fn lower_user_type(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> LoweredType {
 /// projection is a wildcard: `out T` is an upper-bounded wildcard, `in T` a
 /// lower-bounded one, `*` an unbounded one
 /// ([KLS `type-system.html#type-containment`](https://kotlinlang.org/spec/type-system.html#type-containment)).
-fn lower_projection(
+pub(super) fn lower_projection(
     ctx: &LowerCtx<'_>,
     node: &SyntaxNode<Lang>,
 ) -> (

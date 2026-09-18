@@ -1,0 +1,65 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun f(a: Int): Int = a
+
+class Box<T>(val value: T)
+
+fun use(xs: List<Int>): Int {
+    val a = mutableListOf<Int>()
+    val b = xs.map<Int, Int> { it }
+    val c = Box<Int>(1)
+    val d = f<Int>(2)
+    return a.size + b.size + c.value + d
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun f(a: Int): Int @1..23
+class Box<T> @25..53
+  primary constructor(value: T) @37..51
+  val value: T @38..50
+fun use(xs: List<Int>): Int @53..240
+
+BODIES:
+fun f body b0:
+  param l0: a: Int
+  s0: expr e0
+fun use body b1:
+  param l2: xs: List<Int>
+  s1: decl l3 = e2
+  s4: decl l4 = e7
+  s5: decl l5 = e10
+  s6: decl l6 = e13
+  s7: expr e18
+  local l0: a: Int
+  local l1: value: T
+  local l2: xs: List<Int>
+  local l3: a
+  local l4: b
+  local l5: c
+  local l6: d
+  expr e0: var a 
+  expr e1: var mutableListOf 
+  expr e2: call mutableListOf<Int> 
+  expr e3: var xs 
+  expr e4: field map [e3]
+  expr e5: var it 
+  expr e6: lambda (0 params) [s3]
+  expr e7: call map<Int, Int> [e3, e6]
+  expr e8: var Box 
+  expr e9: literal Int(1) 
+  expr e10: call Box<Int> [e9]
+  expr e11: var f 
+  expr e12: literal Int(2) 
+  expr e13: call f<Int> [e12]
+  expr e14: var a 
+  expr e15: field size [e14]
+  expr e16: var d 
+  expr e17: binary Add [e15, e16]
+  expr e18: jump Return [e17]
