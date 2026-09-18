@@ -378,3 +378,245 @@ fn a_java_caller_reaches_a_default_facade() {
         "the Java body reaches the file's top-level declarations: {diagnostics}"
     );
 }
+
+/// The JVM methods `name` names on the Kotlin classifier `fqn`, as the Java
+/// layer's member set answers them: the `is_static` flag of each candidate.
+fn jvm_method_statics(
+    db: &TestDatabase,
+    source_set: &hir::SourceSetId,
+    fqn: &str,
+    name: &str,
+) -> Vec<bool> {
+    let scope = hir::ResolutionScope::SourceSet(source_set.clone());
+    let ctx = hir_ty::InvocationContext::external(&scope);
+    let ty = Ty::reference(db, fqn, Vec::new());
+    hir_ty::member_set(db, &scope, &ty, name, &ctx)
+        .iter()
+        .map(|method| method.is_static)
+        .collect()
+}
+
+/// The JVM field `name` of the Kotlin classifier `fqn`, as
+/// `(is_static, is_final)` — the shape a Java caller reads.
+fn jvm_field_shape(
+    db: &TestDatabase,
+    source_set: &hir::SourceSetId,
+    fqn: &str,
+    name: &str,
+) -> Option<(bool, bool)> {
+    let scope = hir::ResolutionScope::SourceSet(source_set.clone());
+    let ctx = hir_ty::InvocationContext::external(&scope);
+    let ty = Ty::reference(db, fqn, Vec::new());
+    hir_ty::pick_field(db, &scope, &ty, name, &ctx).map(|field| (field.is_static, field.is_final))
+}
+
+/// An `object` is reached through its `INSTANCE` and nothing else: its own
+/// members are *instance* members of the object's class, and a `@JvmStatic`
+/// member — and only that — is also static.
+///
+/// kotlinc 2.4.20 compiles the fixture clean; `javap -p` reports
+/// `INSTANCE`, the instance `getX`/`getY`/`n`, the statics `getSx`/`sn` and the
+/// static fields `fx`/`fy`/`CX` on `Obj`, with `cx`'s (`const val`) field
+/// `public static final`.
+#[test]
+fn an_objects_members_are_instance_members() {
+    const OBJ_KT: &str = r#"
+package a
+
+object Obj {
+    val x: Int = 1
+    var y: Int = 2
+    fun n(): Int = 5
+
+    @JvmStatic
+    val sx: Int = 3
+
+    @JvmStatic
+    fun sn(): Int = 4
+
+    @JvmField
+    val fx: Int = 6
+
+    @JvmField
+    var fy: Int = 7
+
+    const val CX: Int = 8
+}
+"#;
+    let files = [
+        ("/src/main/kotlin/a/Obj.kt", OBJ_KT),
+        (
+            "/src/main/java/a/UseObj.java",
+            "package a;\n\npublic class UseObj {\n    int run() {\n        Obj obj = Obj.INSTANCE;\n        return obj.getX() + obj.getY() + obj.n() + Obj.getSx() + Obj.sn() + Obj.fx + Obj.fy + Obj.CX;\n    }\n}\n",
+        ),
+    ];
+    let (db, source_set) = interop_fixture(&files);
+    assert_eq!(
+        jvm_method_statics(&db, &source_set, "a.Obj", "getX"),
+        vec![false],
+        "`val x` of an object is an instance accessor"
+    );
+    assert_eq!(
+        jvm_method_statics(&db, &source_set, "a.Obj", "n"),
+        vec![false]
+    );
+    assert_eq!(
+        jvm_method_statics(&db, &source_set, "a.Obj", "getSx"),
+        vec![true],
+        "`@JvmStatic val sx` adds the static accessor"
+    );
+    assert_eq!(
+        jvm_method_statics(&db, &source_set, "a.Obj", "sn"),
+        vec![true]
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Obj", "x"),
+        None,
+        "`val x` is an accessor, not a field"
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Obj", "fx"),
+        Some((true, true)),
+        "an `@JvmField val` of an object is a static final field"
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Obj", "fy"),
+        Some((true, false)),
+        "an `@JvmField var` of an object is a static non-final field"
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Obj", "CX"),
+        Some((true, true)),
+        "a `const val` is a static final field"
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        !diagnostics.contains("method run"),
+        "the Java body reaches the object's members: {diagnostics}"
+    );
+}
+
+/// A `companion object`'s `const val` and `@JvmField` properties are static
+/// fields of the *enclosing* class — the same placement a `@JvmStatic` member's
+/// method gets — while a plain companion property keeps its accessor on the
+/// companion itself.
+///
+/// kotlinc 2.4.20 compiles the fixture clean; `javap -p` reports `cf`, `CC` and
+/// `cv` on `Holder` (the first two `final`) and `getCs`/`csn` as its statics.
+#[test]
+fn a_companions_fields_are_the_enclosing_classs_statics() {
+    const HOLDER_KT: &str = r#"
+package a
+
+class Holder {
+    companion object {
+        const val CC: Int = 1
+
+        @JvmField
+        val cf: Int = 2
+
+        @JvmField
+        var cv: Int = 3
+
+        val plain: Int = 4
+
+        @JvmStatic
+        val cs: Int = 5
+
+        @JvmStatic
+        fun csn(): Int = 6
+    }
+}
+"#;
+    let files = [
+        ("/src/main/kotlin/a/Holder.kt", HOLDER_KT),
+        (
+            "/src/main/java/a/UseHolder.java",
+            "package a;\n\npublic class UseHolder {\n    int run() {\n        Holder.Companion companion = Holder.Companion;\n        return Holder.CC + Holder.cf + Holder.cv + Holder.getCs() + Holder.csn() + companion.getPlain();\n    }\n}\n",
+        ),
+    ];
+    let (db, source_set) = interop_fixture(&files);
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Holder", "CC"),
+        Some((true, true))
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Holder", "cf"),
+        Some((true, true))
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Holder", "cv"),
+        Some((true, false))
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Holder", "plain"),
+        None,
+        "a plain companion property is not a field of the enclosing class"
+    );
+    assert_eq!(
+        jvm_method_statics(&db, &source_set, "a.Holder", "getCs"),
+        vec![true]
+    );
+    assert_eq!(
+        jvm_method_statics(&db, &source_set, "a.Holder", "csn"),
+        vec![true]
+    );
+    // The companion's own class keeps *instance* members — the enclosing class
+    // is where `@JvmStatic` puts the statics — and carries no fields at all,
+    // which is what `Holder.Companion.getPlain()` (an instance call on the
+    // `Companion` field) reads.
+    assert_eq!(
+        jvm_method_statics(&db, &source_set, "a.Holder.Companion", "getPlain"),
+        vec![false]
+    );
+    assert_eq!(
+        jvm_method_statics(&db, &source_set, "a.Holder.Companion", "csn"),
+        vec![false]
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Holder.Companion", "CC"),
+        None
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        !diagnostics.contains("method run"),
+        "the Java body reaches the companion's members: {diagnostics}"
+    );
+}
+
+/// A nested `object`'s `INSTANCE` is the *object's* field, not its enclosing
+/// class's: `class Outer { object Nested }` compiles to `Outer$Nested` with the
+/// static field `INSTANCE`, beside an `Outer` that carries none — so a Java
+/// caller writes `Outer.Nested.INSTANCE`.
+///
+/// kotlinc 2.4.20 compiles the fixture clean; `javap -p` reports
+/// `public static final a.Outer$Nested INSTANCE` on `Outer$Nested` only.
+#[test]
+fn a_nested_objects_instance_is_its_own_field() {
+    let files = [
+        (
+            "/src/main/kotlin/a/Outer.kt",
+            "package a\n\nclass Outer {\n    object Nested {\n        val x: Int = 1\n    }\n}\n",
+        ),
+        (
+            "/src/main/java/a/UseOuter.java",
+            "package a;\n\npublic class UseOuter {\n    int run() {\n        Outer.Nested nested = Outer.Nested.INSTANCE;\n        return nested.getX();\n    }\n}\n",
+        ),
+    ];
+    let (db, source_set) = interop_fixture(&files);
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Outer", "INSTANCE"),
+        None,
+        "the enclosing class carries no INSTANCE"
+    );
+    assert_eq!(
+        jvm_field_shape(&db, &source_set, "a.Outer.Nested", "INSTANCE"),
+        Some((true, true)),
+        "the object's own class carries INSTANCE"
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        !diagnostics.contains("method run"),
+        "the Java body reaches the nested object: {diagnostics}"
+    );
+}

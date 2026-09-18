@@ -14,8 +14,8 @@
 //! | `val x: T` | `getX(): T` |
 //! | `var x: T` | `getX(): T` + `setX(T)` |
 //! | `val isX: Boolean` | `isX(): boolean` |
-//! | `const val x` / `@JvmField val x` | a field `x` |
-//! | `object Util` | a static field `Util.INSTANCE` |
+//! | `const val x` / `@JvmField val x` | a field `x` — an instance field of a class, a static of an `object`, a static of the enclosing class for a companion's, a static of the facade for a file's |
+//! | `object Util` | a static field `Util.INSTANCE`; its own members stay *instance* members |
 //! | `companion object` | a static field `Companion` on the enclosing class |
 //! | `@JvmStatic` on a companion member | *also* a static of the enclosing class |
 //! | a top-level `fun f()` / `val x` | a static member of the file's facade `FooKt` |
@@ -114,7 +114,9 @@ pub fn java_view_members(
 
 /// The JVM fields a Kotlin classifier declares under the name `name`: a
 /// `const val`, an `@JvmField` property, an `object`'s `INSTANCE`, a
-/// `companion object`'s `Companion` field and an `enum class`'s entries.
+/// `companion object`'s `Companion` field, a companion's `const val`/
+/// `@JvmField` (which the *enclosing* class carries) and an `enum class`'s
+/// entries.
 pub fn java_view_fields(
     db: &dyn TyDatabase,
     source: hir::SourceClass,
@@ -131,7 +133,9 @@ pub fn java_view_fields(
     let mut out = Vec::new();
     // An `object` *is* the singleton: the compiler gives it the static final
     // field `INSTANCE` of its own type, which is what a Java caller reads
-    // (<https://kotlinlang.org/docs/java-interop.html#static-methods>).
+    // (<https://kotlinlang.org/docs/java-interop.html#static-methods>). It is
+    // the *object's* field, so it is answered here and not by the walk of an
+    // enclosing class's body.
     if class.kind == KotlinClassKind::Object && name == "INSTANCE" {
         out.push(FieldData {
             name: name.to_owned(),
@@ -150,7 +154,20 @@ pub fn java_view_fields(
     }
     for member in class.body.iter().copied() {
         let resolver = resolver_of(db, tree, source.file, member);
-        shapes.push_field(&resolver, member, name, &mut out);
+        shapes.push_field(&resolver, member, name, false, &mut out);
+        // A `companion object`'s `const val`s and `@JvmField` properties are
+        // static fields of the *enclosing* class, exactly as its `@JvmStatic`
+        // members are statics of it
+        // (<https://kotlinlang.org/docs/java-interop.html#static-fields>; the
+        // companion's own class carries neither).
+        if let KotlinItemData::Class(companion) = tree.data(member)
+            && companion.kind == KotlinClassKind::CompanionObject
+        {
+            for inner in companion.body.iter().copied() {
+                let resolver = resolver_of(db, tree, source.file, inner);
+                shapes.push_field(&resolver, inner, name, true, &mut out);
+            }
+        }
     }
     out
 }
@@ -189,11 +206,9 @@ pub fn file_facade_fields(db: &dyn TyDatabase, file: FileId, name: &str) -> Vec<
     let mut out = Vec::new();
     for &top in &tree.top {
         let resolver = resolver_of(db, tree, file, top);
-        shapes.push_field(&resolver, top, name, &mut out);
-    }
-    // A facade field is static.
-    for field in out.iter_mut() {
-        field.is_static = true;
+        // A facade's fields are its statics ([`Shapes::class`] is `None` for a
+        // file, which is what makes them static).
+        shapes.push_field(&resolver, top, name, false, &mut out);
     }
     out
 }
@@ -422,7 +437,16 @@ impl<'a> Shapes<'a> {
         if only_static && !jvm_static {
             return;
         }
-        let is_static = force_static || jvm_static;
+        // `@JvmStatic` promotes a member to a static of the class that *holds*
+        // the object: on an `object`'s own class (`object Util { @JvmStatic val
+        // sx }` compiles to `public static final int getSx()` on `Util`), and
+        // on the *enclosing* class of a companion. The companion's own class
+        // keeps the member an instance member — `javap -p` shows
+        // `Holder$Companion.csn()` beside the static `Holder.csn()` — which is
+        // why the enclosing class's walk (`only_static`) is the one that marks
+        // it static there.
+        let is_static =
+            force_static || (jvm_static && self.kind() != Some(KotlinClassKind::CompanionObject));
         match data {
             KotlinItemData::Function(function) => {
                 let jvm = annotation_name(resolver, &function.annotations)
@@ -438,7 +462,11 @@ impl<'a> Shapes<'a> {
                 if has_annotation(resolver, &property.annotations, JvmAnnotation::Field) {
                     return;
                 }
-                let is_static = is_static || self.kind() == Some(KotlinClassKind::Object);
+                // An `object`'s accessors are *instance* members of the
+                // object's class — `object Util { val x = 1 }` compiles to
+                // `public final int getX()` on `Util`, reached by a Java caller
+                // as `Util.INSTANCE.getX()`, and only a `@JvmStatic` property
+                // adds the static accessor (`is_static` carries it).
                 if let Some(getter) = property_getter_name(resolver, property)
                     && getter == name
                 {
@@ -678,15 +706,32 @@ impl<'a> Shapes<'a> {
     }
 
     /// The JVM field of a declaration, when the compiler emits one for it.
+    /// `force_static` marks the field static whatever the kind of the
+    /// classifier the walk belongs to — a companion's members, which the
+    /// *enclosing* class carries as statics.
+    ///
+    /// Only the fields the *walked* classifier carries are answered: a nested
+    /// `object`'s `INSTANCE` belongs to the object's own class, which
+    /// [`java_view_fields`] answers it for, and a nested classifier of any
+    /// other kind carries no field of the enclosing class.
     fn push_field(
         &self,
         resolver: &KotlinResolver<'_>,
         item: ItemId,
         name: &str,
+        force_static: bool,
         out: &mut Vec<FieldData>,
     ) {
         match self.tree.data(item) {
             KotlinItemData::Property(property) => {
+                // A companion object's class carries no field of its own: the
+                // compiler places a companion's `const val`/`@JvmField` on the
+                // *enclosing* class, whose walk answers them as its statics
+                // (`javap -p` shows `Holder$Companion` holding accessors
+                // alone).
+                if self.kind() == Some(KotlinClassKind::CompanionObject) {
+                    return;
+                }
                 let constant = property
                     .modifiers
                     .flags
@@ -721,36 +766,20 @@ impl<'a> Shapes<'a> {
                     decl_item: Some(item),
                     ty,
                     descriptor: None,
-                    // A `const val` is a static field wherever it stands; an
-                    // `@JvmField` of a file is a facade static too.
-                    is_static: constant || self.class.is_none(),
+                    // A `const val`'s field is static wherever it stands, and
+                    // so is an `@JvmField` of an `object` — the object's own
+                    // class carries it (`object Obj { @JvmField val f = 1 }`
+                    // compiles to `public static final int f` on `Obj`) — or of
+                    // a file, whose facade carries it. A `@JvmField` of a
+                    // *class* is an instance field, and a companion's is a
+                    // static of the enclosing class, which its walk marks
+                    // ([`Self::push_field`]'s `force_static`).
+                    is_static: constant
+                        || force_static
+                        || self.class.is_none()
+                        || self.kind() == Some(KotlinClassKind::Object),
                     access: access(property.modifiers.visibility),
                     is_final: constant || !property.is_var,
-                    declaring_package: self.package.clone(),
-                    declaring_top_level: Some(self.top_level.clone()),
-                });
-            }
-            // `object Util`: the static field `INSTANCE` holding the object,
-            // reached by a Java caller as `Util.INSTANCE`.
-            KotlinItemData::Class(class) if class.kind == KotlinClassKind::Object => {
-                if name != "INSTANCE" {
-                    return;
-                }
-                out.push(FieldData {
-                    name: name.to_owned(),
-                    owner: self.owner.clone(),
-                    owner_file: Some(self.file),
-                    decl_item: Some(item),
-                    ty: Ty::reference(
-                        self.db,
-                        hir::source_class_fqn(self.db, self.file, item)
-                            .unwrap_or_else(|| class.name.clone()),
-                        Vec::new(),
-                    ),
-                    descriptor: None,
-                    is_static: true,
-                    access: Access::Public,
-                    is_final: true,
                     declaring_package: self.package.clone(),
                     declaring_top_level: Some(self.top_level.clone()),
                 });
