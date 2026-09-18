@@ -21,7 +21,7 @@
 //! | a top-level `fun f()` / `val x` | a static member of the file's facade `FooKt` |
 //! | `@JvmName("y")` on a function / `@get:JvmName("y")` on an accessor | the member is named `y` |
 //! | `@file:JvmName("Y")` | the facade is named `Y` |
-//! | `@JvmOverloads fun f(a: Int, b: Int = 0)` | one overload per trailing default |
+//! | `@JvmOverloads fun f(a: Int, b: Int = 0)` | one further method per parameter that declares a default |
 //! | an `enum class` entry | a static field of the enum type |
 //! | a constructor | `<init>` |
 //!
@@ -580,31 +580,23 @@ impl<'a> Shapes<'a> {
                     .collect(),
             })
             .collect();
-        // `@JvmOverloads`: one further method per trailing default
+        // `@JvmOverloads`: one further method per parameter that declares a
+        // default value
         // (<https://kotlinlang.org/docs/java-interop.html#overloads-generation>).
-        let overloads = if has_annotation(resolver, &function.annotations, JvmAnnotation::Overloads)
-        {
-            function
-                .defaults
-                .iter()
-                .rev()
-                .take_while(|default| default.is_some())
-                .count()
-        } else {
-            0
-        };
-        let shortest = params.len().saturating_sub(overloads);
-        for arity in (shortest..=params.len()).rev() {
+        let jvm_overloads =
+            has_annotation(resolver, &function.annotations, JvmAnnotation::Overloads);
+        let defaulted: Vec<bool> = function.defaults.iter().map(Option::is_some).collect();
+        for list in overload_lists(&params, &defaulted, jvm_overloads) {
             out.push(MethodData {
                 name: jvm_name.clone(),
                 owner: self.owner.clone(),
                 owner_file: Some(self.file),
                 decl_item: Some(item),
-                params: params[..arity].to_vec(),
+                varargs: varargs && list.len() == params.len(),
+                params: list,
                 param_names: None,
                 ret,
                 throws: Vec::new(),
-                varargs: varargs && arity == params.len(),
                 is_static,
                 abstract_: function.modifiers.modality == KotlinModality::Abstract,
                 is_final: function.modifiers.modality == KotlinModality::Final,
@@ -619,6 +611,9 @@ impl<'a> Shapes<'a> {
         }
     }
 
+    /// One `<init>` per parameter list the constructor compiles to:
+    /// `@JvmOverloads` adds one list per parameter that declares a default
+    /// value ([`overload_lists`]).
     fn push_constructor(
         &self,
         resolver: &KotlinResolver<'_>,
@@ -626,44 +621,51 @@ impl<'a> Shapes<'a> {
         constructor: &ConstructorData,
         out: &mut Vec<MethodData>,
     ) {
-        out.push(MethodData {
-            name: "<init>".to_owned(),
-            owner: self.owner.clone(),
-            owner_file: Some(self.file),
-            decl_item: Some(item),
-            params: constructor
-                .params
-                .iter()
-                .map(|param| {
-                    let ty = ty_from_kotlin(
-                        self.db,
-                        ty_from_type_ref(self.db, resolver, &param.param.ty.ty),
-                    );
-                    if param.param.varargs {
-                        Ty::array(self.db, ty)
-                    } else {
-                        ty
-                    }
-                })
-                .collect(),
-            param_names: None,
-            ret: Ty::void(self.db),
-            throws: Vec::new(),
-            varargs: constructor
-                .params
-                .last()
-                .is_some_and(|param| param.param.varargs),
-            is_static: false,
-            abstract_: false,
-            is_final: false,
-            access: access(constructor.modifiers.visibility),
-            declaring_package: self.package.clone(),
-            declaring_top_level: Some(self.top_level.clone()),
-            declaring_interface: false,
-            type_params: Vec::new(),
-            raw_erased: false,
-            descriptor: None,
-        });
+        let params: Vec<Ty> = constructor
+            .params
+            .iter()
+            .map(|param| {
+                let ty = ty_from_kotlin(
+                    self.db,
+                    ty_from_type_ref(self.db, resolver, &param.param.ty.ty),
+                );
+                if param.param.varargs {
+                    Ty::array(self.db, ty)
+                } else {
+                    ty
+                }
+            })
+            .collect();
+        let varargs = constructor
+            .params
+            .last()
+            .is_some_and(|param| param.param.varargs);
+        let jvm_overloads =
+            has_annotation(resolver, &constructor.annotations, JvmAnnotation::Overloads);
+        let defaulted: Vec<bool> = constructor.defaults.iter().map(Option::is_some).collect();
+        for list in overload_lists(&params, &defaulted, jvm_overloads) {
+            out.push(MethodData {
+                name: "<init>".to_owned(),
+                owner: self.owner.clone(),
+                owner_file: Some(self.file),
+                decl_item: Some(item),
+                varargs: varargs && list.len() == params.len(),
+                params: list,
+                param_names: None,
+                ret: Ty::void(self.db),
+                throws: Vec::new(),
+                is_static: false,
+                abstract_: false,
+                is_final: false,
+                access: access(constructor.modifiers.visibility),
+                declaring_package: self.package.clone(),
+                declaring_top_level: Some(self.top_level.clone()),
+                declaring_interface: false,
+                type_params: Vec::new(),
+                raw_erased: false,
+                descriptor: None,
+            });
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -840,6 +842,41 @@ impl<'a> Shapes<'a> {
             ClassKey::Local(source) => Name::new(&format!("item{}", source.item.0.0)),
         }
     }
+}
+
+/// The parameter lists of the classfile methods a Kotlin declaration with
+/// default values compiles to, the declared list first.
+///
+/// `@JvmOverloads` adds one method per parameter that declares a default value,
+/// from the last such parameter to the first, each holding the parameters
+/// *before* it plus the parameters after it that declare none
+/// (<https://kotlinlang.org/docs/java-interop.html#overloads-generation>).
+///
+/// The rule is the compiler's, observed with kotlinc 2.4.20: `@JvmOverloads fun
+/// f(a: String = "x", b: Int, c: Long = 1L)` compiles to `f(String, int, long)`,
+/// `f(String, int)` and `f(int)` — the last taking `b` alone, which is *not* a
+/// prefix of the declaration — and `@JvmOverloads fun g(a: Int, b: Int = 1)`
+/// compiles to `g(int, int)` and `g(int)`. The annotation has the same effect on
+/// a constructor, at every visibility (kotlinc warns that it has "no effect on
+/// private declarations" and emits the overloads all the same).
+///
+/// `defaulted` holds one entry per entry of `params`, in parameter order.
+fn overload_lists(params: &[Ty], defaulted: &[bool], jvm_overloads: bool) -> Vec<Vec<Ty>> {
+    let mut out = vec![params.to_vec()];
+    if !jvm_overloads {
+        return out;
+    }
+    for index in (0..params.len()).rev().filter(|&index| defaulted[index]) {
+        out.push(
+            params
+                .iter()
+                .enumerate()
+                .filter(|(position, _)| *position < index || !defaulted[*position])
+                .map(|(_, ty)| *ty)
+                .collect(),
+        );
+    }
+    out
 }
 
 /// The JVM access of a Kotlin visibility: `internal` is `public` in the

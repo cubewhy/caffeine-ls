@@ -270,7 +270,7 @@ fn a_qualified_or_aliased_jvm_annotation_names_the_member() {
         ),
     ];
     let (db, source_set) = interop_fixture(&files);
-    let scope = hir::ResolutionScope::SourceSet(source_set);
+    let scope = hir::ResolutionScope::SourceSet(source_set.clone());
     let ctx = hir_ty::InvocationContext::external(&scope);
     let renamed = Ty::reference(&db, "a.Renamed", Vec::new());
     for name in ["renamed", "qualifiedGetter"] {
@@ -404,6 +404,29 @@ fn jvm_method_statics(
     hir_ty::member_set(db, &scope, &ty, name, &ctx)
         .iter()
         .map(|method| method.is_static)
+        .collect()
+}
+
+/// The JVM methods `name` names on the Kotlin classifier `fqn`, as their
+/// parameter type lists — what a Java caller's invocation is checked against.
+fn jvm_method_params(
+    db: &TestDatabase,
+    source_set: &hir::SourceSetId,
+    fqn: &str,
+    name: &str,
+) -> Vec<Vec<String>> {
+    let scope = hir::ResolutionScope::SourceSet(source_set.clone());
+    let ctx = hir_ty::InvocationContext::external(&scope);
+    let ty = Ty::reference(db, fqn, Vec::new());
+    hir_ty::member_set(db, &scope, &ty, name, &ctx)
+        .iter()
+        .map(|method| {
+            method
+                .params
+                .iter()
+                .map(|param| param.display(db).to_string())
+                .collect()
+        })
         .collect()
 }
 
@@ -629,5 +652,74 @@ fn a_nested_objects_instance_is_its_own_field() {
     assert!(
         !diagnostics.contains("method run"),
         "the Java body reaches the nested object: {diagnostics}"
+    );
+}
+
+/// `@JvmOverloads` generates one JVM method per parameter that declares a
+/// default value — not one per *trailing* default: each generated list holds
+/// the parameters before that parameter plus the parameters after it that
+/// declare none, so `f(a: String = "x", b: Int, c: Long = 1L)` gains
+/// `f(String, int)` *and* `f(int)`, whose single parameter is `b`.
+///
+/// The same rule applies to a constructor. kotlinc 2.4.20 compiles the fixture
+/// clean, and `javap -p` reports exactly these parameter lists.
+#[test]
+fn jvm_overloads_generates_a_method_per_default() {
+    const OVERLOADS_KT: &str = r#"
+package a
+
+@JvmOverloads
+fun f(a: String = "x", b: Int, c: Long = 1L): String = a
+
+@JvmOverloads
+fun g(a: Int, b: Int = 1): Int = a + b
+
+class G @JvmOverloads constructor(val a: String = "x", val b: Int, val c: Long = 1L)
+"#;
+    let files = [
+        ("/src/main/kotlin/a/Overloads.kt", OVERLOADS_KT),
+        (
+            "/src/main/java/a/UseOverloads.java",
+            "package a;\n\npublic class UseOverloads {\n    String run() {\n        G whole = new G(\"y\", 1, 2L);\n        G dropped = new G(\"y\", 1);\n        G shortest = new G(1);\n        return OverloadsKt.f(\"y\", 1, 2L) + OverloadsKt.f(\"y\", 1) + OverloadsKt.f(1) + OverloadsKt.g(1, 2) + OverloadsKt.g(1) + whole.getA() + dropped.getB() + shortest.getC();\n    }\n}\n",
+        ),
+    ];
+    let (db, source_set) = interop_fixture(&files);
+    assert_eq!(
+        jvm_method_params(&db, &source_set, "a.OverloadsKt", "f"),
+        vec![
+            vec![
+                "java.lang.String".to_owned(),
+                "int".to_owned(),
+                "long".to_owned()
+            ],
+            vec!["java.lang.String".to_owned(), "int".to_owned()],
+            vec!["int".to_owned()],
+        ],
+        "each default yields one method, in declaration order"
+    );
+    assert_eq!(
+        jvm_method_params(&db, &source_set, "a.OverloadsKt", "g"),
+        vec![
+            vec!["int".to_owned(), "int".to_owned()],
+            vec!["int".to_owned()]
+        ]
+    );
+    assert_eq!(
+        jvm_method_params(&db, &source_set, "a.G", "G"),
+        vec![
+            vec![
+                "java.lang.String".to_owned(),
+                "int".to_owned(),
+                "long".to_owned()
+            ],
+            vec!["java.lang.String".to_owned(), "int".to_owned()],
+            vec!["int".to_owned()],
+        ],
+        "@JvmOverloads applies to a constructor exactly as to a function"
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        !diagnostics.contains("method run"),
+        "the Java body reaches every generated overload: {diagnostics}"
     );
 }
