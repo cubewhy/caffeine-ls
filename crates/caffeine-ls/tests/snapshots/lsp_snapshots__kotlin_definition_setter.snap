@@ -1,0 +1,19 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: response
+---
+[
+  {
+    "uri": "file://<WORKSPACE_ROOT>/src/com/example/Keywords.kt",
+    "range": {
+      "start": {
+        "line": 7,
+        "character": 8
+      },
+      "end": {
+        "line": 7,
+        "character": 11
+      }
+    }
+  }
+]

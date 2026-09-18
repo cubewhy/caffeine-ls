@@ -2074,3 +2074,93 @@ record B(int v) {
         "v"
     );
 }
+
+// -- Kotlin ------------------------------------------------------------------------
+// The same forward pipeline over a Kotlin file: a declaration's own name, and
+// the declarations that introduce themselves with a keyword instead of one — a
+// constructor, an accessor and an `init` block ([KLS
+// `declarations.html#classifier-declaration`](https://kotlinlang.org/spec/declarations.html#classifier-declaration),
+// [KLS
+// `declarations.html#property-declaration`](https://kotlinlang.org/spec/declarations.html#property-declaration),
+// [KLS
+// `declarations.html#classifier-initialization`](https://kotlinlang.org/spec/declarations.html#classifier-initialization)).
+
+/// A Kotlin fixture: the file is at a `.kt` path, so the whole registry — the
+/// parser, the item tree and the IDE features — reads it as Kotlin.
+fn test_kotlin_file(text: &str) -> Fixture {
+    let fixture = test_files(&[("/src/main/kotlin/com/example/Nav.kt", text)]);
+    let file = fixture.file(0);
+    Fixture {
+        host: fixture.host,
+        file,
+        text: text.to_owned(),
+    }
+}
+
+/// A class whose members introduce themselves with a keyword: a secondary and a
+/// primary constructor, a `get` and a `set` accessor, and an `init` block.
+const KOTLIN_KEYWORD_DECLS: &str = r#"package com.example
+
+class Point(val x: Int) {
+    val doubled: Int
+        get() = x * 2
+
+    var label: String = ""
+        set(value) {
+            field = value
+        }
+
+    init {
+        println(x)
+    }
+
+    constructor(y: Long) : this(y.toInt())
+}
+
+class Explicit constructor(val a: Int)
+"#;
+
+/// Goto-definition on the keyword that introduces a constructor, an accessor or
+/// an `init` block answers that declaration, at the keyword itself — the range
+/// [`hir::hir_def::kotlin::ranges::item_name_range`] resolves for an item that
+/// declares no name of its own.
+#[test]
+fn goto_kotlin_introducing_keywords() {
+    let fixture = test_kotlin_file(KOTLIN_KEYWORD_DECLS);
+
+    // A secondary constructor's `constructor` keyword.
+    assert_targets_name(
+        &fixture,
+        "constructor(y",
+        0,
+        "constructor(y: Long)",
+        "constructor",
+    );
+    // A primary constructor that writes its keyword.
+    assert_targets_name(
+        &fixture,
+        "constructor(val a",
+        0,
+        "constructor(val a: Int)",
+        "constructor",
+    );
+    // The accessors' `get`/`set` keywords.
+    assert_targets_name(&fixture, "get() = x", 0, "get() = x * 2", "get");
+    assert_targets_name(&fixture, "set(value)", 0, "set(value) {", "set");
+    // An `init` block's keyword.
+    assert_targets_name(&fixture, "init {", 0, "init {", "init");
+
+    assert_snapshot!(
+        "goto_kotlin_introducing_keywords",
+        render_nav_many(
+            &fixture,
+            &[
+                ("constructor(y", 0),
+                ("constructor(val a", 0),
+                ("get() = x", 0),
+                ("set(value)", 0),
+                ("init {", 0),
+            ]
+        )
+    );
+}

@@ -1,0 +1,24 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture,\n&[(\"constructor(y\", 0), (\"constructor(val a\", 0), (\"get() = x\", 0),\n(\"set(value)\", 0), (\"init {\", 0),])"
+---
+--- goto @"constructor(y"#0 ---
+constructor @217..228
+--- hover ---
+constructor(y: Long)
+--- goto @"constructor(val a"#0 ---
+constructor @274..285
+--- hover ---
+constructor(a: Int)
+--- goto @"get() = x"#0 ---
+get @76..79
+--- hover ---
+get
+--- goto @"set(value)"#0 ---
+set @126..129
+--- hover ---
+set
+--- goto @"init {"#0 ---
+init @180..184
+--- hover ---
+init

@@ -769,15 +769,21 @@ fn library_class_resolution(
 /// itself: `Point` in `class Point`, `distance` in `fun distance()`, `x` in
 /// `val x: Int`. These names are declarations, not references, so no step
 /// above resolves them.
+///
+/// A declaration that introduces itself with a keyword instead of a name —
+/// `constructor(...)`, `get`/`set` and `init` — is answered the same way: its
+/// name range is that keyword ([`ranges::item_name_range`]), and the label the
+/// keyword spells ([`KotlinItemData::label`]) stands in for the name the
+/// declaration does not have.
 fn self_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<NavigationTarget> {
     let ctx = Ctx::new(db, file)?;
     let item = declaration_item_at(&ctx, offset)?;
     let range = ctx.name_range(item)?;
-    Some(NavigationTarget {
-        file,
-        range,
-        name: ctx.tree.data(item).name()?.as_str().to_owned(),
-    })
+    let data = ctx.tree.data(item);
+    let name = data
+        .name()
+        .map_or_else(|| data.label().to_owned(), |name| name.as_str().to_owned());
+    Some(NavigationTarget { file, range, name })
 }
 
 /// The *innermost* declaration whose declared name carries `offset`.
@@ -809,6 +815,14 @@ fn walk(
     let data = ctx.tree.data(item);
     if let Some(range) = ctx.item_range(item) {
         out.push((range, item));
+    }
+    // A classifier's primary constructor hangs off the classifier header, not
+    // off its body ([`ClassData::primary_constructor`] is a field of its own),
+    // so it is visited before the members.
+    if let KotlinItemData::Class(class) = data
+        && let Some(constructor) = class.primary_constructor
+    {
+        walk(ctx, constructor, out);
     }
     // A property's accessors hang off the property, not off a classifier body.
     if let KotlinItemData::Property(property) = data {

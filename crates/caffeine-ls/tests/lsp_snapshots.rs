@@ -2384,9 +2384,10 @@ fn start_of(text: &str, needle: &str, occurrence: usize) -> Position {
     Position { line, character }
 }
 
-/// A Kotlin file has no HIR yet: the definition request answers `null` from the
-/// documented placeholder rather than walking the empty item tree the Kotlin
-/// lowering leaves behind, and the server keeps serving the file.
+/// A name the file's scope cannot resolve to a *source* declaration answers
+/// `null` rather than a guessed target — `println` is a library function whose
+/// declaring source this workspace has not loaded — and the server keeps
+/// serving the file across the requests that follow.
 #[test]
 fn kotlin_definition_answers_null() {
     let lsp = create_lsp();
@@ -2424,6 +2425,64 @@ fn kotlin_definition_answers_null() {
         json!({ "textDocument": { "uri": lsp.uri(path) } }),
     );
     assert!(symbols.is_array(), "got: {symbols:?}");
+}
+
+/// The file of the keyword-navigation test: a class whose members introduce
+/// themselves with a keyword instead of a name — a `get`/`set` accessor pair,
+/// an `init` block and a secondary constructor.
+const KOTLIN_KEYWORD_FILE: &str = r#"package com.example
+
+class Point(val x: Int) {
+    val doubled: Int
+        get() = x * 2
+
+    var label: String = ""
+        set(value) {
+            field = value
+        }
+
+    init {
+        println(x)
+    }
+
+    constructor(y: Long) : this(y.toInt())
+}
+"#;
+
+/// Kotlin goto-definition on the keyword that introduces a constructor, an
+/// accessor or an `init` block
+/// ([KLS `declarations.html#classifier-declaration`](https://kotlinlang.org/spec/declarations.html#classifier-declaration),
+/// [KLS `declarations.html#property-declaration`](https://kotlinlang.org/spec/declarations.html#property-declaration),
+/// [KLS `declarations.html#classifier-initialization`](https://kotlinlang.org/spec/declarations.html#classifier-initialization)):
+/// none of these declares a name of its own, so the target is the keyword the
+/// name range resolves to.
+#[test]
+fn kotlin_definition_introducing_keywords() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Keywords.kt";
+    lsp.write_file(path, KOTLIN_KEYWORD_FILE);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    // The `constructor` keyword of the secondary constructor.
+    let (line, character) = position_inside(KOTLIN_KEYWORD_FILE, "constructor(y", 0);
+    let response = definition_at(&lsp, path, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_constructor", response);
+
+    // The `get` keyword of the accessor.
+    let (line, character) = position_inside(KOTLIN_KEYWORD_FILE, "get() = x", 0);
+    let response = definition_at(&lsp, path, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_getter", response);
+
+    // The `set` keyword of the accessor.
+    let (line, character) = position_inside(KOTLIN_KEYWORD_FILE, "set(value)", 0);
+    let response = definition_at(&lsp, path, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_setter", response);
+
+    // The `init` keyword of the initializer block.
+    let (line, character) = position_inside(KOTLIN_KEYWORD_FILE, "init {", 0);
+    let response = definition_at(&lsp, path, Position { line, character });
+    insta::assert_json_snapshot!("kotlin_definition_init", response);
 }
 
 /// The Kotlin workspace of the navigation tests: a documented class with a
