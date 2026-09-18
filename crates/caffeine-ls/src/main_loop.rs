@@ -1454,6 +1454,32 @@ impl GlobalState {
         roots
     }
 
+    /// Whether the source root that *owns* `path` ignores it.
+    ///
+    /// The rules that apply are the ones of the most specific configured root
+    /// containing the file — the root `vfs`'s file-set partition assigns it to
+    /// — and not those of whichever root the loader happened to configure
+    /// first. A root nested under another therefore keeps its own rules: the
+    /// enclosing root's `.gitignore` decides only the files the nested root
+    /// does not contain, which is what keeps the generated sources of a build
+    /// directory (a root of their own, under a gitignored directory) loadable.
+    fn ignored_by_owning_root(
+        matchers: &mut [(AbsPathBuf, ignore::IncrementalIgnore)],
+        path: &vfs::AbsPath,
+    ) -> bool {
+        matchers
+            .iter_mut()
+            .filter_map(|(root, matcher)| {
+                let rel = path.strip_prefix(root.as_path())?;
+                Some((
+                    root.as_path().components().count(),
+                    matcher.matched(rel, false).is_ignore(),
+                ))
+            })
+            .max_by_key(|(depth, _)| *depth)
+            .is_some_and(|(_, ignored)| ignored)
+    }
+
     fn handle_vfs_task(&mut self, task: vfs::loader::Message) {
         match task {
             vfs::loader::Message::Loaded { files } => {
@@ -1468,15 +1494,10 @@ impl GlobalState {
                         }
                         // Drop files that gitignore rules exclude; the loader's
                         // exclude list only covers directories.
-                        let ignored = self
-                            .source_root_matchers
-                            .iter_mut()
-                            .find_map(|(root, matcher)| {
-                                let rel = path.as_path().strip_prefix(root.as_path())?;
-                                Some(matcher.matched(rel, false).is_ignore())
-                            })
-                            .unwrap_or(false);
-                        if ignored {
+                        if Self::ignored_by_owning_root(
+                            &mut self.source_root_matchers,
+                            path.as_path(),
+                        ) {
                             continue;
                         }
                         vfs.0.set_file_contents(path.into(), contents);
@@ -1496,15 +1517,10 @@ impl GlobalState {
                         }
                         // Drop files that gitignore rules exclude; the loader's
                         // exclude list only covers directories.
-                        let ignored = self
-                            .source_root_matchers
-                            .iter_mut()
-                            .find_map(|(root, matcher)| {
-                                let rel = path.as_path().strip_prefix(root.as_path())?;
-                                Some(matcher.matched(rel, false).is_ignore())
-                            })
-                            .unwrap_or(false);
-                        if ignored {
+                        if Self::ignored_by_owning_root(
+                            &mut self.source_root_matchers,
+                            path.as_path(),
+                        ) {
                             continue;
                         }
                         vfs.0.set_file_contents(path.into(), contents);
@@ -1970,6 +1986,50 @@ fn human_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ignore verdict of a loaded file is the one of the source root that
+    /// owns it. The ancestor's matcher comes first here, as it does in the
+    /// loader's entry order (roots are sorted by path), so a file under the
+    /// nested root must not be dropped by the ancestor's `.gitignore`.
+    #[test]
+    fn owning_root_decides_the_ignore_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "build/\n").unwrap();
+        let nested = dir.path().join("build/generated");
+        let file = nested.join("pkg/Foo.java");
+        std::fs::create_dir_all(nested.join("pkg")).unwrap();
+        std::fs::write(&file, "package pkg;\nclass Foo {}\n").unwrap();
+        let outside = dir.path().join("build/Other.java");
+        std::fs::write(&outside, "class Other {}\n").unwrap();
+
+        let matcher = |root: &std::path::Path| {
+            ignore::WalkBuilder::new(root)
+                .standard_filters(true)
+                .require_git(false)
+                .build_matchers()
+                .into_iter()
+                .next()
+                .expect("a matcher for a directory with ignore rules")
+        };
+        let mut matchers = vec![
+            (
+                AbsPathBuf::assert_utf8(dir.path().to_path_buf()),
+                matcher(dir.path()),
+            ),
+            (AbsPathBuf::assert_utf8(nested.clone()), matcher(&nested)),
+        ];
+
+        assert!(
+            !GlobalState::ignored_by_owning_root(&mut matchers, &AbsPathBuf::assert_utf8(file)),
+            "the nested root's own rules do not ignore its file, and the \
+             ancestor's `build/` entry must not reach it"
+        );
+        assert!(
+            GlobalState::ignored_by_owning_root(&mut matchers, &AbsPathBuf::assert_utf8(outside)),
+            "a file the nested root does not contain is the ancestor's, whose \
+             rules ignore it"
+        );
+    }
 
     #[test]
     fn download_advances_within_window() {
