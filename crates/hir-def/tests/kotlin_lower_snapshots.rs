@@ -804,10 +804,10 @@ class Uses
 "#,
 }
 
-/// A class-literal argument, written with a *qualified* receiver and with a
-/// simple one: both are the annotation's `ClassLit` value, and kotlinc 2.4.20
-/// reads either as the type the literal names (the fixture compiles clean with
-/// the two imports).
+// A class-literal argument, written with a *qualified* receiver and with a
+// simple one: both are the annotation's `ClassLit` value, and kotlinc 2.4.20
+// reads either as the type the literal names (the fixture compiles clean with
+// the two imports).
 lower_snapshot_lang! {
     kotlin_class_literal_annotation_argument,
     LanguageKind::Kotlin,
@@ -887,10 +887,10 @@ class Annotated
 
 // -- a call's written type arguments ----------------------------------------
 
-/// A call's `typeArguments` prefix every kind of call suffix and are the only
-/// place such a call states its type parameters
-/// ([spec: grammar-rule-typeArguments]): a bare name, a member call and a
-/// constructor all carry them, and `kotlinc` 2.4.20 compiles this file clean.
+// A call's `typeArguments` prefix every kind of call suffix and are the only
+// place such a call states its type parameters
+// ([spec: grammar-rule-typeArguments]): a bare name, a member call and a
+// constructor all carry them, and `kotlinc` 2.4.20 compiles this file clean.
 body_snapshot_lang! {
     kotlin_body_call_type_arguments,
     LanguageKind::Kotlin,
@@ -909,15 +909,15 @@ fun use(xs: List<Int>): Int {
 "#,
 }
 
-/// The receiver of a callable reference is written as a `userType`
-/// ([spec: grammar-rule-callableReference]), so `items::size` names a *value*
-/// through the same production `Foo::class` names a *type* through: the
-/// receiver lowers to the expression the dotted name has in expression
-/// position — a `Var`, with a `field` per following segment — and `::class`
-/// lowers to a class literal over the written type
-/// (<https://kotlinlang.org/docs/reflection.html#class-references>).
-///
-/// `kotlinc` 2.4.20 compiles this file clean.
+// The receiver of a callable reference is written as a `userType`
+// ([spec: grammar-rule-callableReference]), so `items::size` names a *value*
+// through the same production `Foo::class` names a *type* through: the
+// receiver lowers to the expression the dotted name has in expression
+// position — a `Var`, with a `field` per following segment — and `::class`
+// lowers to a class literal over the written type
+// (<https://kotlinlang.org/docs/reflection.html#class-references>).
+//
+// `kotlinc` 2.4.20 compiles this file clean.
 body_snapshot_lang! {
     kotlin_body_callable_references,
     LanguageKind::Kotlin,
@@ -939,13 +939,13 @@ fun topLevel(): Int = 1
 "#,
 }
 
-/// A subject-less `when` writes `in`/`is` conditions the arm cannot test
-/// against anything, and both stay *conditions* of the arm: the containment
-/// keeps a missing element exactly as the type test keeps a missing expression,
-/// so neither arm is read as the `else` an empty condition list means.
-///
-/// The source is not valid Kotlin — `kotlinc` 2.4.20 reports `condition of type
-/// 'Boolean' expected.` for both arms — and is here for the model only.
+// A subject-less `when` writes `in`/`is` conditions the arm cannot test
+// against anything, and both stay *conditions* of the arm: the containment
+// keeps a missing element exactly as the type test keeps a missing expression,
+// so neither arm is read as the `else` an empty condition list means.
+//
+// The source is not valid Kotlin — `kotlinc` 2.4.20 reports `condition of type
+// 'Boolean' expected.` for both arms — and is here for the model only.
 body_snapshot_lang! {
     kotlin_body_when_without_subject,
     LanguageKind::Kotlin,
@@ -956,4 +956,58 @@ fun f(x: Int): Int = when {
     else -> 3
 }
 "#,
+}
+
+/// A type-use annotation's *name* is a reference name of the type it annotates:
+/// [`ItemTypeRef::refs`] holds "the reference names of `ty`, depth-first, names
+/// only", and "the annotation names also appear in it, so they resolve like any
+/// type name". The order is the Java walker's — the type's own name, then the
+/// names of the annotations written on it, then those of its generic arguments
+/// ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)).
+///
+/// `kotlinc` 2.4.20 compiles both declarations, and the assertion is on the
+/// lowered refs rather than on a snapshot because the snapshot renderer spells
+/// a type, not the names it is resolved through.
+#[test]
+fn type_use_annotation_names_are_references() {
+    let src = r#"
+annotation class Ann
+
+val x: @Ann String = ""
+fun f(a: List<@Ann Int>) {}
+"#;
+    let parse = syntax::SourceFile::parse(LanguageKind::Kotlin, src);
+    let source = parse.syntax_node(LanguageKind::Kotlin);
+    let map = hir_expand::ast_id_map::AstIdMap::from_source_file(&source);
+    let lowered = hir_def::lower_source(LanguageKind::Kotlin, src, &map);
+    let tree = hir_def::kotlin::plugin::model(&lowered.items).expect("a Kotlin item tree");
+
+    let refs_of = |item: hir_def::kotlin::item_tree::ItemId| -> Vec<String> {
+        let ty = match tree.data(item) {
+            hir_def::kotlin::item_tree::KotlinItemData::Property(property) => property.ty.clone(),
+            hir_def::kotlin::item_tree::KotlinItemData::Function(function) => {
+                function.params.first().map(|param| param.param.ty.clone())
+            }
+            _ => None,
+        };
+        ty.iter()
+            .flat_map(|ty| ty.refs.iter())
+            .map(|name| name.to_string())
+            .collect()
+    };
+
+    let mut seen = Vec::new();
+    for item in tree.top.clone() {
+        seen.push(refs_of(item));
+    }
+    seen.retain(|refs| !refs.is_empty());
+    assert_eq!(
+        seen,
+        vec![
+            vec!["String".to_owned(), "Ann".to_owned()],
+            vec!["List".to_owned(), "Int".to_owned(), "Ann".to_owned()],
+        ],
+        "the annotation's name follows the name it annotates, and the generic \
+         argument's names follow it"
+    );
 }

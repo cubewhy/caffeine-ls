@@ -1071,10 +1071,54 @@ fn lower_type_body(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> LoweredType {
     // parentheses are not part of the type — so the recursion handles every
     // shape through one entry point.
     let mut lowered = lower_type_node(ctx, &inner);
+    lowered.refs = with_annotation_names(lowered.refs, type_use_annotation_names(node));
     let mut annotations = type_modifier_annotations(ctx, node);
     annotations.append(&mut lowered.annotations);
     lowered.annotations = annotations;
     lowered
+}
+
+/// The names of the type-use annotations written directly on `node`, each with
+/// the source range of its *name* — the range the reference occurrences of a
+/// type will pair it with. The set is the one [`type_modifier_annotations`]
+/// lowers, read here for the names [`ItemTypeRef::refs`] carries.
+fn type_use_annotation_names(node: &SyntaxNode<Lang>) -> Vec<(Name, TextRange)> {
+    node.children()
+        .filter(|child| is(child, K::ANNOTATION))
+        .flat_map(|annotation| {
+            // An annotation's type is a `userType`
+            // ([spec: grammar-rule-annotation]), and a multi-annotation
+            // (`@[A B]`) writes one per applied annotation — the same walk
+            // [`lower_annotation`] takes.
+            annotation
+                .children()
+                .filter(|child| is(child, K::USER_TYPE))
+                .filter_map(|user_type| {
+                    Some((qualified_name(&user_type)?, dotted_name_range(&user_type)))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// [`ItemTypeRef::refs`] as a type with type-use annotations writes it: the
+/// type's own name first, then the names of the annotations written on it, then
+/// those of its generic arguments — the order the Java walker keeps
+/// ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)),
+/// and the order [`ItemTypeRef`]'s own doc gives.
+fn with_annotation_names(
+    refs: Vec<(Name, TextRange)>,
+    names: Vec<(Name, TextRange)>,
+) -> Vec<(Name, TextRange)> {
+    if names.is_empty() {
+        return refs;
+    }
+    let mut all = Vec::with_capacity(refs.len() + names.len());
+    let mut refs = refs.into_iter();
+    all.extend(refs.next());
+    all.extend(names);
+    all.extend(refs);
+    all
 }
 
 /// The annotations of a `typeModifiers` prefix ([spec:
@@ -1164,6 +1208,7 @@ pub(super) fn lower_projection(
             _ => {}
         }
     }
+    let names = type_use_annotation_names(node);
     let Some(variance) = variance else {
         // An invariant projection is the type itself.
         let Some(inner) = child_type(node) else {
@@ -1171,7 +1216,11 @@ pub(super) fn lower_projection(
         };
         let lowered = lower_type_node(ctx, &inner);
         annotations.extend(lowered.annotations);
-        return (lowered.ty, lowered.refs, annotations);
+        return (
+            lowered.ty,
+            with_annotation_names(lowered.refs, names),
+            annotations,
+        );
     };
     let Some(inner) = child_type(node) else {
         return (TypeRef::Error, Vec::new(), annotations);
@@ -1186,7 +1235,7 @@ pub(super) fn lower_projection(
         TypeRef::Wildcard {
             bound: Some(Box::new(bound)),
         },
-        lowered.refs,
+        with_annotation_names(lowered.refs, names),
         annotations,
     )
 }
