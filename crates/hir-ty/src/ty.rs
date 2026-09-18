@@ -380,6 +380,18 @@ impl Ty {
         }
     }
 
+    /// The *upper* half of a platform type `L..U`, or `self` for every other
+    /// type: the half a classfile type stands for when its nullable reading is
+    /// the one asked about — a classfile `equals(Object)` is the `Any?` a
+    /// Kotlin declaration writes, and signature comparison reads both halves
+    /// ([`crate::kotlin::decl_check`]).
+    pub fn flexible_upper(&self, db: &dyn TyDatabase) -> Ty {
+        match self.kind(db) {
+            TyKind::Flexible { upper, .. } => *upper,
+            _ => *self,
+        }
+    }
+
     /// The inner type of a nullable or definitely-non-nullable wrapper, or
     /// `self` for every other type — the type with its `?`/`!!` notation
     /// stripped.

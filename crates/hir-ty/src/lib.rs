@@ -126,6 +126,9 @@ pub use kotlin::db::{
     declaration_types as kotlin_declaration_types, initializer_types as kotlin_initializer_types,
     item_ty as kotlin_item_ty, supertypes as kotlin_supertypes,
 };
+/// The Kotlin declaration checks ([`kotlin::decl_check::DeclDiagnostic`]), the
+/// twin of [`class_diagnostics`] for a Kotlin file.
+pub use kotlin::decl_check::class_diagnostics as kotlin_class_diagnostics;
 pub use kotlin::diagnostics::KotlinTypeError;
 pub use kotlin::infer::KotlinResolvedMember;
 pub use kotlin::method::declared_members as kotlin_declared_members;

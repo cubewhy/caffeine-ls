@@ -365,6 +365,34 @@ impl<'a> KotlinResolver<'a> {
             }
             return self.local_fqn(simple);
         }
+        // A dotted name whose head an *explicit import* binds: `import
+        // a.b.Outer` makes `Outer.Inner` the nested class of the imported one
+        // ([KLS
+        // `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)
+        // binds the *simple* name, and a classifier's own nested ones are then
+        // qualified through it). The item tree's candidate list covers an
+        // import written with an *alias*; this is the unaliased case, which is
+        // what a file's `import a.b.ResolverUtil` plus `ResolverUtil.Test`
+        // writes.
+        if segments.len() > 1 {
+            let head = segments[0];
+            for import in &self.tree.imports {
+                if import.is_asterisk {
+                    continue;
+                }
+                let bound = match &import.alias {
+                    Some(alias) => alias.as_str(),
+                    None => import.path.simple_name(),
+                };
+                if bound != head {
+                    continue;
+                }
+                let candidate = format!("{}.{}", import.path, segments[1..].join("."));
+                if let Some(fqn) = self.fqn_resolve(&candidate) {
+                    return Some(fqn);
+                }
+            }
+        }
         let mut fallback = None;
         for candidate in self.tree.candidate_fqns(name) {
             // A *built-in* Kotlin classifier — `kotlin.Int`, `kotlin.Any`,

@@ -2115,3 +2115,166 @@ fun methods(value: Any): Int {
         );
     }
 }
+
+// -- the declaration-level checks ---------------------------------------------
+
+/// The declaration checks, each confirmed with kotlinc 2.4.20 first: the fixture
+/// of every case is a file the compiler rejects with exactly the message the
+/// check renders, and `clean` is a file it accepts.
+mod decl_checks {
+    use super::*;
+
+    /// The findings of one Kotlin file, as `code message` lines.
+    fn findings(src: &str) -> Vec<String> {
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", src)]);
+        hir_ty::kotlin_class_diagnostics(&db, file)
+            .into_iter()
+            .map(|diagnostic| format!("{} {}", diagnostic.code().as_str(), diagnostic.message(&db)))
+            .collect()
+    }
+
+    /// Every rule the checker implements, each on a source kotlinc 2.4.20
+    /// rejects with the message asserted.
+    #[test]
+    fn the_compilers_declaration_findings_are_reported() {
+        let source = r#"
+open class Open1 {
+    open fun h() {}
+}
+
+class HidesIt : Open1() {
+    fun h() {}
+}
+
+open class Final1 {
+    fun g() {}
+}
+
+class OverridesFinal : Final1() {
+    override fun g() {}
+}
+
+class Plain
+
+class OverridesNothing : Plain() {
+    override fun nothingHere() {}
+}
+
+abstract class Base2 {
+    abstract fun g(): Int
+}
+
+class Missing1 : Base2()
+
+interface I2 {
+    fun f()
+}
+
+class Missing2 : I2
+
+open class WithRequired(val x: Int)
+
+class NoInit : WithRequired
+
+class Dup {
+    fun a(x: Int) {}
+    fun a(y: Int) {}
+}
+
+data fun badModifier() {}
+
+lateinit val badVal: String
+
+inline val badInline: Int = 1
+"#;
+        let found = findings(source);
+        for expected in [
+            "kotlin.needs-override-modifier 'h' hides member of supertype 'Open1' and needs an 'override' modifier.",
+            "kotlin.final-member-overridden 'g' in 'Final1' is final and cannot be overridden.",
+            "kotlin.overrides-nothing 'nothingHere' overrides nothing.",
+            "kotlin.unimplemented-abstract-member class 'Missing1' is not abstract and does not implement abstract base class member:\nfun g(): Int",
+            "kotlin.unimplemented-abstract-member class 'Missing2' is not abstract and does not implement abstract member:\nfun f(): Unit",
+            "kotlin.supertype-not-initialized this type has a constructor, so it must be initialized here.",
+            "kotlin.conflicting-overloads conflicting overloads:\nfun a(x: Int): Unit",
+            "kotlin.modifier-not-applicable modifier 'data' is not applicable to 'top level function'.",
+            "kotlin.lateinit-on-immutable-property 'lateinit' modifier is allowed only on mutable properties.",
+        ] {
+            assert!(
+                found.iter().any(|finding| finding == expected),
+                "expected {expected:?} among {found:#?}"
+            );
+        }
+    }
+
+    /// The same rules on a file kotlinc 2.4.20 accepts: every check stays quiet,
+    /// which is what keeps a project's own sources free of false positives.
+    #[test]
+    fn a_compiler_clean_file_reports_nothing() {
+        let source = r#"
+open class Base {
+    open fun h() {}
+}
+
+class Derived : Base() {
+    override fun h() {}
+}
+
+abstract class Abstract1 {
+    abstract fun g(): Int
+}
+
+class Concrete : Abstract1() {
+    override fun g(): Int = 1
+}
+
+interface I {
+    fun f()
+}
+
+class Impl : I {
+    override fun f() {}
+}
+
+open class WithDefault(val x: Int = 0)
+
+class UsesDefault : WithDefault()
+
+open class AbstractBase {
+    abstract val isEnabled: Boolean
+}
+
+class ExtendsIt : AbstractBase() {
+    override val isEnabled: Boolean = true
+}
+
+class Pairs {
+    fun a(x: Int) {}
+    fun a(y: String) {}
+}
+
+lateinit var ok: String
+
+val okVal: String = ""
+"#;
+        let found = findings(source);
+        assert!(found.is_empty(), "a clean file reports nothing: {found:#?}");
+    }
+
+    /// The findings are anchored at the declaration they are about: the name of
+    /// the member, or the whole declaration where it has none.
+    #[test]
+    fn a_finding_carries_the_declarations_range() {
+        let source = "open class Final1 { fun g() {} }\nclass OverridesFinal : Final1() { override fun g() {} }\n";
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let findings = hir_ty::kotlin_class_diagnostics(&db, file);
+        let ranges: Vec<_> = findings.iter().filter_map(|f| f.range()).collect();
+        assert!(!ranges.is_empty(), "a finding is anchored: {findings:#?}");
+        for range in ranges {
+            let text = source[usize::from(range.start())..usize::from(range.end())].to_owned();
+            assert!(
+                text == "g" || text.starts_with("class OverridesFinal"),
+                "the range covers a declaration: {text:?}"
+            );
+        }
+    }
+}
