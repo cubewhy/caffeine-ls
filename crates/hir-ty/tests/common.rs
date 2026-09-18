@@ -499,9 +499,27 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
         // language's built-in classifiers, and the compiler reads it as
         // `java.util.List`), so this fixture class is the JVM shape and carries
         // what a Kotlin file reads through it.
+        //
+        // The hierarchy is the language's (`List <: Collection <: Iterable`,
+        // [KLS
+        // `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)):
+        // the library's own `Iterable<T>.joinToString` and the other extensions
+        // over a collection are written on the top of it, and a `List` that did
+        // not reach `Iterable` could not resolve one.
+        class(
+            "kotlin/collections/Collection",
+            Some("kotlin/Any"),
+            &["kotlin/collections/Iterable"],
+            0x0601,
+        ),
         ClassSpec {
             methods: &[("size", "()I")],
-            ..class("kotlin/collections/List", Some("kotlin/Any"), &[], 0x0601)
+            ..class(
+                "kotlin/collections/List",
+                Some("kotlin/Any"),
+                &["kotlin/collections/Collection"],
+                0x0601,
+            )
         },
         // `class Array<T>` — the classifier a Kotlin array type is, which the
         // library's own `forEach`/`map` extensions are written over.
@@ -1891,6 +1909,21 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &["java/util/List"],
             Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/util/List<TE;>;"),
         ),
+        class_with_methods_access_sig(
+            "java/util/LinkedList",
+            Some("java/util/AbstractList"),
+            &[
+                "java/util/List",
+                "java/lang/Cloneable",
+                "java/io/Serializable",
+            ],
+            &[("<init>", "()V")],
+            &[""],
+            &[0x0001],
+            Some(
+                "<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;Ljava/util/List<TE;>;Ljava/lang/Cloneable;Ljava/io/Serializable;",
+            ),
+        ),
         class_sig(
             "java/util/ArrayList",
             Some("java/util/AbstractList"),
@@ -1900,8 +1933,7 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 "java/io/Serializable",
             ],
             Some(
-                "<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;Ljava/util/List<TE;>;\
-                 Ljava/lang/Cloneable;Ljava/io/Serializable;",
+                "<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;Ljava/util/List<TE;>;Ljava/lang/Cloneable;Ljava/io/Serializable;",
             ),
         ),
         class_with_methods_access(

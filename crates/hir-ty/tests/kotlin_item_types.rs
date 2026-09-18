@@ -1845,3 +1845,273 @@ class Holder {
         "the field read, the field write and the setter's value are `String`: {bodies}"
     );
 }
+
+// -- the body inference a Kotlin file's call sites need ------------------------
+
+/// The call-site and subtyping rules the Kotlin body layer resolves against,
+/// each confirmed with kotlinc 2.4.20 first.
+///
+/// A platform type is what a Kotlin file sees a *classfile* type as
+/// ([`hir_ty::kotlin::ty::ty_from_java`]), and every one of these fixtures has
+/// at least one: a library call's result, a Java getter's return, a facade's
+/// function type. kotlinc compiles every fixture here clean.
+mod call_sites {
+    use super::*;
+
+    /// The type a call is *used* at completes its type arguments: `val list:
+    /// MutableList<String> = LinkedList()` constructs a `LinkedList<String>`
+    /// ([KLS
+    /// `type-inference.html#call-completion`](https://kotlinlang.org/spec/type-inference.html#call-completion)).
+    #[test]
+    fn an_expected_type_completes_a_constructors_arguments() {
+        let source = r#"
+import java.util.LinkedList
+
+fun build(): MutableList<String> {
+    val list: MutableList<String> = LinkedList()
+    return list
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "the expected type completes the constructor: {rendered}"
+        );
+        assert!(
+            rendered.contains("LinkedList<String>"),
+            "the constructed class takes the expected type's argument: {rendered}"
+        );
+    }
+
+    /// A call's *written* type argument binds the callee's parameter, and an
+    /// argument the call does not write is never replaced by the enclosing
+    /// receiver: `mutableListOf<File>()` inside a class body is a
+    /// `MutableList<File>`, not a list of the class.
+    #[test]
+    fn a_call_keeps_the_type_it_was_written_with() {
+        let facades = vec![facade(
+            "kotlin/collections/CollectionsKt",
+            &[
+                ("mutableListOf", "()Ljava/util/List;"),
+                ("mutableListOf", "([Ljava/lang/Object;)Ljava/util/List;"),
+            ],
+            &[
+                "<T:Ljava/lang/Object;>()Ljava/util/List<TT;>;",
+                "<T:Ljava/lang/Object;>([TT;)Ljava/util/List<TT;>;",
+            ],
+            &[0x0009, 0x0009],
+        )];
+        let source = r#"
+class Container {
+    fun build(): List<String> {
+        val names = mutableListOf<String>()
+        return names
+    }
+}
+"#;
+        let mut extra = common::interop_classes();
+        extra.extend(facades);
+        let (db, file) = kotlin_fixture_with(&[("/src/main/kotlin/Sample.kt", source)], extra);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "the written type argument binds the callee's parameter: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Container"),
+            "the enclosing classifier is not the call's type argument: {rendered}"
+        );
+    }
+
+    /// A *mapped* classfile classifier and its Kotlin classifier are one class
+    /// (<https://kotlinlang.org/docs/java-interop.html#mapped-types>): a
+    /// `MutableList<String>` written in Kotlin is a `java.util.List` on the
+    /// classpath, so the `ArrayList` a Java library answers is one.
+    ///
+    /// The name `List` has *two* candidates here — the `java.awt.List` the
+    /// fixture's star import brings in, which is not generic, and
+    /// `kotlin.collections.List` — and `List<String>` is the interface, exactly
+    /// as kotlinc 2.4.20 reads it.
+    #[test]
+    fn a_mapped_classifier_is_its_kotlin_classifier() {
+        let mut extra = common::interop_classes();
+        extra.push(ClassSpec {
+            fqn: "java/awt/List",
+            super_class: Some("java/lang/Object"),
+            interfaces: &[],
+            access: 0x0021,
+            fields: &[],
+            field_access: &[],
+            methods: &[("<init>", "()V")],
+            method_sigs: &[""],
+            method_access: &[0x0001],
+            sig: None,
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
+            method_defaults: &[],
+        });
+        let source = r#"
+import java.awt.*
+import java.util.*
+
+fun read(): List<String> {
+    val list: MutableList<String> = ArrayList()
+    for (name in list) {
+        println(name)
+    }
+    return list
+}
+"#;
+        let (db, file) = kotlin_fixture_with(&[("/src/main/kotlin/Sample.kt", source)], extra);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "a `List<String>` is the Kotlin interface, not the AWT component: {rendered}"
+        );
+        assert!(
+            !rendered.contains("java.awt.List"),
+            "the non-generic candidate is not the one `List<String>` names: {rendered}"
+        );
+    }
+
+    /// A SAM lambda's implicit parameter comes from the receiver's type
+    /// argument, through a *platform* receiver: `optional.map { it.length }`
+    /// binds `it` to the `Optional`'s own argument
+    /// (<https://kotlinlang.org/docs/java-interop.html#sam-conversions>) — the
+    /// receiver is a library call's result, so its type is the `Optional<T>!`
+    /// the classfile denotes.
+    #[test]
+    fn a_sam_lambda_binds_its_parameter_through_a_platform_receiver() {
+        let source = r#"
+import java.util.Optional
+
+fun length(): Int {
+    return Optional.of("a").map { it.length }.get()
+}
+
+fun lengthOf(optional: Optional<String>): Int {
+    return optional.map { it.length }.get()
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "the lambda's `it` is the receiver's type argument: {rendered}"
+        );
+    }
+
+    /// A function-typed parameter's *receiver* takes the receiver's arguments:
+    /// `Box<Method>().use { … }` has a `Method.() -> Unit`, so `isAccessible` is
+    /// the `Method`'s ([KLS
+    /// `type-system.html#type-containment`](https://kotlinlang.org/spec/type-system.html#type-containment)
+    /// substitutes the class's parameters in its members' types).
+    #[test]
+    fn a_lambda_receiver_takes_the_receivers_arguments() {
+        let source = r#"
+import javax.swing.JList
+
+class Box<T>(val value: T) {
+    fun use(f: T.() -> Unit) {
+        f(value)
+    }
+}
+
+fun use(list: JList<String>) {
+    val box = Box<JList<String>>(list)
+    box.use { dragEnabled = true }
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "the lambda's receiver is the substituted parameter: {rendered}"
+        );
+    }
+
+    /// A mutable map's entries are *mutable* entries — `MutableMap.entries` is
+    /// a `MutableSet<MutableEntry<K, V>>`
+    /// (<https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-mutable-map/>),
+    /// and `MutableIterator<MutableEntry<…>>` is a
+    /// `MutableIterator<Map.Entry<…>>` because `MutableIterator` is declared
+    /// `out`
+    /// (<https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.collections/-mutable-iterator/>).
+    #[test]
+    fn a_mutable_maps_entries_are_mutable_entries() {
+        let source = r#"
+fun entries(map: MutableMap<String, Int>): MutableIterator<Map.Entry<String, Int>> {
+    return map.entries.iterator()
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "a mutable entry is an entry: {rendered}"
+        );
+    }
+
+    /// A `suspend` function answers the type its continuation carries. The
+    /// classfile shape is `Object f(…, Continuation<? super T>)`
+    /// (<https://kotlinlang.org/docs/java-to-kotlin-interop.html#suspending-functions>),
+    /// and the `Object` its signature writes *is* the `T`: a Kotlin caller of
+    /// the fixture's `runSuspend { "x" }` has a `String`, not an `Any!`.
+    #[test]
+    fn a_suspend_functions_return_is_its_continuations_argument() {
+        let facades = vec![facade(
+            "kotlin/SuspendingKt",
+            &[(
+                "runSuspend",
+                "(Lkotlin/jvm/functions/Function0;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;",
+            )],
+            &[
+                "<T:Ljava/lang/Object;>(Lkotlin/jvm/functions/Function0<+TT;>;Lkotlin/coroutines/Continuation<-TT;>;)Ljava/lang/Object;",
+            ],
+            &[0x0009],
+        )];
+        let source = r#"
+fun value(): String {
+    return runSuspend { "x" }
+}
+"#;
+        let mut extra = common::interop_classes();
+        extra.extend(facades);
+        let (db, file) = kotlin_fixture_with(&[("/src/main/kotlin/Sample.kt", source)], extra);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "a suspend call answers its continuation's type: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Any"),
+            "the erased `Object` the signature writes is not the call's type: {rendered}"
+        );
+    }
+
+    /// `x::class` is the `KClass` of `x`'s type
+    /// (<https://kotlinlang.org/docs/reflection.html#class-references>), and
+    /// its `java` property is the classfile's `getJavaClass` — a `@JvmName` the
+    /// library's metadata carries and this model's table stands in for.
+    #[test]
+    fn a_class_reference_is_a_kclass_of_its_receiver() {
+        let source = r#"
+fun methods(value: Any): Int {
+    val declared = value::class.java.declaredMethods
+    return declared.size
+}
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+        let rendered = render_bodies(&db, file);
+        assert!(
+            !rendered.contains("kotlin."),
+            "the class reference reaches the class's members: {rendered}"
+        );
+        assert!(
+            rendered.contains("KClass<Any>"),
+            "`value::class` is a `KClass` of the value's type: {rendered}"
+        );
+    }
+}
