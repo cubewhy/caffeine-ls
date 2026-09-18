@@ -24,8 +24,8 @@ fun apply body b0:
   s2: decl l1 = e6
   s5: decl l2 = e13
   s6: decl l3 = e14
-  s7: decl l4 = e15
-  s8: expr e19
+  s7: decl l4 = e16
+  s8: expr e20
   local l0: items: List<Int>
   local l1: mapped
   local l2: filtered
@@ -46,8 +46,9 @@ fun apply body b0:
   expr e12: lambda (1 params) [s4]
   expr e13: call filter [e7, e12]
   expr e14: callable-ref apply 
-  expr e15: callable-ref size 
-  expr e16: var mapped 
-  expr e17: var filtered 
-  expr e18: binary Add [e16, e17]
-  expr e19: jump Return [e18]
+  expr e15: var items 
+  expr e16: callable-ref size [e15]
+  expr e17: var mapped 
+  expr e18: var filtered 
+  expr e19: binary Add [e17, e18]
+  expr e20: jump Return [e19]

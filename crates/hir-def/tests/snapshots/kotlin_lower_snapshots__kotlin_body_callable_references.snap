@@ -1,0 +1,67 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Holder(val items: List<Int>) {
+    fun size(): Int = 1
+
+    fun use(): Int {
+        val a = items::size
+        val b = this::use
+        val c = ::topLevel
+        val d = Holder::class
+        val e = String::class.java
+        return a() + b() + c() + d.hashCode() + e.hashCode()
+    }
+}
+
+fun topLevel(): Int = 1
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Holder @1..298
+  primary constructor(items: List<Int>) @13..35
+  val items: List<Int> @14..34
+  fun size(): Int @42..61
+  fun use(): Int @67..296
+fun topLevel(): Int @300..323
+
+BODIES:
+fun size body b0:
+  s0: expr e0
+fun use body b1:
+  s1: decl l1 = e2
+  s2: decl l2 = e4
+  s3: decl l3 = e5
+  s4: decl l4 = e6
+  s5: decl l5 = e8
+  s6: expr e15
+fun topLevel body b2:
+  s7: expr e16
+  local l0: items: List<Int>
+  local l1: a
+  local l2: b
+  local l3: c
+  local l4: d
+  local l5: e
+  expr e0: literal Int(1) 
+  expr e1: var items 
+  expr e2: callable-ref size [e1]
+  expr e3: this 
+  expr e4: callable-ref use [e3]
+  expr e5: callable-ref topLevel 
+  expr e6: class-literal Holder 
+  expr e7: class-literal String 
+  expr e8: field java [e7]
+  expr e9: var a 
+  expr e10: call a 
+  expr e11: var e 
+  expr e12: field hashCode [e11]
+  expr e13: call hashCode [e11]
+  expr e14: binary Add [e10, e13]
+  expr e15: jump Return [e14]
+  expr e16: literal Int(1)

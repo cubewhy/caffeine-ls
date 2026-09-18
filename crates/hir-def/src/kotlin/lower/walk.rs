@@ -1685,7 +1685,7 @@ fn qualified_name(node: &SyntaxNode<Lang>) -> Option<Name> {
 
 /// The identifier segments of a dotted name node (`QUALIFIED_NAME`,
 /// `USER_TYPE`), in source order.
-fn dotted_segments(node: &SyntaxNode<Lang>) -> Vec<String> {
+pub(super) fn dotted_segments(node: &SyntaxNode<Lang>) -> Vec<String> {
     node.children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .filter(|token| is_token(token, K::IDENTIFIER))

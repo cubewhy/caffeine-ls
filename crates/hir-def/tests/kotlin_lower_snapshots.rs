@@ -908,3 +908,33 @@ fun use(xs: List<Int>): Int {
 }
 "#,
 }
+
+/// The receiver of a callable reference is written as a `userType`
+/// ([spec: grammar-rule-callableReference]), so `items::size` names a *value*
+/// through the same production `Foo::class` names a *type* through: the
+/// receiver lowers to the expression the dotted name has in expression
+/// position — a `Var`, with a `field` per following segment — and `::class`
+/// lowers to a class literal over the written type
+/// (<https://kotlinlang.org/docs/reflection.html#class-references>).
+///
+/// `kotlinc` 2.4.20 compiles this file clean.
+body_snapshot_lang! {
+    kotlin_body_callable_references,
+    LanguageKind::Kotlin,
+    r#"
+class Holder(val items: List<Int>) {
+    fun size(): Int = 1
+
+    fun use(): Int {
+        val a = items::size
+        val b = this::use
+        val c = ::topLevel
+        val d = Holder::class
+        val e = String::class.java
+        return a() + b() + c() + d.hashCode() + e.hashCode()
+    }
+}
+
+fun topLevel(): Int = 1
+"#,
+}

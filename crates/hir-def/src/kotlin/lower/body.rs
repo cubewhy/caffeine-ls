@@ -40,7 +40,7 @@ use hir_expand::{
 };
 
 use super::LowerCtx;
-use super::walk::{LoweredType, lower_projection, lower_type_node};
+use super::walk::{LoweredType, dotted_segments, lower_projection, lower_type_node};
 
 /// Lowers the body of a function declaration: its `BLOCK`, its expression body
 /// (`fun f() = expr`) or nothing for a declaration without one.
@@ -1333,6 +1333,13 @@ fn call_type_arguments(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Spann
 
 /// A navigation suffix `.name`, `?.name` or `::name`
 /// ([KLS `expressions.html#navigation-operators`](https://kotlinlang.org/spec/expressions.html#navigation-operators)).
+///
+/// A `::class` reached through a chain — `com.example.Marker::class`, which the
+/// postfix grammar parses as two navigations rather than as the callable
+/// reference a single-identifier receiver produces — stays a callable reference
+/// whose name is missing, a recorded gap: reading it as a class literal needs
+/// the classifier the *expression* chain spells, and the receiver here is an
+/// expression, not a written type.
 fn navigation(
     ctx: &mut LowerCtx<'_>,
     owner: ItemId,
@@ -1867,10 +1874,42 @@ fn super_qualifier(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<Spanne
     label_qualifier(node)
 }
 
-/// A callable reference `::name` / `receiver::name` ([spec:
-/// grammar-rule-callableReference]).
+/// A callable reference `::name` / `receiver::name`, and the class reference
+/// `receiver::class` the same production writes
+/// ([spec: grammar-rule-callableReference]).
+///
+/// The receiver is written as a `userType` — `items::size` writes the same
+/// shape `Foo::class` does, because the grammar puts a `receiverType` there —
+/// so it lowers to the expression the same dotted name has when it is written
+/// in expression position: a [`ExprData::Var`] for the head and a
+/// [`ExprData::FieldAccess`] per following segment, exactly the chain
+/// `a.b.c` produces and the one a fully qualified classifier reference is read
+/// from ([KLS
+/// `expressions.html#callable-references`](https://kotlinlang.org/spec/expressions.html#callable-references)).
+///
+/// `::class` is the *class reference*
+/// (<https://kotlinlang.org/docs/reflection.html#class-references>), not a
+/// callable, so it lowers to [`ExprData::ClassLit`] over the written type.
 fn callable_reference(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
-    let receiver = child_expression(node).map(|receiver| expr(ctx, owner, &receiver));
+    let _ = owner;
+    let user_type = node.children().find(|child| is(child, K::USER_TYPE));
+
+    let class_reference = node
+        .children_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .any(|token| is_token(&token, K::CLASS_KW));
+    if class_reference {
+        return match user_type {
+            Some(user_type) => ExprData::ClassLit(spanned_type(ctx, &user_type)),
+            // A class reference always names something (`X::class`); without a
+            // written receiver there is no type to take.
+            None => ExprData::Missing,
+        };
+    }
+
+    let receiver = user_type.map(|user_type| dotted_reference(ctx, &user_type));
+    // The name follows the `::`; the receiver's own identifiers are children of
+    // its `USER_TYPE` node, not of this one.
     let name = node
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
@@ -1878,6 +1917,31 @@ fn callable_reference(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<L
         .map(|token| Name::new(token.text()))
         .unwrap_or_else(|| Name::new("<missing>"));
     ExprData::CallableReference { receiver, name }
+}
+
+/// A `USER_TYPE` used as an *expression* — the receiver of a callable
+/// reference ([spec: grammar-rule-userType]) — lowered the way the same name
+/// written as a postfix chain of navigation suffixes lowers
+/// ([spec: grammar-rule-postfixUnaryExpression]): `items` is a
+/// [`ExprData::Var`] and `com.example.Foo` a `Var` with one
+/// [`ExprData::FieldAccess`] per following segment.
+fn dotted_reference(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ExprId {
+    let mut segments = dotted_segments(node).into_iter();
+    let Some(head) = segments.next() else {
+        return alloc_expr(ctx, ExprData::Missing, node.text_range());
+    };
+    let mut current = alloc_expr(ctx, ExprData::Var(Name::new(&head)), node.text_range());
+    for segment in segments {
+        current = alloc_expr(
+            ctx,
+            ExprData::FieldAccess {
+                target: Some(current),
+                name: Name::new(&segment),
+            },
+            node.text_range(),
+        );
+    }
+    current
 }
 
 /// An assignment statement ([spec: grammar-rule-statement]): the destination,
