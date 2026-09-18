@@ -1071,6 +1071,20 @@ pub fn file_path_segments(db: &dyn HirDatabase, file: FileId) -> Option<Arc<Vec<
     Some(Arc::new(dir_segments(abs.parent()?)))
 }
 
+/// The JVM facade class a compiler synthesizes for `file`'s top-level
+/// declarations — the class a *Java* caller names when it uses them
+/// ([`file_facade_source`],
+/// <https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+/// `None` for a language whose compiler synthesizes none.
+///
+/// The name is the *language's* rule and belongs to its index
+/// ([`LanguageFileIndex::file_facade_class`](crate::lang::LanguageFileIndex::file_facade_class));
+/// the type layer reads the same answer here rather than deriving a second one
+/// of its own.
+pub fn file_facade_class(db: &dyn HirDatabase, file: FileId) -> Option<Name> {
+    crate::lang::for_file(db, file)?.file_facade_class(db, file)
+}
+
 /// The file whose synthesized JVM facade class is `fqn`, if any — the class a
 /// *Java* caller names when it uses a Kotlin file's top-level declarations
 /// ([`file_facade_class`]'s Kotlin twin,
@@ -1331,6 +1345,68 @@ fn source_resolve(db: &dyn HirDatabase, source_set: &SourceSetId, fqn: &str) -> 
             fqn: Name::new(fqn),
         });
     }
+    source_symbol_resolve(db, graph, source_set, fqn)
+}
+
+/// The class `fqn` denotes in `source_set`'s classpath, honoring classpath
+/// order — the resolution *without* the synthesized-facade rule, for a caller
+/// that is computing a facade name itself ([`source_symbol_resolve`], which
+/// records why asking the full resolution from there is impossible).
+pub(crate) fn declaration_resolve(
+    db: &dyn HirDatabase,
+    source_set: &SourceSetId,
+    fqn: &str,
+) -> Option<Resolved> {
+    let graph = ProjectGraph::try_get(db)?;
+    resolve_declarations(db, graph, source_set, fqn)
+}
+
+/// [`declaration_resolve`]'s walk: the source set's own declarations first,
+/// then each of its classpath entries in order — an internal source set's
+/// declarations, a library's class of that name.
+fn resolve_declarations(
+    db: &dyn HirDatabase,
+    graph: ProjectGraph,
+    source_set: &SourceSetId,
+    fqn: &str,
+) -> Option<Resolved> {
+    if let Some(resolved) = source_symbol_resolve(db, graph, source_set, fqn) {
+        return Some(resolved);
+    }
+    let entries = graph.source_sets(db).get(source_set)?;
+    for entry in &entries.entries {
+        match entry {
+            ClasspathEntry::SourceSet(internal) => {
+                if let Some(resolved) = resolve_declarations(db, graph, internal, fqn) {
+                    return Some(resolved);
+                }
+            }
+            ClasspathEntry::Library(library) => {
+                if let Some(resolved) = resolve_in_libraries(db, std::slice::from_ref(library), fqn)
+                {
+                    return Some(Resolved::Library(resolved));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The class `fqn` denotes *without* the synthesized-facade rule: the
+/// declarations the source sets index name
+/// ([`SourceSymbolKind`]), the whole of what [`fqn_resolve`] answers for a
+/// source set beyond that rule.
+///
+/// The facade derivation itself ([`file_facade_class`](crate::file_facade_class))
+/// resolves the `kotlin.jvm.JvmName` an `@file:JvmName` application names
+/// through here: the rule *is* what is being computed, so asking the full
+/// resolution would make the query depend on its own answer — a salsa cycle.
+pub(crate) fn source_symbol_resolve(
+    db: &dyn HirDatabase,
+    graph: ProjectGraph,
+    source_set: &SourceSetId,
+    fqn: &str,
+) -> Option<Resolved> {
     let fqn = Name::new(fqn);
     for package in package_prefixes(fqn.as_str()) {
         for reference in

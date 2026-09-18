@@ -805,6 +805,25 @@ class Uses
 }
 
 lower_snapshot_lang! {
+    kotlin_annotation_qualified_name,
+    LanguageKind::Kotlin,
+    r#"
+import kotlin.jvm.JvmName as JN
+
+@kotlin.jvm.JvmName("topRenamed")
+fun top(): Int = 1
+
+class Renamed {
+    @JN("renamed")
+    fun m(): Int = 1
+
+    @get:kotlin.jvm.JvmName("qualifiedGetter")
+    val v: Int = 0
+}
+"#,
+}
+
+lower_snapshot_lang! {
     kotlin_annotation_use_site_targets,
     LanguageKind::Kotlin,
     r#"

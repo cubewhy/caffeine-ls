@@ -588,3 +588,44 @@ fn class_member_dispatch_skips_modifiers_and_annotations() {
         ]
     );
 }
+
+/// An annotation's type is a `userType`, which may be *qualified*: the member
+/// dispatch's annotation lookahead must skip `kotlin.jvm.JvmName` — with or
+/// without a use-site target — like it skips `JvmName`, or the declaration
+/// that carries it is not recognized at all.
+///
+/// Both fixtures compile clean under kotlinc 2.4.20.
+#[test]
+fn qualified_annotation_names_parse() {
+    let src = indoc! {r#"
+        @kotlin.jvm.JvmName("f")
+        fun top(): Int = 1
+
+        class Holder {
+            @get:kotlin.jvm.JvmName("g")
+            val v: Int = 0
+        }
+    "#};
+
+    let parse = kotlin_syntax::SourceFile::parse(src);
+    assert!(
+        parse.errors().is_empty(),
+        "expected no parse errors, got {:?}",
+        parse.errors()
+    );
+
+    let node = parse.into_syntax_node();
+    let annotations: Vec<String> = node
+        .descendants()
+        .filter(|node| node.kind() == SyntaxKind::ANNOTATION)
+        .map(|node| node.text().to_string().trim_end().to_owned())
+        .collect();
+    assert_eq!(
+        annotations,
+        vec![
+            "@kotlin.jvm.JvmName(\"f\")".to_owned(),
+            "@get:kotlin.jvm.JvmName(\"g\")".to_owned()
+        ],
+        "both applications are kept, qualified name and all"
+    );
+}

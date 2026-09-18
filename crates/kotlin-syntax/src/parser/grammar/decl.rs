@@ -293,11 +293,15 @@ fn skip_annotation(p: &Parser, mut i: usize) -> usize {
     if p.nth(i) == Some(IDENTIFIER) {
         i += 1;
         // annotationUseSiteTarget `get:` before the type name
-        if p.nth(i) == Some(COLON) {
-            i += 1;
-            if p.nth(i) == Some(IDENTIFIER) {
-                i += 1;
-            }
+        if p.nth(i) == Some(COLON) && p.nth(i + 1) == Some(IDENTIFIER) {
+            i += 2;
+        }
+        // The annotation's type is a `userType`, which may be *qualified*:
+        // `@kotlin.jvm.JvmName("x")` and `@get:kotlin.jvm.JvmName("x")` are
+        // the same application as the unqualified spelling
+        // ([spec: grammar-rule-userType]).
+        while p.nth(i) == Some(DOT) && p.nth(i + 1) == Some(IDENTIFIER) {
+            i += 2;
         }
     }
     match p.nth(i) {

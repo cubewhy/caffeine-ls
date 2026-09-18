@@ -42,7 +42,7 @@ pub use hir_expand::ids::ItemId;
 // parameter, live in the JVM layer: Kotlin lowering constructs them directly
 // (Java's `ItemTypeRef::from_spanned` is the Java walker's own constructor)
 // and resolves their ranges through [`crate::kotlin::ranges`].
-use crate::jvm::decl::{ItemAnnotationRef, ItemAnnotationValue, ItemTypeRef, Param};
+use crate::jvm::decl::{ItemAnnotationRef, ItemTypeRef, Param};
 
 /// A formal parameter of a Kotlin declaration: the shared, language-neutral
 /// [`Param`] shape plus the two parameter modifiers Kotlin has and Java does
@@ -200,6 +200,38 @@ impl Default for KotlinItemTree {
     }
 }
 
+/// The packages every Kotlin file imports implicitly
+/// (<https://kotlinlang.org/docs/packages.html#default-imports>).
+///
+/// KLS does not enumerate the default imports (the *Kotlin/Core* specification
+/// has no section for them), so the list below is pinned empirically with the
+/// probe oracle of kotlinc 2.4.20 (JRE 21.0.11): `listOf(1)` is a
+/// `kotlin.collections.List<Int>` with no import (so `List` comes from
+/// `kotlin.collections`), and `String`/`Exception`/`StringBuilder` resolve with
+/// no import (so `kotlin` and `java.lang` are both default). The list is the
+/// compiler's documented one
+/// (<https://kotlinlang.org/docs/packages.html#default-imports>) checked
+/// against it; a standard-library member that resolves through none of these
+/// packages is a missing entry.
+///
+/// `kotlin.reflect` is deliberately *not* a default import: `fun f(): KClass<*>`
+/// with no import is `unresolved reference 'KClass'.` under kotlinc 2.4.20, and
+/// the compiler's documented list has no entry for the package. `String::class`
+/// still needs no import — the class literal is an *expression* whose type is
+/// `kotlin.reflect.KClass`, and an expression's type needs no name in scope.
+pub const DEFAULT_IMPORTS: &[&str] = &[
+    "kotlin",
+    "kotlin.annotation",
+    "kotlin.collections",
+    "kotlin.comparisons",
+    "kotlin.io",
+    "kotlin.ranges",
+    "kotlin.sequences",
+    "kotlin.text",
+    "java.lang",
+    "kotlin.jvm",
+];
+
 impl KotlinItemTree {
     pub fn data(&self, id: ItemId) -> &KotlinItemData {
         self.items.get(id.0)
@@ -219,28 +251,76 @@ impl KotlinItemTree {
         self.parent.get(item.0.0 as usize).copied().flatten()
     }
 
-    /// The JVM facade class the compiler synthesizes for this file's top-level
-    /// declarations — `<stem>Kt`, or the `@file:JvmName` the file writes
-    /// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+    /// The candidate fully qualified names the written name `name` may denote
+    /// *in this file*, in KLS's scope order ([KLS
+    /// `packages-and-imports.html#importing`](https://kotlinlang.org/spec/packages-and-imports.html#importing)):
     ///
-    /// It is derived from the file's *name*, which the item tree does not
-    /// carry; a caller that has the file passes it in
-    /// ([`Self::facade_class_from`]), and one that does not gets `None`
-    /// unless the file writes `@file:JvmName`.
-    pub fn facade_class(&self) -> Option<String> {
-        for application in &self.file_annotations {
-            if application.annotation.name.as_str() != "JvmName" {
-                continue;
-            }
-            for arg in &application.annotation.args {
-                if let ItemAnnotationValue::Literal(hir_expand::body::Literal::Str(value)) =
-                    &arg.value
-                {
-                    return Some(value.clone());
+    /// 1. an explicit import binding the name — its alias, or its last segment
+    ///    ([`KotlinImportItem`]) — or, for a *dotted* name, an alias as its
+    ///    head;
+    /// 2. a dotted name as written (Kotlin allows a fully qualified
+    ///    reference);
+    /// 3. a declaration of the file's own package;
+    /// 4. a star import's members;
+    /// 5. the *default imports*, which is what makes `String`, `Int` and
+    ///    `List` resolve in a file that imports nothing.
+    ///
+    /// A caller that owns a scope resolves the candidates in order — the first
+    /// one that names a declaration is the one the compiler picks — while a
+    /// caller that has no scope walks them all. The list is the *language's*
+    /// rule and needs no database, which is why it lives with the file's
+    /// lowered imports rather than with a resolver.
+    pub fn candidate_fqns(&self, name: &str) -> Vec<String> {
+        let segments: Vec<&str> = name.split('.').collect();
+        let simple = segments[0];
+        let mut candidates: Vec<String> = Vec::new();
+
+        if segments.len() == 1 {
+            // An explicit import (by alias or by its last segment).
+            for import in &self.imports {
+                if import.is_asterisk {
+                    continue;
+                }
+                let bound = import
+                    .alias
+                    .as_ref()
+                    .map(|alias| alias.as_str().to_owned())
+                    .unwrap_or_else(|| import.path.simple_name().to_owned());
+                if bound == simple {
+                    candidates.push(import.path.as_str().to_owned());
                 }
             }
+        } else {
+            // A dotted name whose head is an imported name.
+            for import in &self.imports {
+                if import.is_asterisk {
+                    continue;
+                }
+                if import
+                    .alias
+                    .as_ref()
+                    .is_some_and(|alias| alias.as_str() == simple)
+                {
+                    candidates.push(format!("{}.{}", import.path, segments[1..].join(".")));
+                }
+            }
+            candidates.push(name.to_owned());
         }
-        None
+
+        // The file's own package, then the star imports, then the defaults.
+        let in_package = |fqn: &str| match &self.package {
+            Some(package) => format!("{package}.{fqn}"),
+            None => fqn.to_owned(),
+        };
+        candidates.push(in_package(name));
+        for import in self.imports.iter().filter(|import| import.is_asterisk) {
+            candidates.push(format!("{}.{}", import.path, name));
+        }
+        for package in DEFAULT_IMPORTS {
+            candidates.push(format!("{package}.{name}"));
+        }
+
+        candidates
     }
 
     /// The local declarations nested in `owner`, in source order.

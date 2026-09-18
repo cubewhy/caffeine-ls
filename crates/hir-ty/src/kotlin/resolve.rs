@@ -18,29 +18,14 @@
 //!
 //! Classpath lookup goes through [`hir::fqn_resolve`], so a candidate that is a
 //! library class resolves to it in classpath order exactly as it does for Java
-//! — there is no second classpath walk here.
-//!
-//! # The default-import list
-//!
-//! KLS does not enumerate the default imports (the *Kotlin/Core* specification
-//! has no section for them), so the list below is pinned empirically with the
-//! probe oracle of kotlinc 2.4.20 (JRE 21.0.11): `listOf(1)` is a
-//! `kotlin.collections.List<Int>` with no import (so `List` comes from
-//! `kotlin.collections`), and `String`/`Exception`/`StringBuilder` resolve with
-//! no import (so `kotlin` and `java.lang` are both default). The list is the
-//! compiler's documented one
-//! (<https://kotlinlang.org/docs/packages.html#default-imports>) checked
-//! against it; a standard-library member that resolves through none of these
-//! packages is a missing entry.
-//!
-//! `kotlin.reflect` is deliberately *not* a default import: `fun f(): KClass<*>`
-//! with no import is `unresolved reference 'KClass'.` under kotlinc 2.4.20, and
-//! the compiler's documented list has no entry for the package. `String::class`
-//! still needs no import — the class literal is an *expression* whose type is
-//! `kotlin.reflect.KClass`, and an expression's type needs no name in scope.
+//! — there is no second classpath walk here. The default-import list itself —
+//! and the candidate list every one of these scopes produces — is the file's
+//! own rule, [`KotlinItemTree::candidate_fqns`], which the resolver shares with
+//! the index layer ([`hir_def::kotlin::item_tree::DEFAULT_IMPORTS`] records how
+//! the list was pinned).
 
 use hir::hir_def::kotlin::item_tree::{
-    KotlinClassKind, KotlinItemData, KotlinItemTree, KotlinTypeParam,
+    DEFAULT_IMPORTS, KotlinClassKind, KotlinItemData, KotlinItemTree, KotlinTypeParam,
 };
 use hir_expand::name::Name;
 use vfs::FileId;
@@ -61,21 +46,6 @@ fn package_prefixes(fqn: &str) -> Vec<String> {
     out.push(String::new());
     out
 }
-
-/// The packages every Kotlin file imports implicitly
-/// (<https://kotlinlang.org/docs/packages.html#default-imports>).
-pub const DEFAULT_IMPORTS: &[&str] = &[
-    "kotlin",
-    "kotlin.annotation",
-    "kotlin.collections",
-    "kotlin.comparisons",
-    "kotlin.io",
-    "kotlin.ranges",
-    "kotlin.sequences",
-    "kotlin.text",
-    "java.lang",
-    "kotlin.jvm",
-];
 
 /// The Kotlin file scope a type name is resolved in.
 pub struct KotlinResolver<'a> {
@@ -373,7 +343,7 @@ impl<'a> KotlinResolver<'a> {
             }
             return self.local_fqn(simple);
         }
-        for candidate in self.candidates(name) {
+        for candidate in self.tree.candidate_fqns(name) {
             // A *built-in* Kotlin classifier — `kotlin.Int`, `kotlin.Any`,
             // `kotlin.collections.List` — is a type of the language and has no
             // classfile to find; the candidate order still decides it, so a
@@ -406,7 +376,7 @@ impl<'a> KotlinResolver<'a> {
         let hir::ResolutionScope::SourceSet(source_set) = &self.scope else {
             return None;
         };
-        for candidate in self.candidates(name.as_str()) {
+        for candidate in self.tree.candidate_fqns(name.as_str()) {
             for package in package_prefixes(&candidate) {
                 let symbols = hir::source_set_fqn_symbols(
                     self.db,
@@ -456,62 +426,6 @@ impl<'a> KotlinResolver<'a> {
         }
         out.extend(DEFAULT_IMPORTS.iter().map(|package| Name::new(package)));
         out
-    }
-
-    /// The candidate fully qualified names a written name may denote, in scope
-    /// order: a dotted name as written, an import binding, the file's own
-    /// package, the star imports, then the default imports.
-    fn candidates(&self, name: &str) -> Vec<String> {
-        let segments: Vec<&str> = name.split('.').collect();
-        let simple = segments[0];
-        let mut candidates: Vec<String> = Vec::new();
-
-        if segments.len() == 1 {
-            // An explicit import (by alias or by its last segment).
-            for import in &self.tree.imports {
-                if import.is_asterisk {
-                    continue;
-                }
-                let bound = import
-                    .alias
-                    .as_ref()
-                    .map(|alias| alias.as_str().to_owned())
-                    .unwrap_or_else(|| import.path.simple_name().to_owned());
-                if bound == simple {
-                    candidates.push(import.path.as_str().to_owned());
-                }
-            }
-        } else {
-            // A dotted name whose head is an imported name.
-            for import in &self.tree.imports {
-                if import.is_asterisk {
-                    continue;
-                }
-                if import
-                    .alias
-                    .as_ref()
-                    .is_some_and(|alias| alias.as_str() == simple)
-                {
-                    candidates.push(format!("{}.{}", import.path, segments[1..].join(".")));
-                }
-            }
-            candidates.push(name.to_owned());
-        }
-
-        // The file's own package, then the star imports, then the defaults.
-        let in_package = |fqn: &str| match &self.tree.package {
-            Some(package) => format!("{package}.{fqn}"),
-            None => fqn.to_owned(),
-        };
-        candidates.push(in_package(name));
-        for import in self.tree.imports.iter().filter(|import| import.is_asterisk) {
-            candidates.push(format!("{}.{}", import.path, name));
-        }
-        for package in DEFAULT_IMPORTS {
-            candidates.push(format!("{package}.{name}"));
-        }
-
-        candidates
     }
 
     /// The canonical name of `fqn`, by classpath order: the project's source

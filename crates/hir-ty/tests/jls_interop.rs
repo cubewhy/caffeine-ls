@@ -247,3 +247,134 @@ fn a_kotlin_file_uses_another_files_top_level_declaration() {
         }
     }
 }
+
+/// The `kotlin.jvm` annotations are recognized by the name their application
+/// *resolves* to, never by the last segment the source wrote: the qualified
+/// `@kotlin.jvm.JvmName("…")` and an aliased
+/// `import kotlin.jvm.JvmName as JN` are both the standard library's
+/// annotation, so the classfile names the member — and its accessor —
+/// accordingly.
+///
+/// kotlinc 2.4.20 compiles the Kotlin file clean, and `javap -p` reports the
+/// classfile members `renamed()` and `qualifiedGetter()`.
+#[test]
+fn a_qualified_or_aliased_jvm_annotation_names_the_member() {
+    let files = [
+        (
+            "/src/main/kotlin/a/Renamed.kt",
+            "package a\n\nimport kotlin.jvm.JvmName as JN\n\nclass Renamed {\n    @JN(\"renamed\")\n    fun m(): Int = 1\n\n    @get:kotlin.jvm.JvmName(\"qualifiedGetter\")\n    val v: Int = 0\n}\n",
+        ),
+        (
+            "/src/main/java/a/UseRenamed.java",
+            "package a;\n\npublic class UseRenamed {\n    int run(Renamed renamed) {\n        renamed.renamed();\n        return renamed.qualifiedGetter();\n    }\n}\n",
+        ),
+    ];
+    let (db, source_set) = interop_fixture(&files);
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+    let ctx = hir_ty::InvocationContext::external(&scope);
+    let renamed = Ty::reference(&db, "a.Renamed", Vec::new());
+    for name in ["renamed", "qualifiedGetter"] {
+        assert!(
+            !hir_ty::member_set(&db, &scope, &renamed, name, &ctx).is_empty(),
+            "the annotation resolved to the library's, so {name} is the JVM member"
+        );
+    }
+    assert!(
+        hir_ty::member_set(&db, &scope, &renamed, "m", &ctx).is_empty(),
+        "`@JN` renamed the declaration, so its Kotlin name is not a JVM member"
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        !diagnostics.contains("method run"),
+        "the Java body names the renamed members: {diagnostics}"
+    );
+}
+
+/// A `JvmName` the *file* declares is not the standard library's annotation:
+/// an annotation application names a type, and classifiers resolve by scope, so
+/// the file's own `annotation class JvmName` shadows `kotlin.jvm.JvmName` and
+/// its applications rename nothing — the member and the facade keep the Kotlin
+/// names the classfile then carries.
+///
+/// kotlinc 2.4.20 compiles the file clean; `javap -p` reports `m()` and the
+/// facade `ShadowKt`, never `x()` or `Wrong`.
+#[test]
+fn a_shadowing_jvm_name_renames_nothing() {
+    const SHADOW_KT: &str = r#"
+@file:JvmName("Wrong")
+
+package a
+
+@Target(AnnotationTarget.FILE, AnnotationTarget.FUNCTION)
+annotation class JvmName(val value: String)
+
+class Holder {
+    @JvmName("x")
+    fun m(): Int = 1
+}
+
+fun top(seed: Int): Int = seed
+"#;
+    let files = [
+        ("/src/main/kotlin/a/Shadow.kt", SHADOW_KT),
+        (
+            "/src/main/java/a/UseShadow.java",
+            "package a;\n\npublic class UseShadow {\n    int run(Holder holder) {\n        return holder.m() + ShadowKt.top(1);\n    }\n}\n",
+        ),
+    ];
+    let (db, source_set) = interop_fixture(&files);
+    let file = FileId::from_raw(1);
+    assert_eq!(
+        hir::file_facade_class(&db, file).map(|facade| facade.to_string()),
+        Some("ShadowKt".to_owned()),
+        "the file's own `JvmName` is not the library's, so the facade is the file's stem"
+    );
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+    let ctx = hir_ty::InvocationContext::external(&scope);
+    let holder = Ty::reference(&db, "a.Holder", Vec::new());
+    assert!(
+        !hir_ty::member_set(&db, &scope, &holder, "m", &ctx).is_empty(),
+        "the shadowing annotation renames nothing"
+    );
+    assert!(
+        hir_ty::member_set(&db, &scope, &holder, "x", &ctx).is_empty(),
+        "the shadowing annotation is not the library's, so `x` names no member"
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        !diagnostics.contains("method run"),
+        "the Java body reaches the Kotlin names: {diagnostics}"
+    );
+}
+
+/// A Kotlin file that writes no `@file:JvmName` still has a facade class — its
+/// stem with `Kt` appended — and a Java caller reaches the file's top-level
+/// declarations through it
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+///
+/// kotlinc 2.4.20 compiles `Sample.kt` to `SampleKt`, and `javac` compiles the
+/// Java file against it.
+#[test]
+fn a_java_caller_reaches_a_default_facade() {
+    let files = [
+        (
+            "/src/main/kotlin/a/Sample.kt",
+            "package a\n\nfun doubled(seed: Int): Int = seed * 2\n\nconst val LIMIT: Int = 3\n",
+        ),
+        (
+            "/src/main/java/a/UseSample.java",
+            "package a;\n\npublic class UseSample {\n    int run() {\n        return SampleKt.doubled(SampleKt.LIMIT);\n    }\n}\n",
+        ),
+    ];
+    let (db, _) = interop_fixture(&files);
+    assert_eq!(
+        hir::file_facade_class(&db, FileId::from_raw(1)).map(|facade| facade.to_string()),
+        Some("SampleKt".to_owned()),
+        "the compiler names a facade after the file"
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        !diagnostics.contains("method run"),
+        "the Java body reaches the file's top-level declarations: {diagnostics}"
+    );
+}

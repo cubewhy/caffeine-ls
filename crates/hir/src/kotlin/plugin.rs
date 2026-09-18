@@ -2,7 +2,10 @@
 //! comments and the facade class a Kotlin file contributes to the workspace.
 
 use base_db::{LanguageKind, parse};
+use hir_def::jvm::decl::ItemAnnotationValue;
+use hir_def::kotlin::annotations::JvmAnnotation;
 use hir_def::kotlin::item_tree::{KotlinClassKind, KotlinItemData, KotlinItemTree};
+use hir_expand::body::Literal;
 use hir_expand::ids::ItemId;
 use hir_expand::name::Name;
 
@@ -49,9 +52,85 @@ impl crate::lang::LanguageFileIndex for Kotlin {
     fn file_facade_class(&self, db: &dyn HirDatabase, file: FileId) -> Option<Name> {
         // The compiler's name for the facade (`FooKt`, or the `@file:JvmName`
         // the file writes).
-        let facade = hir_def::kotlin::plugin::tree(db, file)?.facade_class()?;
-        Some(Name::new(&facade))
+        let tree = hir_def::kotlin::plugin::tree(db, file)?;
+        facade_class(db, file, &tree)
     }
+}
+
+/// The JVM facade class the compiler synthesizes for `file`'s top-level
+/// declarations: the file's stem with `Kt` appended — every character that is
+/// not a Kotlin identifier spelled `_` — or the `@file:JvmName("Y")` the file
+/// writes
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+///
+/// `@file:JvmName` is the `kotlin.jvm.JvmName` *library* annotation
+/// ([`JvmAnnotation::Name`]), so the application is read through the name it
+/// resolves to in the file's scopes
+/// ([`KotlinItemTree::candidate_fqns`]): `@file:JvmName("Y")` is the compiler's
+/// annotation — as is the qualified `@file:kotlin.jvm.JvmName("Y")` — while a
+/// `JvmName` that the file's own package or an import binds is the file's own
+/// annotation, and renames nothing. The file's *name* is what decides the
+/// default, `Foo.kt` compiling to `FooKt`.
+fn facade_class(db: &dyn HirDatabase, file: FileId, tree: &KotlinItemTree) -> Option<Name> {
+    if let Some(name) = file_jvm_name(db, file, tree) {
+        return Some(Name::new(&name));
+    }
+    let name = crate::file_name(db, file)?;
+    let stem = name
+        .strip_suffix(".kt")
+        .or_else(|| name.strip_suffix(".kts"))?;
+    let mut facade = String::with_capacity(stem.len() + 2);
+    for ch in stem.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            facade.push(ch);
+        } else {
+            facade.push('_');
+        }
+    }
+    facade.push_str("Kt");
+    Some(Name::new(&facade))
+}
+
+/// The value of the `@file:JvmName("…")` the file writes, when the application
+/// is the standard library's `kotlin.jvm.JvmName`.
+///
+/// The element values are the ones the lowering carries, so a renamed facade
+/// whose name is a *constant* (`@file:JvmName(FACADE)`) is not read yet — a
+/// recorded gap, not a different rule.
+fn file_jvm_name(db: &dyn HirDatabase, file: FileId, tree: &KotlinItemTree) -> Option<String> {
+    let source_set = crate::source_set_for_file(db, file)?;
+    for application in &tree.file_annotations {
+        // The lowering records `@file:` applications only, so the target is
+        // the file's; a *multi*-annotation (`@file:[A B]`) writes none and is
+        // applied to the file as well.
+        if application
+            .target
+            .as_ref()
+            .is_some_and(|target| target.as_str() != "file")
+        {
+            continue;
+        }
+        // The first candidate that resolves is the declaration the compiler
+        // picks, so a `JvmName` the file's own package declares — which
+        // shadowed the library's — is the one an application names
+        // ([`KotlinItemTree::candidate_fqns`] is in scope order). The lookup is
+        // the facade-free one ([`crate::db::declaration_resolve`]): this
+        // function *is* the facade rule, and the full resolution would ask it
+        // for its own answer.
+        let resolved = tree
+            .candidate_fqns(application.annotation.name.as_str())
+            .into_iter()
+            .find(|candidate| crate::db::declaration_resolve(db, &source_set, candidate).is_some());
+        if !resolved.is_some_and(|fqn| JvmAnnotation::Name.is(&fqn)) {
+            continue;
+        }
+        for arg in &application.annotation.args {
+            if let ItemAnnotationValue::Literal(Literal::Str(value)) = &arg.value {
+                return Some(value.clone());
+            }
+        }
+    }
+    None
 }
 
 /// The symbol kind of a lowered Kotlin item, or `None` for the nameless

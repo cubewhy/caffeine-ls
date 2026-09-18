@@ -1,0 +1,31 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+import kotlin.jvm.JvmName as JN
+
+@kotlin.jvm.JvmName("topRenamed")
+fun top(): Int = 1
+
+class Renamed {
+    @JN("renamed")
+    fun m(): Int = 1
+
+    @get:kotlin.jvm.JvmName("qualifiedGetter")
+    val v: Int = 0
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+import kotlin.jvm.JvmName as JN; @1..34
+fun top(): Int @34..86
+  @kotlin.jvm.JvmName(value = Str("topRenamed"))
+class Renamed @88..212
+  fun m(): Int @108..143
+    @JN(value = Str("renamed"))
+  val v: Int @149..211
+    @get:kotlin.jvm.JvmName(value = Str("qualifiedGetter"))

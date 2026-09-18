@@ -532,6 +532,17 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
                 0x0601,
             )
         },
+        // The `kotlin.jvm` annotations that shape a declaration's classfile
+        // (<https://kotlinlang.org/docs/java-interop.html>): the compiler
+        // resolves them like any other library declaration, and the real
+        // library carries them — `kotlin/jvm/JvmName.class` and its siblings
+        // are in kotlin-stdlib-2.2.0 — so a classpath without them resolves
+        // none of the annotations, exactly as one without the library does for
+        // kotlinc.
+        annotation("kotlin/jvm/JvmName"),
+        annotation("kotlin/jvm/JvmStatic"),
+        annotation("kotlin/jvm/JvmField"),
+        annotation("kotlin/jvm/JvmOverloads"),
     ]
 }
 

@@ -19,7 +19,7 @@
 //! | `companion object` | a static field `Companion` on the enclosing class |
 //! | `@JvmStatic` on a companion member | *also* a static of the enclosing class |
 //! | a top-level `fun f()` / `val x` | a static member of the file's facade `FooKt` |
-//! | `@JvmName("y")` / `@get:JvmName("y")` | the member is named `y` |
+//! | `@JvmName("y")` on a function / `@get:JvmName("y")` on an accessor | the member is named `y` |
 //! | `@file:JvmName("Y")` | the facade is named `Y` |
 //! | `@JvmOverloads fun f(a: Int, b: Int = 0)` | one overload per trailing default |
 //! | an `enum class` entry | a static field of the enum type |
@@ -29,6 +29,15 @@
 //! (`T` is its bound, `List<Int>` is `java.util.List`), so the type arguments a
 //! Kotlin receiver wrote never reach a Java caller — which is why nothing here
 //! takes the receiver's arguments.
+//!
+//! The annotations of the table are recognized by the canonical name their
+//! application *resolves* to in the declaration's scope ([`JvmAnnotation`]),
+//! never by the last segment the source wrote: `@JvmName`, the qualified
+//! `@kotlin.jvm.JvmName` and an aliased import of it are one annotation, while
+//! a `JvmName` the file's own package or an enclosing classifier declares is
+//! another. They are library annotations of kotlin-stdlib, so a classpath
+//! without the library resolves none of them — the compiler's own answer for a
+//! file that cannot see the library.
 //!
 //! `kotlin.Int` and its siblings are the JVM primitives, every other classifier
 //! is the JVM class [`MAPPED_TYPES`] names, `T?` is `T`, and a flexible type is
@@ -46,6 +55,7 @@ use hir::hir_def::kotlin::modifiers::{
     KotlinModality, KotlinModifierFlags, KotlinModifiers, KotlinVisibility,
 };
 use hir_def::jvm::decl::ItemAnnotationValue;
+use hir_def::kotlin::annotations::JvmAnnotation;
 use hir_expand::body::Literal;
 use hir_expand::ids::ItemId;
 use hir_expand::name::Name;
@@ -145,32 +155,6 @@ pub fn java_view_fields(
     out
 }
 
-/// The JVM facade class the compiler synthesizes for a Kotlin file's top-level
-/// declarations: the file's stem with `Kt` appended — every character that is
-/// not a Kotlin identifier spelled `_` — or the `@file:JvmName` the file writes
-/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
-pub fn file_facade_class(db: &dyn TyDatabase, file: FileId) -> Option<Name> {
-    let tree = hir::file_item_tree(db, file);
-    let tree = hir_def::kotlin::plugin::model(&tree)?;
-    if let Some(name) = tree.facade_class() {
-        return Some(Name::new(&name));
-    }
-    let name = hir::file_name(db, file)?;
-    let stem = name
-        .strip_suffix(".kt")
-        .or_else(|| name.strip_suffix(".kts"))?;
-    let mut facade = String::with_capacity(stem.len() + 2);
-    for ch in stem.chars() {
-        if ch.is_alphanumeric() || ch == '_' {
-            facade.push(ch);
-        } else {
-            facade.push('_');
-        }
-    }
-    facade.push_str("Kt");
-    Some(Name::new(&facade))
-}
-
 /// The static members of a Kotlin file's facade class: every top-level
 /// function and property of the file, under the JVM names the compiler gives
 /// them.
@@ -225,9 +209,13 @@ fn resolver_of<'a>(
     KotlinResolver::for_item(db, file, tree, item)
 }
 
-/// The fully qualified name of a Kotlin file's facade class.
+/// The fully qualified name of a Kotlin file's facade class — the *index*
+/// layer's own answer ([`hir::file_facade_class`]), which the type layer reads
+/// rather than deriving a second one of its own: the file's stem with `Kt`
+/// appended, or the `@file:JvmName` the file writes
+/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
 fn facade_fqn(tree: &KotlinItemTree, db: &dyn TyDatabase, file: FileId) -> Option<Name> {
-    let facade = file_facade_class(db, file)?;
+    let facade = hir::file_facade_class(db, file)?;
     Some(match &tree.package {
         Some(package) => Name::new(&format!("{package}.{facade}")),
         None => facade,
@@ -242,13 +230,51 @@ fn class_key(db: &dyn TyDatabase, source: hir::SourceClass) -> ClassKey {
     }
 }
 
-/// The `@JvmName("x")` of an annotation list: the value the annotation's `name`
-/// element carries ([`annotation_name`] reads the element values M2 lowered).
-fn annotation_name(annotations: &[KotlinAnnotationRef]) -> Option<Name> {
+/// The canonical name an annotation application's type resolves to in the
+/// scope of the declaration it is written on.
+///
+/// An application names a *type* ([KLS
+/// `annotations.html#annotation-declarations`](https://kotlinlang.org/spec/annotations.html#annotation-declarations)),
+/// so the name the source wrote is not the annotation's identity:
+/// `@kotlin.jvm.JvmName("x")` and `@JN("x")` under
+/// `import kotlin.jvm.JvmName as JN` are both the library's annotation, while a
+/// `JvmName` that the file's own package, an import or an enclosing classifier
+/// declares is a different annotation that merely shares the last segment.
+fn annotation_fqn(
+    resolver: &KotlinResolver<'_>,
+    application: &KotlinAnnotationRef,
+) -> Option<Name> {
+    resolver.class_fqn(application.annotation.name.as_str())
+}
+
+/// Whether the application is the `kotlin.jvm` annotation `wanted`
+/// ([`JvmAnnotation`]), which the compiler reads for the declaration's JVM
+/// shape.
+///
+/// The *use-site target* does not decide membership: the annotations are
+/// recognized wherever they are written — `@field:JvmField` is the same
+/// application as `@JvmField`, since `kotlin.jvm.JvmField`'s only target is the
+/// field — and an application on a target the annotation does not allow is a
+/// compiler error (`this annotation is not applicable to target …`, kotlinc
+/// 2.4.20) that the JVM view has no reason to reproduce.
+fn is_jvm_annotation(
+    resolver: &KotlinResolver<'_>,
+    application: &KotlinAnnotationRef,
+    wanted: JvmAnnotation,
+) -> bool {
+    annotation_fqn(resolver, application).is_some_and(|fqn| wanted.is(fqn.as_str()))
+}
+
+/// The `@JvmName("x")` of an annotation list: the JVM name the compiler gives
+/// the member instead of the Kotlin one. The element values are the ones M2
+/// lowered, so a name written as a *constant* (`@JvmName(SOME_NAME)`) is not
+/// read yet — a recorded gap, not a different rule.
+fn annotation_name(
+    resolver: &KotlinResolver<'_>,
+    annotations: &[KotlinAnnotationRef],
+) -> Option<Name> {
     for application in annotations {
-        // FIXME: I consider it is kotlin.jvm.JvmName, like @kotlin.jvm.JvmName("foo1")
-        // don't match "JvmName" directly
-        if application.annotation.name.as_str() != "JvmName" {
+        if !is_jvm_annotation(resolver, application, JvmAnnotation::Name) {
             continue;
         }
         for arg in &application.annotation.args {
@@ -260,15 +286,20 @@ fn annotation_name(annotations: &[KotlinAnnotationRef]) -> Option<Name> {
     None
 }
 
-/// The `@useSite:JvmName("x")` of an annotation list, if it writes one.
-fn targeted_name(annotations: &[KotlinAnnotationRef], target: &str) -> Option<String> {
+/// The `@useSite:JvmName("x")` of an annotation list, if it writes one: the
+/// `get` of `@get:JvmName("x")`, the `set` of `@set:JvmName("x")`
+/// (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>).
+fn targeted_name(
+    resolver: &KotlinResolver<'_>,
+    annotations: &[KotlinAnnotationRef],
+    target: &str,
+) -> Option<String> {
     for application in annotations {
         let applies = application
             .target
             .as_ref()
             .is_some_and(|written| written.as_str() == target);
-        // FIXME: for now `@get:kotlin.jvm.JvmName("getExampleVar")` is not recognised
-        if applies && application.annotation.name.as_str() == "JvmName" {
+        if applies && is_jvm_annotation(resolver, application, JvmAnnotation::Name) {
             for arg in &application.annotation.args {
                 if let ItemAnnotationValue::Literal(Literal::Str(value)) = &arg.value {
                     return Some(value.clone());
@@ -279,12 +310,15 @@ fn targeted_name(annotations: &[KotlinAnnotationRef], target: &str) -> Option<St
     None
 }
 
-/// Whether the annotation list writes `@name` (a declaration annotation, which
-/// never carries a use-site target).
-fn has_annotation(annotations: &[KotlinAnnotationRef], name: &str) -> bool {
+/// Whether the annotation list applies the `kotlin.jvm` annotation `wanted`.
+fn has_annotation(
+    resolver: &KotlinResolver<'_>,
+    annotations: &[KotlinAnnotationRef],
+    wanted: JvmAnnotation,
+) -> bool {
     annotations
         .iter()
-        .any(|application| application.annotation.name.as_str() == name)
+        .any(|application| is_jvm_annotation(resolver, application, wanted))
 }
 
 /// What the JVM view of one Kotlin declaration needs: the owner, the package
@@ -378,10 +412,10 @@ impl<'a> Shapes<'a> {
         // (<https://kotlinlang.org/docs/java-interop.html#static-methods>).
         let jvm_static = match data {
             KotlinItemData::Function(function) => {
-                has_annotation(&function.annotations, "JvmStatic")
+                has_annotation(resolver, &function.annotations, JvmAnnotation::Static)
             }
             KotlinItemData::Property(property) => {
-                has_annotation(&property.annotations, "JvmStatic")
+                has_annotation(resolver, &property.annotations, JvmAnnotation::Static)
             }
             _ => false,
         };
@@ -391,7 +425,7 @@ impl<'a> Shapes<'a> {
         let is_static = force_static || jvm_static;
         match data {
             KotlinItemData::Function(function) => {
-                let jvm = annotation_name(&function.annotations)
+                let jvm = annotation_name(resolver, &function.annotations)
                     .map(|name| name.to_string())
                     .unwrap_or_else(|| function.name.to_string());
                 if jvm == name {
@@ -401,17 +435,17 @@ impl<'a> Shapes<'a> {
             KotlinItemData::Property(property) => {
                 // `@JvmField` suppresses the accessors: the property is a
                 // field, which [`Shapes::push_field`] answers.
-                if has_annotation(&property.annotations, "JvmField") {
+                if has_annotation(resolver, &property.annotations, JvmAnnotation::Field) {
                     return;
                 }
                 let is_static = is_static || self.kind() == Some(KotlinClassKind::Object);
-                if let Some(getter) = property_getter_name(property)
+                if let Some(getter) = property_getter_name(resolver, property)
                     && getter == name
                 {
                     self.push_accessor(resolver, item, property, &getter, false, is_static, out);
                 }
                 if property.is_var
-                    && let Some(setter) = property_setter_name(property)
+                    && let Some(setter) = property_setter_name(resolver, property)
                     && setter == name
                 {
                     self.push_accessor(resolver, item, property, &setter, true, is_static, out);
@@ -468,7 +502,7 @@ impl<'a> Shapes<'a> {
         is_static: bool,
         out: &mut Vec<MethodData>,
     ) {
-        let jvm_name = annotation_name(&function.annotations)
+        let jvm_name = annotation_name(resolver, &function.annotations)
             .map(|name| name.to_string())
             .unwrap_or_else(|| function.name.to_string());
         let params: Vec<Ty> = function
@@ -520,7 +554,8 @@ impl<'a> Shapes<'a> {
             .collect();
         // `@JvmOverloads`: one further method per trailing default
         // (<https://kotlinlang.org/docs/java-interop.html#overloads-generation>).
-        let overloads = if has_annotation(&function.annotations, "JvmOverloads") {
+        let overloads = if has_annotation(resolver, &function.annotations, JvmAnnotation::Overloads)
+        {
             function
                 .defaults
                 .iter()
@@ -656,13 +691,20 @@ impl<'a> Shapes<'a> {
                     .modifiers
                     .flags
                     .contains(KotlinModifierFlags::CONST);
-                let jvm_field = has_annotation(&property.annotations, "JvmField");
+                let jvm_field =
+                    has_annotation(resolver, &property.annotations, JvmAnnotation::Field);
                 if !constant && !jvm_field {
                     return;
                 }
-                let jvm_name = annotation_name(&property.annotations)
-                    .map(|name| name.to_string())
-                    .unwrap_or_else(|| property.name.to_string());
+                // The field carries the *property's* own name: `@JvmName`
+                // renames a function or a property *accessor*, never the
+                // backing field — its targets are the function, the getter, the
+                // setter and the file
+                // (`kotlin.jvm.JvmName`'s declaration in kotlin-stdlib), so an
+                // application on the property itself is a compiler error
+                // (`this annotation is not applicable to target 'member property
+                // with backing field'`, kotlinc 2.4.20) rather than a rename.
+                let jvm_name = property.name.to_string();
                 if jvm_name != name {
                     return;
                 }
@@ -786,8 +828,8 @@ fn access(visibility: KotlinVisibility) -> Access {
 /// for an `is`-prefixed property, whose getter keeps the name — unless
 /// `@get:JvmName` renames it
 /// (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>).
-fn property_getter_name(property: &PropertyData) -> Option<String> {
-    if let Some(name) = targeted_name(&property.annotations, "get") {
+fn property_getter_name(resolver: &KotlinResolver<'_>, property: &PropertyData) -> Option<String> {
+    if let Some(name) = targeted_name(resolver, &property.annotations, "get") {
         return Some(name);
     }
     let name = property.name.as_str();
@@ -799,8 +841,8 @@ fn property_getter_name(property: &PropertyData) -> Option<String> {
 
 /// The JVM name of a property's setter: `set` + the capitalized name without a
 /// leading `is`, unless `@set:JvmName` renames it.
-fn property_setter_name(property: &PropertyData) -> Option<String> {
-    if let Some(name) = targeted_name(&property.annotations, "set") {
+fn property_setter_name(resolver: &KotlinResolver<'_>, property: &PropertyData) -> Option<String> {
+    if let Some(name) = targeted_name(resolver, &property.annotations, "set") {
         return Some(name);
     }
     let name = property.name.as_str();

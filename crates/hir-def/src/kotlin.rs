@@ -29,6 +29,7 @@
 //! [`LanguageKind::KotlinScript`](base_db::LanguageKind::KotlinScript) file
 //! empty.
 
+pub mod annotations;
 pub mod db;
 pub mod item_tree;
 pub mod lower;
