@@ -1,0 +1,10 @@
+---
+source: crates/ide/tests/symbol_snapshots.rs
+expression: render_document_symbols(&symbols)
+---
+package    <default package> @0..0
+property   side @0..16
+class      Greeter @16..93
+constructor Greeter @29..47
+property   name: String @30..46
+function   greet(): String @54..91

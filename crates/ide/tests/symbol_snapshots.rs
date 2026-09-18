@@ -129,6 +129,34 @@ fn document_symbols_snapshot() {
     );
 }
 
+/// A `.kts` script's outline: its top-level *declarations* are the file's — they
+/// are the members of the synthesized script class — while its top-level
+/// *statements*, the body of the implicit `main`
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>), declare no
+/// symbol and appear as none.
+///
+/// `kotlinc 2.4.20` compiles the fixture as a script (`kotlinc Script.kts -d
+/// out`): the classfile carries one member per declaration listed here.
+#[test]
+fn document_symbols_kotlin_script() {
+    let fixture = build(&[(
+        main_source_set(0),
+        vec![(
+            1,
+            "/src/main/kotlin/Script.kts",
+            "val side = 4.0\n\nclass Greeter(val name: String) {\n    fun greet(): String = \"Hello, $name!\"\n}\n\nprintln(Greeter(\"script\").greet())\n",
+        )],
+    )]);
+    let symbols = fixture
+        .analysis()
+        .document_symbols(fixture.file(1))
+        .unwrap();
+    assert_snapshot!(
+        "document_symbols_kotlin_script",
+        render_document_symbols(&symbols)
+    );
+}
+
 #[test]
 fn document_symbols_record_members() {
     let fixture = build(&[(

@@ -1555,6 +1555,19 @@ fn test_files(files: &[(&str, &str)]) -> FilesFixture {
     }
 }
 
+/// A fixture of one Kotlin *script* — a `.kts` file, whose language kind is
+/// [`LanguageKind::KotlinScript`](ide_db::base_db::LanguageKind::KotlinScript)
+/// — so its top-level statements are the body of the implicit `main`.
+fn test_script_file(text: &str) -> Fixture {
+    let fixture = test_files(&[("/src/main/kotlin/Script.kts", text)]);
+    let file = fixture.file(0);
+    Fixture {
+        host: fixture.host,
+        file,
+        text: text.to_owned(),
+    }
+}
+
 fn test_file(text: &str) -> Fixture {
     let fixture = test_files(&[("/src/main/java/com/example/Nav.java", text)]);
     let file = fixture.file(0);
@@ -1563,6 +1576,64 @@ fn test_file(text: &str) -> Fixture {
         file,
         text: text.to_owned(),
     }
+}
+
+// -- Kotlin scripts (`.kts`) ---------------------------------------------------------
+// A script's top-level *statements* are the body of the implicit `main`
+// (<https://kotlinlang.org/docs/command-line.html#run-scripts>), which no
+// declaration owns: the lowering records it as the item tree's `script_body`
+// and the type layer infers it under the file's own key, so a name written in
+// it navigates exactly as a name written in a `.kt` file's body does.
+
+const SCRIPT_SRC: &str = r#"class Greeter(val name: String) {
+    fun greet(): String = "Hello, $name!"
+}
+
+fun twice(n: Int): Int = n * 2
+
+run {
+    val reader = Greeter("script")
+    val local = twice(21)
+    println(reader.greet())
+    println(local)
+}
+"#;
+
+#[test]
+fn kotlin_script_navigation() {
+    let fixture = test_script_file(SCRIPT_SRC);
+    assert_snapshot!(
+        "kotlin_script_navigation",
+        render_nav_many(
+            &fixture,
+            &[
+                // A function the script declares, called from a statement of
+                // its body.
+                ("twice(", 1),
+                // A local the body declares, read by a later statement.
+                ("local", 1),
+                // The local a member is called on.
+                ("reader", 1),
+                // The member itself.
+                ("greet()", 1),
+            ],
+        )
+    );
+}
+
+/// The references of a script's declaration include the sites in the implicit
+/// `main` — the reverse of the definition cases above.
+#[test]
+fn kotlin_script_references_from_the_body() {
+    let fixture = test_script_file(SCRIPT_SRC);
+    assert_snapshot!(
+        "kotlin_script_references_from_the_body",
+        format!(
+            "--- twice, declaration included ---\n{}\n--- greet, declaration included ---\n{}",
+            render_references(&fixture, "twice", 0, true),
+            render_references(&fixture, "greet", 0, true),
+        )
+    );
 }
 
 // -- find-all-references ------------------------------------------------------------

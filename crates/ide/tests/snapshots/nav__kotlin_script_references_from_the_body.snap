@@ -1,0 +1,12 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "format!(\"--- twice, declaration included ---\\n{}\\n--- greet, declaration included ---\\n{}\",\nrender_references(&fixture, \"twice\", 0, true),\nrender_references(&fixture, \"greet\", 0, true),)"
+---
+--- twice, declaration included ---
+--- refs @"twice"#0 include=true ---
+twice @83..88
+twice @168..173
+--- greet, declaration included ---
+--- refs @"greet"#0 include=true ---
+greet @42..47
+greet @197..202

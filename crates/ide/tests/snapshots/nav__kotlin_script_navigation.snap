@@ -1,0 +1,20 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture,\n&[(\"twice(\", 1), (\"local\", 1), (\"reader\", 1), (\"greet()\", 1),],)"
+---
+--- goto @"twice("#1 ---
+twice @83..88
+--- hover ---
+Int
+--- goto @"local"#1 ---
+local @160..165
+--- hover ---
+Int
+--- goto @"reader"#1 ---
+reader @125..131
+--- hover ---
+Greeter
+--- goto @"greet()"#1 ---
+greet @42..47
+--- hover ---
+String

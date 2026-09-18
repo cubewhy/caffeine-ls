@@ -211,13 +211,23 @@ pub(crate) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option
 fn expression_hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     let ctx = Ctx::new(db, file)?;
     let bodies = hir::file_body_tree(db, file);
-    for (id, _) in ctx.tree.items.iter() {
-        let item = hir_expand::ids::ItemId(id);
-        // A declaration's *initializer* expressions carry types too — a property
-        // writes one in place of a body — so every item is asked, and the
-        // candidates are the expressions *of this item* ([`KotlinBodyTypes::exprs`]
-        // is per declaration, while the body arena's ids are the file's).
-        let types = hir_ty::kotlin_declaration_types(db, file, item);
+    // A declaration's *initializer* expressions carry types too — a property
+    // writes one in place of a body — so every item is asked, and the
+    // candidates are the expressions *of this item* ([`KotlinBodyTypes::exprs`]
+    // is per declaration, while the body arena's ids are the file's). A `.kts`
+    // script's implicit `main` is asked last: no item owns it, and its
+    // inference is memoized per *file*
+    // ([`hir_def::kotlin::item_tree::KotlinItemTree::script_body`]).
+    let mut types_of: Vec<_> = ctx
+        .tree
+        .items
+        .iter()
+        .map(|(id, _)| hir_ty::kotlin_declaration_types(db, file, hir_expand::ids::ItemId(id)))
+        .collect();
+    if ctx.tree.script_body.is_some() {
+        types_of.push(hir_ty::kotlin_script_body_types(db, file));
+    }
+    for types in types_of {
         let innermost = types
             .exprs
             .keys()
@@ -442,48 +452,59 @@ fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<
         return Vec::new();
     };
     let bodies = hir::file_body_tree(db, file);
+    // A *local* binding's own name is a declaration of the body — it is no item
+    // of the file, so `self_target` cannot answer it.
+    if let Some((local, range)) = bodies
+        .locals
+        .iter()
+        .filter_map(|(id, _)| {
+            let local = hir_expand::body::LocalId(id);
+            let range = bodies.local_name_ranges.get(id.0 as usize).copied()?;
+            Some((local, range))
+        })
+        .find(|(_, range)| range.contains(offset))
+    {
+        return vec![Resolution::Decl {
+            file,
+            range,
+            name: bodies.local(local).name.to_string(),
+        }];
+    }
+    // The innermost expression that *has* a resolution: a call's callee
+    // name and a receiver are expressions of their own, and the name at
+    // the offset may be one of them, so the search walks outwards to the
+    // expression the inference recorded a target for — the call itself, or
+    // the access.
+    let mut candidates: Vec<(TextSize, hir_expand::body::ExprId)> = bodies
+        .exprs
+        .iter()
+        .filter_map(|(id, _)| {
+            let expr = hir_expand::body::ExprId(id);
+            let range = bodies.expr_range(expr)?;
+            range.contains(offset).then_some((range.len(), expr))
+        })
+        .collect();
+    candidates.sort_by_key(|(len, _)| *len);
+
+    // Every body of the file that can hold the expression, in tree order: the
+    // items with a body, and — for a `.kts` script — the body of the implicit
+    // `main`, which no item owns and whose inference the type layer memoizes
+    // per *file* ([`hir_def::kotlin::item_tree::KotlinItemTree::script_body`]).
+    let mut types_of = Vec::new();
     for (id, _) in ctx.tree.items.iter() {
         let item = hir_expand::ids::ItemId(id);
-        if ctx.tree.data(item).body_id().is_none() {
-            continue;
+        if ctx.tree.data(item).body_id().is_some() {
+            types_of.push(hir_ty::kotlin_declaration_types(db, file, item));
         }
-        // A *local* binding's own name is a declaration of the body — it is no
-        // item of the file, so `self_target` cannot answer it.
-        if let Some((local, range)) = bodies
-            .locals
-            .iter()
-            .filter_map(|(id, _)| {
-                let local = hir_expand::body::LocalId(id);
-                let range = bodies.local_name_ranges.get(id.0 as usize).copied()?;
-                Some((local, range))
-            })
-            .find(|(_, range)| range.contains(offset))
-        {
-            return vec![Resolution::Decl {
-                file,
-                range,
-                name: bodies.local(local).name.to_string(),
-            }];
-        }
-        // The innermost expression that *has* a resolution: a call's callee
-        // name and a receiver are expressions of their own, and the name at
-        // the offset may be one of them, so the search walks outwards to the
-        // expression the inference recorded a target for — the call itself, or
-        // the access.
-        let mut candidates: Vec<(TextSize, hir_expand::body::ExprId)> = bodies
-            .exprs
-            .iter()
-            .filter_map(|(id, _)| {
-                let expr = hir_expand::body::ExprId(id);
-                let range = bodies.expr_range(expr)?;
-                range.contains(offset).then_some((range.len(), expr))
-            })
-            .collect();
-        candidates.sort_by_key(|(len, _)| *len);
-        let types = hir_ty::kotlin_declaration_types(db, file, item);
+    }
+    if ctx.tree.script_body.is_some() {
+        types_of.push(hir_ty::kotlin_script_body_types(db, file));
+    }
+
+    for types in types_of {
         let Some(resolved) = candidates
-            .into_iter()
-            .find_map(|(_, expr)| types.resolved.get(&expr))
+            .iter()
+            .find_map(|&(_, expr)| types.resolved.get(&expr))
         else {
             continue;
         };
