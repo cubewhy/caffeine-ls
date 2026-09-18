@@ -119,6 +119,7 @@ pub use jvm::member::{Access, ClassKey, FieldData, MethodData, MethodDisplay, Me
 pub use jvm::member_set::all_methods as all_methods_for_test;
 pub use jvm::member_set::{InvocationContext, InvocationMode};
 pub use jvm::member_set::{abstract_methods, member_set, pick_field, single_abstract_method};
+pub use jvm::member_set::{member_set_ignoring_access, pick_field_ignoring_access};
 pub use kotlin::db::body_types as kotlin_body_types;
 pub use kotlin::db::type_params as kotlin_type_params;
 pub use kotlin::db::{

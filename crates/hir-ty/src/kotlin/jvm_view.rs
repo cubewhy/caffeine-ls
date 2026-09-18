@@ -23,7 +23,7 @@
 //! | `@file:JvmName("Y")` | the facade is named `Y` |
 //! | `@JvmOverloads fun f(a: Int, b: Int = 0)` | one further method per parameter that declares a default |
 //! | an `enum class` entry | a static field of the enum type |
-//! | a constructor | `<init>` |
+//! | a constructor | `<init>`, and a parameterless `<init>()` for an all-defaults primary |
 //!
 //! Every type is *erased*: the classfile carries the erasure of a Kotlin type
 //! (`T` is its bound, `List<Int>` is `java.util.List`), so the type arguments a
@@ -489,12 +489,31 @@ impl<'a> Shapes<'a> {
         // The *primary* constructor lives in the class header, not in the body
         // ([KLS `declarations.html#primary-constructor`]).
         let mut declared = false;
+        // The *primary* constructor an all-defaults list needs the compiler's
+        // parameterless `<init>` added to, if it turns out to need one.
+        let mut all_defaults = None;
         if let Some(primary) = class.primary_constructor
             && let KotlinItemData::Constructor(constructor) = self.tree.data(primary)
         {
             declared = true;
             let resolver = resolver_of(self.db, self.tree, self.file, primary);
             self.push_constructor(&resolver, primary, constructor, out);
+            // "On the JVM, if all primary constructor parameters have default
+            // values, the compiler implicitly provides a parameterless
+            // constructor that uses those default values"
+            // (<https://kotlinlang.org/docs/classes.html#constructors>), at the
+            // primary constructor's own access — kotlinc 2.4.20 emits
+            // `public E()` for `class E(val a: Int = 0, val b: Int = 0)` and
+            // `internal`/`protected` alike, but *nothing* for a `private`
+            // constructor (the documented rule says nothing of the access,
+            // which is the compiler's own refinement). A *secondary*
+            // constructor of all-defaults parameters gains no such constructor.
+            if !constructor.params.is_empty()
+                && constructor.defaults.iter().all(Option::is_some)
+                && access(constructor.modifiers.visibility) != Access::Private
+            {
+                all_defaults = Some((primary, &constructor.modifiers));
+            }
         }
         for member in class.body.iter().copied() {
             let KotlinItemData::Constructor(constructor) = self.tree.data(member) else {
@@ -507,18 +526,19 @@ impl<'a> Shapes<'a> {
         if !declared {
             // A class with no declared constructor has the compiler's implicit
             // `public <init>()`.
-            let empty = ConstructorData {
-                params: Vec::new(),
-                param_locals: Vec::new(),
-                defaults: Vec::new(),
-                modifiers: KotlinModifiers::none(),
-                annotations: Vec::new(),
-                delegation: None,
-                body: None,
-                ast: hir_expand::ast_id_map::FileAstId::placeholder(),
-            };
+            let empty = parameterless_constructor(KotlinModifiers::none());
             let resolver = resolver_of(self.db, self.tree, self.file, item);
             self.push_constructor(&resolver, item, &empty, out);
+        } else if let Some((primary, modifiers)) = all_defaults
+            // The parameterless constructor the class already has — from
+            // `@JvmOverloads` on the primary, or from a secondary
+            // `constructor()` of its own, which kotlinc 2.4.20 accepts beside
+            // this rule and emits once — is the same `<init>()`.
+            && out.iter().all(|method| !method.params.is_empty())
+        {
+            let parameterless = parameterless_constructor(modifiers.clone());
+            let resolver = resolver_of(self.db, self.tree, self.file, primary);
+            self.push_constructor(&resolver, primary, &parameterless, out);
         }
     }
 
@@ -841,6 +861,26 @@ impl<'a> Shapes<'a> {
             ClassKey::Named(fqn) => fqn.clone(),
             ClassKey::Local(source) => Name::new(&format!("item{}", source.item.0.0)),
         }
+    }
+}
+
+/// The compiler's parameterless constructor, as the declaration the item tree
+/// carries none of: the `public <init>()` a class with no declared constructor
+/// has implicitly, and the one a primary constructor of all-defaulted
+/// parameters gains ([`Shapes::constructors`]).
+///
+/// It is anchored at the item the compiler's `<init>` belongs to — the class
+/// for the implicit one, the primary constructor for the added one.
+fn parameterless_constructor(modifiers: KotlinModifiers) -> ConstructorData {
+    ConstructorData {
+        params: Vec::new(),
+        param_locals: Vec::new(),
+        defaults: Vec::new(),
+        modifiers,
+        annotations: Vec::new(),
+        delegation: None,
+        body: None,
+        ast: hir_expand::ast_id_map::FileAstId::placeholder(),
     }
 }
 

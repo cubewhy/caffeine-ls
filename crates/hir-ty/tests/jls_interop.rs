@@ -408,7 +408,8 @@ fn jvm_method_statics(
 }
 
 /// The JVM methods `name` names on the Kotlin classifier `fqn`, as their
-/// parameter type lists — what a Java caller's invocation is checked against.
+/// parameter type lists — the classfile's own list, read regardless of the
+/// caller's access (a `private` constructor is carried all the same).
 fn jvm_method_params(
     db: &TestDatabase,
     source_set: &hir::SourceSetId,
@@ -418,7 +419,7 @@ fn jvm_method_params(
     let scope = hir::ResolutionScope::SourceSet(source_set.clone());
     let ctx = hir_ty::InvocationContext::external(&scope);
     let ty = Ty::reference(db, fqn, Vec::new());
-    hir_ty::member_set(db, &scope, &ty, name, &ctx)
+    hir_ty::member_set_ignoring_access(db, &scope, &ty, name, &ctx)
         .iter()
         .map(|method| {
             method
@@ -721,5 +722,66 @@ class G @JvmOverloads constructor(val a: String = "x", val b: Int, val c: Long =
     assert!(
         !diagnostics.contains("method run"),
         "the Java body reaches every generated overload: {diagnostics}"
+    );
+}
+
+/// A primary constructor whose parameters *all* declare defaults also gets the
+/// compiler's parameterless `<init>`, at that constructor's own access — "on the
+/// JVM, if all primary constructor parameters have default values, the compiler
+/// implicitly provides a parameterless constructor that uses those default
+/// values"
+/// (<https://kotlinlang.org/docs/classes.html#constructors>) — while a
+/// constructor with only *some* defaults gains nothing, and a `private` primary
+/// constructor gains nothing either (the compiler's own refinement of the
+/// documented rule).
+///
+/// kotlinc 2.4.20 compiles the fixture clean; `javap -p` reports
+/// `AllDefault(int, int)` + `AllDefault()`, `Partial(int, int)` alone and
+/// `Hidden(int)` alone.
+#[test]
+fn an_all_defaults_constructor_gains_a_parameterless_one() {
+    const DEFAULTS_KT: &str = r#"
+package a
+
+class AllDefault(val a: Int = 0, val b: Int = 0)
+
+class Partial(val a: Int = 0, val b: Int)
+
+class Hidden private constructor(val a: Int = 0)
+
+class Overloaded @JvmOverloads constructor(val a: Int = 0)
+"#;
+    let files = [
+        ("/src/main/kotlin/a/Defaults.kt", DEFAULTS_KT),
+        (
+            "/src/main/java/a/UseDefaults.java",
+            "package a;\n\npublic class UseDefaults {\n    int run() {\n        AllDefault implicit = new AllDefault();\n        AllDefault whole = new AllDefault(1, 2);\n        Partial partial = new Partial(1, 2);\n        Overloaded overloaded = new Overloaded();\n        return implicit.getA() + whole.getB() + partial.getA() + overloaded.getA();\n    }\n}\n",
+        ),
+    ];
+    let (db, source_set) = interop_fixture(&files);
+    assert_eq!(
+        jvm_method_params(&db, &source_set, "a.AllDefault", "AllDefault"),
+        vec![vec!["int".to_owned(), "int".to_owned()], vec![]],
+        "an all-defaults primary constructor gains the parameterless one"
+    );
+    assert_eq!(
+        jvm_method_params(&db, &source_set, "a.Partial", "Partial"),
+        vec![vec!["int".to_owned(), "int".to_owned()]],
+        "a partially defaulted constructor gains nothing"
+    );
+    assert_eq!(
+        jvm_method_params(&db, &source_set, "a.Hidden", "Hidden"),
+        vec![vec!["int".to_owned()]],
+        "a private primary constructor gains nothing"
+    );
+    assert_eq!(
+        jvm_method_params(&db, &source_set, "a.Overloaded", "Overloaded"),
+        vec![vec!["int".to_owned()], vec![]],
+        "@JvmOverloads's own parameterless list is not duplicated"
+    );
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        !diagnostics.contains("method run"),
+        "the Java body reaches the implicit constructor: {diagnostics}"
     );
 }
