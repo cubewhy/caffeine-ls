@@ -75,18 +75,22 @@ impl Fixture {
     }
 }
 
-fn test_file(text: &str) -> Fixture {
+/// A host over `files`, each a `(path, text)` pair; the file ids are `1..` in
+/// argument order, all in the main source set of one project.
+fn workspace(files: &[(&str, &str)]) -> (AnalysisHost, Vec<(FileId, String)>) {
     let mut host = AnalysisHost::new();
     let mut change = Change::default();
     let mut file_set = FileSet::default();
-    let file = FileId::from_raw(1);
-    file_set.insert(
-        file,
-        VfsPath::from(AbsPathBuf::assert_utf8(
-            "/src/main/java/com/example/Sample.java".into(),
-        )),
-    );
-    change.change_file(file, Some(text.to_string()));
+    let mut sources = Vec::with_capacity(files.len());
+    for (index, &(path, text)) in files.iter().enumerate() {
+        let file = FileId::from_raw(index as u32 + 1);
+        file_set.insert(
+            file,
+            VfsPath::from(AbsPathBuf::assert_utf8(path.to_owned().into())),
+        );
+        change.change_file(file, Some(text.to_string()));
+        sources.push((file, text.to_owned()));
+    }
     change.set_roots(vec![SourceRoot::new(file_set)]);
 
     let mut data = ProjectGraphData::default();
@@ -101,11 +105,30 @@ fn test_file(text: &str) -> Fixture {
     change.set_project_graph(data);
     host.apply_change(change);
 
+    (host, sources)
+}
+
+fn test_file(text: &str) -> Fixture {
+    let (host, sources) = workspace(&[("/src/main/java/com/example/Sample.java", text)]);
     Fixture {
         _dir: None,
         host,
-        file,
-        text: text.to_owned(),
+        file: sources[0].0,
+        text: sources[0].1.clone(),
+    }
+}
+
+/// A Kotlin fixture over `files`, each a `(path, text)` pair, whose own file is
+/// the first. The Kotlin twin of [`test_file`], which is Java-only: the
+/// parameter names a hint renders are read from the file that *declares* the
+/// callable, so a cross-file call needs more than one.
+fn test_kotlin_files(files: &[(&str, &str)]) -> Fixture {
+    let (host, sources) = workspace(files);
+    Fixture {
+        _dir: None,
+        host,
+        file: sources[0].0,
+        text: sources[0].1.clone(),
     }
 }
 
@@ -1152,4 +1175,157 @@ fn parameter_names_sourceless_library_answer_is_invalidated_by_new_sources() {
         Some(cache.path()),
     );
     assert_eq!(render_hints(&sourced.hints()), "Parameter @75 count:");
+}
+
+// -- Kotlin -------------------------------------------------------------------------
+// The parameter-name category over a Kotlin file: the names come from the
+// *declaration* a call selected — a Kotlin source callable's item tree
+// ([KLS `declarations.html#function-declaration`](https://kotlinlang.org/spec/declarations.html#function-declaration)) —
+// and every suppression the Java collector applies applies here, with the
+// written *named* argument as Kotlin's own
+// ([KLS `declarations.html#named-positional-and-default-parameters`](https://kotlinlang.org/spec/declarations.html#named-positional-and-default-parameters)).
+
+/// The declarations the Kotlin caller below names, in a file of their own: a
+/// hint reads the names from the file that *declares* the callable.
+const KOTLIN_DECLS: &str = r#"package com.example.other
+
+fun helper(count: Int) {
+}
+"#;
+
+const KOTLIN_PARAMETERS: &str = r#"package com.example
+
+import com.example.other.helper
+
+class Point(val x: Int)
+
+fun move(dx: Int, dy: Int, label: String) {
+}
+
+fun setLabel(label: String) {
+}
+
+fun take(point: Point) {
+}
+
+fun log(vararg messages: String) {
+}
+
+fun caller(point: Point) {
+    move(1, 2, "a")
+    move(dx = 1, dy = 2, label = "a")
+    setLabel("x")
+    take(point)
+    Point(7)
+    log("a", "b")
+    helper(7)
+}
+"#;
+
+#[test]
+fn kotlin_parameter_names() {
+    let fixture = test_kotlin_files(&[
+        ("/src/main/kotlin/com/example/Use.kt", KOTLIN_PARAMETERS),
+        ("/src/main/kotlin/com/example/other/Decls.kt", KOTLIN_DECLS),
+    ]);
+    let hints = fixture.hints();
+
+    // A hint renders the name *before* its argument, `move(dx: 1, ...)`, and
+    // the kind is the parameter one.
+    assert_eq!(hints[0].offset, fixture.offset_start("1, 2, \"a\")", 0));
+    assert_eq!(hints[0].kind, InlayHintKind::Parameter);
+    assert_eq!(hints[1].offset, fixture.offset_start("2, \"a\")", 0));
+    assert_eq!(hints[2].offset, fixture.offset_start("\"a\")", 0));
+    // `Point(7)`: a constructor call names the constructor's parameters, and a
+    // constructor declares no name of its own.
+    assert_eq!(hints[3].offset, fixture.offset_start("7)", 0));
+    // The varargs call gets *one* hint for the whole group, at its first
+    // argument.
+    assert_eq!(hints[4].offset, fixture.offset_start("\"a\", \"b\")", 0));
+    // The imported function of the other file: the names come from its item
+    // tree.
+    assert_eq!(hints[5].offset, fixture.offset_start("7)", 1));
+
+    assert_snapshot!("kotlin_parameter_names", render_hints(&hints));
+}
+
+#[test]
+fn kotlin_parameter_names_omitted() {
+    let fixture = test_kotlin_files(&[
+        ("/src/main/kotlin/com/example/Use.kt", KOTLIN_PARAMETERS),
+        ("/src/main/kotlin/com/example/other/Decls.kt", KOTLIN_DECLS),
+    ]);
+
+    // `move(dx = 1, dy = 2, label = "a")` writes every parameter's name itself:
+    // a named argument already says what the hint would. `setLabel("x")` has a
+    // lone parameter named after the function it belongs to, and `take(point)`
+    // is passed an argument that speaks for itself — in a well-typed call it
+    // was inferred *against* the parameter it was selected for.
+    for (needle, occurrence) in [("dx = 1", 0), ("dy = 2", 0), ("label = \"a\"", 0)] {
+        let offset = fixture.offset_start(needle, occurrence);
+        assert!(
+            !fixture.hints().iter().any(|hint| hint.offset == offset),
+            "the named argument {needle:?} must render no hint"
+        );
+    }
+    for (needle, occurrence) in [("\"x\")", 0), ("point)", 0)] {
+        let offset = fixture.offset_start(needle, occurrence);
+        assert!(
+            !fixture.hints().iter().any(|hint| hint.offset == offset),
+            "the argument {needle:?} must render no hint"
+        );
+    }
+}
+
+/// A call whose arguments all speak for themselves never materializes a
+/// declaring source: nothing is pending for it.
+#[test]
+fn kotlin_parameter_names_nothing_pending() {
+    let fixture = test_kotlin_files(&[
+        ("/src/main/kotlin/com/example/Use.kt", KOTLIN_PARAMETERS),
+        ("/src/main/kotlin/com/example/other/Decls.kt", KOTLIN_DECLS),
+    ]);
+    let whole = TextRange::up_to(TextSize::of(fixture.text.as_str()));
+    let pending = fixture
+        .analysis()
+        .inlay_hint_pending_library_files(fixture.file, whole, &InlayHintsConfig::default())
+        .unwrap();
+
+    // Every name comes from a source this session already reads.
+    assert!(pending.is_empty(), "{pending:#?}");
+}
+
+/// The resolve of a parameter hint renders the declaration's signature as the
+/// tooltip, exactly as the type hints render theirs.
+#[test]
+fn kotlin_inlay_hint_resolve_parameter_name() {
+    let fixture = test_kotlin_files(&[
+        ("/src/main/kotlin/com/example/Use.kt", KOTLIN_PARAMETERS),
+        ("/src/main/kotlin/com/example/other/Decls.kt", KOTLIN_DECLS),
+    ]);
+    let offset = fixture.offset_start("1, 2, \"a\")", 0);
+    let whole = TextRange::up_to(TextSize::of(fixture.text.as_str()));
+    let detail = fixture
+        .analysis()
+        .inlay_hint_resolve(
+            fixture.file,
+            offset,
+            InlayHintKind::Parameter,
+            &InlayHintsConfig::default(),
+        )
+        .unwrap()
+        .expect("the hint at the argument resolves");
+
+    assert_eq!(detail.hint.offset, offset);
+    assert_eq!(detail.hint.kind, InlayHintKind::Parameter);
+    assert_eq!(detail.tooltip, "fun move(dx: Int, dy: Int, label: String)");
+    assert!(detail.edits.is_empty());
+    assert_eq!(
+        fixture
+            .analysis()
+            .inlay_hints(fixture.file, whole, &InlayHintsConfig::default())
+            .unwrap()
+            .len(),
+        fixture.hints().len()
+    );
 }

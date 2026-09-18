@@ -265,7 +265,10 @@ fn hover_resolution(db: &RootDatabase, resolution: &Resolution) -> Option<HoverI
 /// `val x: Int`, `class Point`, with its modifiers. Types render through the
 /// item tree's own display ([`hir::hir_def::kotlin::pretty::display_type`]),
 /// so the text is the Kotlin spelling of the declared type.
-fn render_signature(
+///
+/// Shared with the inlay-hint layer, which renders a callable's signature as
+/// the tooltip of its parameter-name hints.
+pub(crate) fn render_signature(
     tree: &KotlinItemTree,
     item: hir::hir_def::kotlin::item_tree::ItemId,
 ) -> String {

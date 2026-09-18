@@ -6276,7 +6276,8 @@ fn test_workspace_load_refreshes_inlay_hints() {
 
 /// Kotlin inlay hints end to end: a `val` that writes no type renders the
 /// inferred one (kotlinc's probe reports `actual 'Int'` for the same
-/// expression), and a local that writes its type gets no hint.
+/// expression), a local that writes its type gets no hint, and a call's
+/// parameter names render at its arguments.
 #[test]
 fn kotlin_inlay_hints() {
     let lsp = create_lsp();
@@ -6285,10 +6286,14 @@ fn kotlin_inlay_hints() {
 
 class Count
 
+fun move(dx: Int, dy: Int) {
+}
+
 fun compute(count: Count) {
     val inferred = count
     val written: Count = count
     var total = count
+    move(1, 2)
 }
 "#;
     lsp.write_file(path, text);
@@ -6302,7 +6307,7 @@ fun compute(count: Count) {
             "textDocument": { "uri": lsp.uri(path) },
             "range": {
                 "start": { "line": 0, "character": 0 },
-                "end": { "line": 9, "character": 0 },
+                "end": { "line": 13, "character": 0 },
             },
         }),
         |response| response.as_array().is_some_and(|hints| !hints.is_empty()),
@@ -6326,20 +6331,26 @@ fun compute(count: Count) {
                     })
                     .unwrap_or_default(),
             };
-            format!("{label} line {}", hint["position"]["line"])
+            // The LSP kind: 1 is `Type`, 2 is `Parameter`.
+            let kind = match hint["kind"].as_u64() {
+                Some(1) => "type",
+                Some(2) => "parameter",
+                _ => "none",
+            };
+            format!("{kind} {label} line {}", hint["position"]["line"])
         })
         .collect();
-    // Two hints: `inferred` and `total`, both typed from their initializer;
-    // `written` declares its type and gets none.
+    // Two type hints — `inferred` and `total`, both typed from their
+    // initializer; `written` declares its type and gets none — then the call's
+    // two arguments, each rendering its parameter's name.
     assert_eq!(
-        hints.len(),
-        2,
-        "a hint per untyped local, and none for a typed one: {hints:?}"
+        hints,
+        [
+            "type : Count line 8",
+            "type : Count line 10",
+            "parameter dx: line 11",
+            "parameter dy: line 11",
+        ],
+        "a hint per untyped local, none for a typed one, and a name per argument"
     );
-    for hint in &hints {
-        assert!(
-            hint.starts_with(": Count"),
-            "the inferred type is the Kotlin spelling: {hints:?}"
-        );
-    }
 }

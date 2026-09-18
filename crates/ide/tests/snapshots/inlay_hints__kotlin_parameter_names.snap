@@ -1,0 +1,10 @@
+---
+source: crates/ide/tests/inlay_hints.rs
+expression: render_hints(&hints)
+---
+Parameter @261 dx:
+Parameter @264 dy:
+Parameter @267 label:
+Parameter @354 x:
+Parameter @365 ...messages:
+Parameter @386 count:

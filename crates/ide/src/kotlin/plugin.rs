@@ -86,6 +86,43 @@ impl LanguageIde for Kotlin {
         inlay_hints::kotlin::hints(db, file, range, config)
     }
 
+    /// The parameter names the Java member a Kotlin call selected writes.
+    ///
+    /// A Kotlin *source* callable carries its names in the item tree, which the
+    /// hint collector reads directly ([`inlay_hints::kotlin`]) — this answers
+    /// only for the classpath members a Kotlin call reaches, through the same
+    /// declaring-source lookup the Java language arm runs.
+    fn declared_parameter_names(
+        &self,
+        db: &RootDatabase,
+        file: FileId,
+        method: &hir_ty::MethodData,
+        constructor: bool,
+    ) -> Option<Vec<String>> {
+        nav::java::declared_parameter_names(db, file, method, constructor)
+    }
+
+    /// The library file that has to be loaded before those names can be read.
+    fn pending_parameter_names(
+        &self,
+        db: &RootDatabase,
+        file: FileId,
+        method: &hir_ty::MethodData,
+        constructor: bool,
+    ) -> Option<nav::LibraryFileRef> {
+        nav::java::pending_parameter_names(db, file, method, constructor)
+    }
+
+    fn inlay_hint_pending_library_files(
+        &self,
+        db: &RootDatabase,
+        file: FileId,
+        range: TextRange,
+        config: &InlayHintsConfig,
+    ) -> Vec<nav::LibraryFileRef> {
+        inlay_hints::kotlin::pending_library_files(db, file, range, config)
+    }
+
     fn inlay_hint_resolve(
         &self,
         db: &RootDatabase,

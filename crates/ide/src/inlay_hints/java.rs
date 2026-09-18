@@ -614,7 +614,7 @@ fn parameter_name_hints(
         if names.len() != method.params.len() {
             continue;
         }
-        if names_say_nothing(method, names) {
+        if names_say_nothing(&method.name, names) {
             continue;
         }
         // §8.4.1: the varargs formal is the *array* of its element, so it is
@@ -664,11 +664,13 @@ fn parameter_name_hints(
 /// rendering: a lone parameter named after the method it belongs to
 /// (`setName(String name)`), or a run of numbered names sharing one prefix
 /// (`arg0, arg1`, `p1, p2, p3`).
-fn names_say_nothing(method: &MethodData, names: &[String]) -> bool {
+///
+/// Shared with the Kotlin collector ([`super::kotlin`]), which reads the name
+/// the *callable* is declared under from its item tree.
+pub(super) fn names_say_nothing(method_name: &str, names: &[String]) -> bool {
     if names.len() == 1
         && names[0].len() > 1
-        && method
-            .name
+        && method_name
             .to_lowercase()
             .contains(&names[0].to_lowercase())
     {
@@ -680,7 +682,7 @@ fn names_say_nothing(method: &MethodData, names: &[String]) -> bool {
 /// Whether every name is `{prefix}{n}` for one shared prefix with consecutive
 /// numbers starting at 0 or 1 — a naming scheme that describes position, not
 /// role.
-fn are_numbered_parameters(names: &[String]) -> bool {
+pub(super) fn are_numbered_parameters(names: &[String]) -> bool {
     let mut prefix: Option<&str> = None;
     let mut previous: Option<u32> = None;
     for name in names {
@@ -710,7 +712,7 @@ fn are_numbered_parameters(names: &[String]) -> bool {
 /// hint whose value names it itself. Only a bare variable reference or a
 /// called method's name is read (never a field access), and a name shorter
 /// than three characters is too short to mean anything either way.
-fn argument_names_parameter(bodies: &BodyTree, parameter: &str, arg: ExprId) -> bool {
+pub(super) fn argument_names_parameter(bodies: &BodyTree, parameter: &str, arg: ExprId) -> bool {
     let Some(argument) = (match bodies.expr(arg) {
         ExprData::Var(name) => Some(name.as_str()),
         ExprData::MethodCall { name, .. } => Some(name.as_str()),
