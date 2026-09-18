@@ -14,6 +14,8 @@
 //! | `val x: T` | `getX(): T` |
 //! | `var x: T` | `getX(): T` + `setX(T)` |
 //! | `val isX: Boolean` | `isX(): boolean` |
+//! | a member of an `interface` with no body | `abstract`; one with a body is the `default` method |
+//! | an `override` that names no modality | *open* — neither `abstract` nor `final` |
 //! | `const val x` / `@JvmField val x` | a field `x` — an instance field of a class, a static of an `object`, a static of the enclosing class for a companion's, a static of the facade for a file's |
 //! | `object Util` | a static field `Util.INSTANCE`; its own members stay *instance* members |
 //! | `companion object` | a static field `Companion` on the enclosing class |
@@ -409,6 +411,75 @@ impl<'a> Shapes<'a> {
         )
     }
 
+    /// Whether the classfile member carries `ACC_ABSTRACT`, and whether it
+    /// carries `ACC_FINAL`.
+    ///
+    /// The written modality is only what the declaration *departs* from, so the
+    /// flag pair is read from the declaration's context:
+    ///
+    /// * a member of an `interface`/`annotation class` that declares a body is
+    ///   the classfile's `default` method — neither `abstract` nor `final` —
+    ///   and one that declares none is `abstract`
+    ///   (<https://kotlinlang.org/docs/interfaces.html>: a member of an
+    ///   interface is `open` by default; kotlinc 2.4.20 emits
+    ///   `public default int withBody();` beside `public abstract int
+    ///   noBody();` for `interface Iface { fun withBody(): Int = 1; fun
+    ///   noBody(): Int }`);
+    /// * an `override` that names no modality is `open`
+    ///   ([KLS `inheritance.html#overriding`](https://kotlinlang.org/spec/inheritance.html#overriding):
+    ///   an override is open by default), even in a class the compiler
+    ///   finalizes: `class Derived : Base2() { override fun o(): Int }` emits
+    ///   `public int o();`;
+    /// * every other member takes the written modality, whose default is
+    ///   `final` ([KLS `declarations.html#classifier-declaration`]): a
+    ///   declaration that names none is `final` in a `class`, an `open class`
+    ///   and an `abstract class` alike (`public final int f();` in all three,
+    ///   kotlinc 2.4.20).
+    ///
+    /// A deviation, recorded rather than modelled: `final override fun f()` is
+    /// an `override` that *does* name a modality and carries `ACC_FINAL`, but
+    /// [`KotlinModifiers`] keeps one modality tag and no flag for the written
+    /// keyword, so an explicitly written `final` is indistinguishable from the
+    /// default and only the `override` default is applied. The classifier's
+    /// modifiers have the same shape ([`KotlinModifiers::names`] documents it).
+    fn member_flags(&self, modifiers: KotlinModifiers, has_body: bool) -> (bool, bool) {
+        if self.is_interface() {
+            // A member with a body is the classfile's `default` method; one
+            // without is the interface's abstract obligation.
+            return match has_body {
+                true => (false, false),
+                false => (true, false),
+            };
+        }
+        match modifiers.modality {
+            KotlinModality::Abstract => (true, false),
+            KotlinModality::Open => (false, false),
+            // An `override` names no modality and is open by default; a
+            // `sealed` class's members are `final` by default, exactly as a
+            // `class`'s are.
+            KotlinModality::Final | KotlinModality::Sealed
+                if modifiers.flags.contains(KotlinModifierFlags::OVERRIDE) =>
+            {
+                (false, false)
+            }
+            KotlinModality::Final | KotlinModality::Sealed => (false, true),
+        }
+    }
+
+    /// Whether the property declares an accessor of `is_setter`'s direction
+    /// with a body: the accessor the classfile carries as a method with code
+    /// (`val p: Int get() = 2`), as opposed to the one it must leave abstract
+    /// (`val p: Int` in an interface).
+    fn declares_accessor_body(&self, property: &PropertyData, is_setter: bool) -> bool {
+        property.accessors.iter().any(|&accessor| {
+            matches!(
+                self.tree.data(accessor),
+                KotlinItemData::Accessor(data)
+                    if data.is_setter == is_setter && data.body.is_some()
+            )
+        })
+    }
+
     /// The JVM members of `item` whose JVM name is `name`. `only_static`
     /// restricts the walk to `@JvmStatic` members (the enclosing class's view
     /// of its companion's statics); `force_static` marks every member pushed as
@@ -485,7 +556,8 @@ impl<'a> Shapes<'a> {
     }
 
     /// The `<init>` methods of a Kotlin classifier: one per declared
-    /// constructor, or the implicit `public <init>()` when it declares none.
+    /// constructor, or the implicit `<init>()` when it declares none —
+    /// at the access [`Shapes::constructor_access`] gives.
     fn constructors(&self, item: ItemId, class: &ClassData, out: &mut Vec<MethodData>) {
         // The *primary* constructor lives in the class header, not in the body
         // ([KLS `declarations.html#primary-constructor`]).
@@ -608,6 +680,7 @@ impl<'a> Shapes<'a> {
             has_annotation(resolver, &function.annotations, JvmAnnotation::Overloads);
         let throws = throws_of(self.db, resolver, &function.annotations, None);
         let defaulted: Vec<bool> = function.defaults.iter().map(Option::is_some).collect();
+        let (abstract_, is_final) = self.member_flags(function.modifiers, function.body.is_some());
         for list in overload_lists(&params, &defaulted, jvm_overloads) {
             out.push(MethodData {
                 name: jvm_name.clone(),
@@ -620,8 +693,8 @@ impl<'a> Shapes<'a> {
                 ret,
                 throws: throws.clone(),
                 is_static,
-                abstract_: function.modifiers.modality == KotlinModality::Abstract,
-                is_final: function.modifiers.modality == KotlinModality::Final,
+                abstract_,
+                is_final,
                 access: access(function.modifiers.visibility),
                 declaring_package: self.package.clone(),
                 declaring_top_level: Some(self.top_level.clone()),
@@ -706,6 +779,17 @@ impl<'a> Shapes<'a> {
             Some(ty) => ty_from_kotlin(self.db, ty_from_type_ref(self.db, resolver, &ty.ty)),
             None => Ty::reference(self.db, "java.lang.Object", Vec::new()),
         };
+        // The accessor's body decides its abstractness where the property's
+        // modality does not: a `val`/`var` member of an `interface` is
+        // `abstract` unless an accessor declares a body, while a `class`'s
+        // property carries a body through the backing field of its initializer
+        // ([`Shapes::member_flags`]).
+        let mut has_body = self.declares_accessor_body(property, is_setter);
+        if !is_setter {
+            has_body =
+                has_body || property.initializer_expr.is_some() || property.delegate_expr.is_some();
+        }
+        let (abstract_, is_final) = self.member_flags(property.modifiers, has_body);
         out.push(MethodData {
             name: name.to_owned(),
             owner: self.owner.clone(),
@@ -729,8 +813,8 @@ impl<'a> Shapes<'a> {
             ),
             varargs: false,
             is_static,
-            abstract_: property.modifiers.modality == KotlinModality::Abstract,
-            is_final: property.modifiers.modality == KotlinModality::Final,
+            abstract_,
+            is_final,
             access: access(property.modifiers.visibility),
             declaring_package: self.package.clone(),
             declaring_top_level: Some(self.top_level.clone()),
