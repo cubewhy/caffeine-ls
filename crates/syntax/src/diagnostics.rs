@@ -553,7 +553,9 @@ pub enum KotlinDiagnosticCode {
     MissingArgument,
     /// `'when' expression must be exhaustive. Add an 'else' branch.`
     NonExhaustiveWhen,
-    /// `condition of type 'Boolean' expected.`
+    /// `condition type mismatch: inferred type is '<T>' but 'Boolean' was
+    /// expected.`, or — for a subject-less type test, which has no type to name
+    /// — `condition of type 'Boolean' expected.`
     NonBooleanWhenCondition,
     /// `'<name>' overrides nothing.`
     OverridesNothing,
