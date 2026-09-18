@@ -14,19 +14,22 @@
 //! | `val x: T` | `getX(): T` |
 //! | `var x: T` | `getX(): T` + `setX(T)` |
 //! | `val isX: Boolean` | `isX(): boolean` |
+//! | an `annotation class`'s `val x` | an element `x()`, named by the property |
 //! | a member of an `interface` with no body | `abstract`; one with a body is the `default` method |
 //! | an `override` that names no modality | *open* — neither `abstract` nor `final` |
 //! | `const val x` / `@JvmField val x` | a field `x` — an instance field of a class, a static of an `object`, a static of the enclosing class for a companion's, a static of the facade for a file's |
-//! | `object Util` | a static field `Util.INSTANCE`; its own members stay *instance* members |
-//! | `companion object` | a static field `Companion` on the enclosing class |
+//! | `object Util` | a static field `Util.INSTANCE`; its own members stay *instance* members, and its constructor is `private` |
+//! | `companion object` | a static field `Companion` on the enclosing class; its own constructor is `private` |
 //! | `@JvmStatic` on a companion member | *also* a static of the enclosing class |
 //! | a top-level `fun f()` / `val x` | a static member of the file's facade `FooKt` |
+//! | `fun T.f()` (an extension) | a member whose **first** parameter is the receiver — a static of the facade when it is top-level |
 //! | `@JvmName("y")` on a function / `@get:JvmName("y")` on an accessor | the member is named `y` |
 //! | `@file:JvmName("Y")` | the facade is named `Y` |
 //! | `@JvmOverloads fun f(a: Int, b: Int = 0)` | one further method per parameter that declares a default |
 //! | `@Throws(IOException::class) fun f()` | the method declares `throws IOException` |
-//! | an `enum class` entry | a static field of the enum type |
-//! | a constructor | `<init>`, and a parameterless `<init>()` for an all-defaults primary |
+//! | an `enum class` entry | a static field of the enum type, and its constructor is `private` |
+//! | a constructor | `<init>`, and a parameterless `<init>()` for an all-defaults primary of a `class` |
+//! | an `interface` / `annotation class` | no constructor at all |
 //!
 //! Every type is *erased*: the classfile carries the erasure of a Kotlin type
 //! (`T` is its bound, `List<Int>` is `java.util.List`), so the type arguments a
@@ -466,6 +469,27 @@ impl<'a> Shapes<'a> {
         }
     }
 
+    /// The JVM name of the property's *reader* in this classifier.
+    ///
+    /// An `annotation class`'s property is the annotation's *element*, and the
+    /// classfile names it by the property alone — no `get` prefix and no
+    /// `is` rule: `annotation class Ann(val x: Int, val y: String)` compiles to
+    /// `public abstract int x();` and `public abstract java.lang.String y();`
+    /// (kotlinc 2.4.20), which is what a Java caller writes
+    /// (<https://kotlinlang.org/docs/annotations.html#constructors>). Every
+    /// other kind's reader is the JavaBeans getter
+    /// ([`property_getter_name`]).
+    fn property_reader_name(
+        &self,
+        resolver: &KotlinResolver<'_>,
+        property: &PropertyData,
+    ) -> Option<String> {
+        if self.kind() == Some(KotlinClassKind::Annotation) {
+            return Some(property.name.to_string());
+        }
+        property_getter_name(resolver, property)
+    }
+
     /// Whether the property declares an accessor of `is_setter`'s direction
     /// with a body: the accessor the classfile carries as a method with code
     /// (`val p: Int get() = 2`), as opposed to the one it must leave abstract
@@ -480,10 +504,32 @@ impl<'a> Shapes<'a> {
         })
     }
 
-    /// The JVM members of `item` whose JVM name is `name`. `only_static`
-    /// restricts the walk to `@JvmStatic` members (the enclosing class's view
-    /// of its companion's statics); `force_static` marks every member pushed as
-    /// static (a file's facade).
+    /// The JVM access of the constructors the compiler emits for this
+    /// classifier.
+    ///
+    /// An `object`, a `companion object` and an `enum class` declare no
+    /// *public* constructor whatever the declaration writes: kotlinc 2.4.20
+    /// emits `private m6b.Obj();`, `private m6b.Holder$Companion();` and
+    /// `private m6b.En(int);`
+    /// (<https://kotlinlang.org/docs/classes.html#constructors>,
+    /// <https://kotlinlang.org/docs/enum-classes.html>: "enum class
+    /// constructors are private").
+    fn constructor_access(&self, visibility: KotlinVisibility) -> Access {
+        match self.kind() {
+            Some(
+                KotlinClassKind::Object | KotlinClassKind::CompanionObject | KotlinClassKind::Enum,
+            ) => Access::Private,
+            _ => access(visibility),
+        }
+    }
+
+    /// The JVM members of `item` whose JVM name is `name`, the empty name
+    /// being the wildcard of a *declaration-level* enumeration — the Java
+    /// path's own convention ([`crate::jvm::member_set`]'s `all_methods`,
+    /// whose Java arm answers every method of the class the same way).
+    /// `only_static` restricts the walk to `@JvmStatic` members (the enclosing
+    /// class's view of its companion's statics); `force_static` marks every
+    /// member pushed as static (a file's facade).
     fn push_matching(
         &self,
         resolver: &KotlinResolver<'_>,
@@ -524,7 +570,7 @@ impl<'a> Shapes<'a> {
                 let jvm = annotation_name(resolver, &function.annotations)
                     .map(|name| name.to_string())
                     .unwrap_or_else(|| function.name.to_string());
-                if jvm == name {
+                if name.is_empty() || jvm == name {
                     self.push_function(resolver, item, function, is_static, out);
                 }
             }
@@ -539,14 +585,14 @@ impl<'a> Shapes<'a> {
                 // `public final int getX()` on `Util`, reached by a Java caller
                 // as `Util.INSTANCE.getX()`, and only a `@JvmStatic` property
                 // adds the static accessor (`is_static` carries it).
-                if let Some(getter) = property_getter_name(resolver, property)
-                    && getter == name
+                if let Some(getter) = self.property_reader_name(resolver, property)
+                    && (name.is_empty() || getter == name)
                 {
                     self.push_accessor(resolver, item, property, &getter, false, is_static, out);
                 }
                 if property.is_var
                     && let Some(setter) = property_setter_name(resolver, property)
-                    && setter == name
+                    && (name.is_empty() || setter == name)
                 {
                     self.push_accessor(resolver, item, property, &setter, true, is_static, out);
                 }
@@ -559,6 +605,14 @@ impl<'a> Shapes<'a> {
     /// constructor, or the implicit `<init>()` when it declares none —
     /// at the access [`Shapes::constructor_access`] gives.
     fn constructors(&self, item: ItemId, class: &ClassData, out: &mut Vec<MethodData>) {
+        // An `interface` and an `annotation class` have no constructor at all:
+        // kotlinc 2.4.20 emits none for either (an annotation class is an
+        // interface in the classfile,
+        // <https://kotlinlang.org/docs/annotations.html>), so a Java caller
+        // cannot instantiate one.
+        if self.is_interface() {
+            return;
+        }
         // The *primary* constructor lives in the class header, not in the body
         // ([KLS `declarations.html#primary-constructor`]).
         let mut declared = false;
@@ -583,7 +637,7 @@ impl<'a> Shapes<'a> {
             // constructor of all-defaults parameters gains no such constructor.
             if !constructor.params.is_empty()
                 && constructor.defaults.iter().all(Option::is_some)
-                && access(constructor.modifiers.visibility) != Access::Private
+                && self.constructor_access(constructor.modifiers.visibility) != Access::Private
             {
                 all_defaults = Some((primary, &constructor.modifiers));
             }
@@ -626,22 +680,33 @@ impl<'a> Shapes<'a> {
         let jvm_name = annotation_name(resolver, &function.annotations)
             .map(|name| name.to_string())
             .unwrap_or_else(|| function.name.to_string());
-        let params: Vec<Ty> = function
-            .params
-            .iter()
-            .map(|param| {
-                let ty = ty_from_kotlin(
-                    self.db,
-                    ty_from_type_ref(self.db, resolver, &param.param.ty.ty),
-                );
-                // A `vararg` parameter is the array the classfile carries.
-                if param.param.varargs {
-                    Ty::array(self.db, ty)
-                } else {
-                    ty
-                }
-            })
-            .collect();
+        // A Kotlin *extension* compiles to a member whose **first** parameter
+        // is the receiver: `fun String.twice(): String` is the facade's
+        // `public static final java.lang.String twice(java.lang.String);`
+        // (<https://kotlinlang.org/docs/java-to-kotlin-interop.html#extension-functions>),
+        // and a *member* extension is the receiver's class's instance method
+        // of the same shape (`class Outer { fun String.memberExt(): Int }`
+        // emits `public final int memberExt(java.lang.String);`, kotlinc
+        // 2.4.20).
+        let mut params: Vec<Ty> = Vec::new();
+        if let Some(receiver) = &function.receiver {
+            params.push(ty_from_kotlin(
+                self.db,
+                ty_from_type_ref(self.db, resolver, &receiver.ty),
+            ));
+        }
+        params.extend(function.params.iter().map(|param| {
+            let ty = ty_from_kotlin(
+                self.db,
+                ty_from_type_ref(self.db, resolver, &param.param.ty.ty),
+            );
+            // A `vararg` parameter is the array the classfile carries.
+            if param.param.varargs {
+                Ty::array(self.db, ty)
+            } else {
+                ty
+            }
+        }));
         let ret = match &function.ret {
             Some(ret) => ty_from_kotlin(self.db, ty_from_type_ref(self.db, resolver, &ret.ty)),
             // An expression-bodied function without a written type, and a
@@ -679,7 +744,12 @@ impl<'a> Shapes<'a> {
         let jvm_overloads =
             has_annotation(resolver, &function.annotations, JvmAnnotation::Overloads);
         let throws = throws_of(self.db, resolver, &function.annotations, None);
-        let defaulted: Vec<bool> = function.defaults.iter().map(Option::is_some).collect();
+        let mut defaulted: Vec<bool> = function.defaults.iter().map(Option::is_some).collect();
+        // The receiver stands before every declared parameter, and is never
+        // one the `@JvmOverloads` overloads drop.
+        if function.receiver.is_some() {
+            defaulted.insert(0, false);
+        }
         let (abstract_, is_final) = self.member_flags(function.modifiers, function.body.is_some());
         for list in overload_lists(&params, &defaulted, jvm_overloads) {
             out.push(MethodData {
@@ -753,7 +823,7 @@ impl<'a> Shapes<'a> {
                 is_static: false,
                 abstract_: false,
                 is_final: false,
-                access: access(constructor.modifiers.visibility),
+                access: self.constructor_access(constructor.modifiers.visibility),
                 declaring_package: self.package.clone(),
                 declaring_top_level: Some(self.top_level.clone()),
                 declaring_interface: false,

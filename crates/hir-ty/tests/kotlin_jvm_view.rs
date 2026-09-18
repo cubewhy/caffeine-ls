@@ -141,6 +141,19 @@ fn methods(db: &TestDatabase, file: FileId, class: &str, names: &[&str]) -> Vec<
     out
 }
 
+/// [`methods`] for a file's facade class.
+fn facade_methods(db: &TestDatabase, file: FileId, names: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in names {
+        out.extend(
+            file_facade_members(db, file, name)
+                .iter()
+                .map(|m| method_line(db, m)),
+        );
+    }
+    out
+}
+
 fn method_line(db: &TestDatabase, method: &MethodData) -> String {
     let mut line = access(method.access).to_owned();
     if method.is_static {
@@ -172,6 +185,21 @@ fn method_line(db: &TestDatabase, method: &MethodData) -> String {
     line
 }
 
+fn field_line(db: &TestDatabase, field: &FieldData) -> String {
+    let mut line = access(field.access).to_owned();
+    if field.is_static {
+        line.push_str(" static");
+    }
+    if field.is_final {
+        line.push_str(" final");
+    }
+    line.push(' ');
+    line.push_str(&field.ty.display(db).to_string());
+    line.push(' ');
+    line.push_str(&field.name);
+    line
+}
+
 fn access(access: Access) -> &'static str {
     match access {
         Access::Public => "public",
@@ -179,6 +207,22 @@ fn access(access: Access) -> &'static str {
         Access::Package => "",
         Access::Private => "private",
     }
+}
+
+fn fields(db: &TestDatabase, file: FileId, class: &str, names: &[&str]) -> Vec<String> {
+    let source = hir::SourceClass {
+        file,
+        item: class_item(db, file, class),
+    };
+    let mut out = Vec::new();
+    for name in names {
+        out.extend(
+            java_view_fields(db, source, name)
+                .iter()
+                .map(|f| field_line(db, f)),
+        );
+    }
+    out
 }
 
 /// The fixture every test below asserts against — one declaration per
@@ -299,6 +343,164 @@ fn an_interface_member_is_abstract_only_without_a_body() {
     assert_eq!(named("withBody"), vec![(false, false)]);
 }
 
+/// The JVM kind of a classifier is the *Kotlin* declaration's, and each kind's
+/// members follow it. kotlinc 2.4.20, `javap -p`:
+///
+/// ```text
+/// public interface m6.Plain { public default int f(); }
+/// public interface m6.Ann extends java.lang.annotation.Annotation {
+///   public abstract int x();
+///   public abstract java.lang.String y();
+/// }
+/// public final class m6.Colour extends java.lang.Enum<m6.Colour> {
+///   public static final m6.Colour RED;
+///   public static final m6.Colour GREEN;
+///   private m6.Colour();
+///   public final int f();
+/// }
+/// public final class m6.Single {
+///   public static final m6.Single INSTANCE;
+///   private m6.Single();
+///   public final int f();
+/// }
+/// public final class m6.Normal { public m6.Normal(); public final int f(); }
+/// ```
+///
+/// An `annotation class` is an interface in the classfile whose *elements* are
+/// named by the property alone (`x()`, not `getX()`); an enum's entries are
+/// statics of the enum's own type; an object is a final class whose
+/// `INSTANCE` field is the singleton.
+#[test]
+fn a_classifiers_kind_is_the_kotlin_declaration() {
+    let (db, file) = shapes();
+    // Every kind's member reports whether the classfile is an interface: true
+    // for an `interface` and an `annotation class` (JVMS §4.1's ACC_INTERFACE),
+    // false for an `enum class`, an `object` and a `class`.
+    for (class, name, is_interface) in [
+        ("Plain", "f", true),
+        ("Ann", "x", true),
+        ("Colour", "f", false),
+        ("Single", "f", false),
+        ("Normal", "f", false),
+    ] {
+        let source = hir::SourceClass {
+            file,
+            item: class_item(&db, file, class),
+        };
+        let found = java_view_members(&db, source, name);
+        assert_eq!(
+            found.first().map(|method| method.declaring_interface),
+            Some(is_interface),
+            "{class}.{name} keeps the Kotlin kind's interface-ness"
+        );
+    }
+    // An annotation class's property is an element named by the property.
+    assert_eq!(
+        methods(&db, file, "Ann", &["x", "y"]),
+        vec![
+            // `public abstract int x();`
+            "public abstract int x()",
+            // `public abstract java.lang.String y();`
+            "public abstract java.lang.String y()",
+        ]
+    );
+    assert!(
+        methods(&db, file, "Ann", &["getX", "getY"]).is_empty(),
+        "an annotation element is not a JavaBeans getter"
+    );
+    // An interface member with a body is the classfile's default method.
+    assert_eq!(
+        methods(&db, file, "Plain", &["f"]),
+        vec!["public default int f()"]
+    );
+    // An enum's entries are statics of the enum's own type, and its members
+    // are the final members of a final class.
+    assert_eq!(
+        fields(&db, file, "Colour", &["RED", "GREEN"]),
+        vec![
+            "public static final m6.Colour RED",
+            "public static final m6.Colour GREEN",
+        ]
+    );
+    assert_eq!(
+        methods(&db, file, "Colour", &["f"]),
+        vec!["public final int f()"]
+    );
+    // An object is a final class whose members stay *instance* members.
+    assert_eq!(
+        fields(&db, file, "Single", &["INSTANCE"]),
+        vec!["public static final m6.Single INSTANCE"]
+    );
+    assert_eq!(
+        methods(&db, file, "Single", &["f"]),
+        vec!["public final int f()"]
+    );
+    assert_eq!(
+        methods(&db, file, "Normal", &["f"]),
+        vec!["public final int f()"]
+    );
+    // A *declaration-level* enumeration of a classifier ([`all_methods`]) —
+    // what the JVM layer's declaration walks hand a Java check — names every
+    // member the Kotlin declaration contributes, under the JVM names above.
+    let scope = java_scope(&db, file);
+    let ctx = InvocationContext::external(&scope);
+    let iface = Ty::reference(&db, "m6.Iface", Vec::new());
+    let all: Vec<String> = all_methods_for_test(&db, &scope, &iface, &ctx)
+        .iter()
+        .map(|method| method.name.clone())
+        .collect();
+    for expected in ["noBody", "withBody", "getProp", "getPropWithBody"] {
+        assert!(
+            all.contains(&expected.to_owned()),
+            "a declaration-level enumeration sees {expected}: {all:?}"
+        );
+    }
+    let colour = Ty::reference(&db, "m6.Colour", Vec::new());
+    let enum_members: Vec<String> = all_methods_for_test(&db, &scope, &colour, &ctx)
+        .iter()
+        .map(|method| method.name.clone())
+        .collect();
+    assert!(
+        enum_members.contains(&"f".to_owned()),
+        "a declaration-level enumeration sees the enum's own member: {enum_members:?}"
+    );
+}
+
+/// An extension function's *receiver* is its first parameter, and a top-level
+/// one is a static of the file's facade. kotlinc 2.4.20, `javap -p`:
+///
+/// ```text
+/// public final class m6.ShapesKt {
+///   public static final java.lang.String twice(java.lang.String);
+/// }
+/// public final class m6.Outer {
+///   public m6.Outer();
+///   public final int memberExt(java.lang.String);
+/// }
+/// ```
+///
+/// (`https://kotlinlang.org/docs/java-to-kotlin-interop.html#extension-functions`.)
+#[test]
+fn an_extension_function_takes_its_receiver_first() {
+    let (db, file) = shapes();
+    assert_eq!(
+        facade_methods(&db, file, &["twice"]),
+        vec![
+            // `public static final java.lang.String twice(java.lang.String);`
+            "public static final java.lang.String twice(java.lang.String)",
+        ]
+    );
+    assert_eq!(
+        methods(&db, file, "Outer", &["memberExt"]),
+        vec![
+            // `public final int memberExt(java.lang.String);` — a *member*
+            // extension is an instance method of its class, the receiver
+            // first, exactly as the top-level one is a static.
+            "public final int memberExt(java.lang.String)",
+        ]
+    );
+}
+
 /// Which modality makes a member `abstract` and which makes it `final`.
 /// kotlinc 2.4.20, `javap -p`:
 ///
@@ -347,5 +549,64 @@ fn a_members_abstract_flag_and_finality_come_from_its_context() {
     assert_eq!(
         methods(&db, file, "Derived", &["o"]),
         vec!["public int o()"]
+    );
+}
+
+/// An `object`, an `interface` and an `enum class` expose no *public*
+/// constructor. kotlinc 2.4.20, `javap -p`:
+///
+/// ```text
+/// public final class m6.Single { private m6.Single(); }
+/// public final class m6.Colour extends java.lang.Enum<m6.Colour> {
+///   private m6.Colour();
+/// }
+/// public interface m6.Plain { }
+/// public interface m6.Ann extends java.lang.annotation.Annotation { }
+/// public final class m6.Normal { public m6.Normal(); }
+/// public final class m6.Empty { public m6.Empty(); }
+/// public final class m6.AllDefaults {
+///   public m6.AllDefaults(int);
+///   public m6.AllDefaults();
+/// }
+/// ```
+///
+/// An `object`'s and an `enum class`'s constructor is `private` (the object is
+/// reached through its `INSTANCE` field: "show the object's constructor as
+/// private" and "enum class constructors are private",
+/// <https://kotlinlang.org/docs/object-declarations.html#object-declarations>,
+/// <https://kotlinlang.org/docs/enum-classes.html>), and an `interface` and an
+/// `annotation class` — one in the classfile — have none at all. A `class`
+/// keeps the implicit public `<init>()`, and a primary constructor whose
+/// parameters all declare defaults gains a *public* parameterless one
+/// (<https://kotlinlang.org/docs/classes.html#constructors>).
+#[test]
+fn an_object_interface_and_enum_have_no_public_constructor() {
+    let (db, file) = shapes();
+    assert_eq!(
+        methods(&db, file, "Single", &["Single"]),
+        vec!["private void <init>()"]
+    );
+    assert_eq!(
+        methods(&db, file, "Colour", &["Colour"]),
+        vec!["private void <init>()"]
+    );
+    // No constructor at all: neither name answers for an `interface` or an
+    // `annotation class`.
+    assert!(methods(&db, file, "Plain", &["Plain"]).is_empty());
+    assert!(methods(&db, file, "Ann", &["Ann"]).is_empty());
+    // A `class` keeps the implicit public one — as `javap -p`'s
+    // `public m6.Normal();` and `public m6.Empty();` say.
+    assert_eq!(
+        methods(&db, file, "Normal", &["Normal"]),
+        vec!["public void <init>()"]
+    );
+    assert_eq!(
+        methods(&db, file, "Empty", &["Empty"]),
+        vec!["public void <init>()"]
+    );
+    // `public m6.AllDefaults(int);` beside `public m6.AllDefaults();`.
+    assert_eq!(
+        methods(&db, file, "AllDefaults", &["AllDefaults"]),
+        vec!["public void <init>(int)", "public void <init>()"]
     );
 }
