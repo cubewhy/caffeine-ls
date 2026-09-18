@@ -2,7 +2,7 @@
 //!
 //! [`LowerCtx`] owns the [`KotlinItemTree`] being built; the walker
 //! ([`walk`]) allocates items into it in CST order, and the body lowering
-//! ([`body`], landing with the Kotlin body IR) fills the per-file body IR.
+//! ([`body`]) fills the per-file body IR while the walker visits the bodies.
 //! Lowering is a pure function of the parsed file and its [`AstIdMap`],
 //! computed once per file by a salsa query ([`crate::db`]).
 //!
@@ -42,10 +42,10 @@ pub(in crate::kotlin) struct LowerCtx<'a> {
 }
 
 impl<'a> LowerCtx<'a> {
-    pub fn new(map: &'a AstIdMap) -> LowerCtx<'a> {
+    pub fn new(language: LanguageKind, map: &'a AstIdMap) -> LowerCtx<'a> {
         LowerCtx {
             tree: KotlinItemTree {
-                language: LanguageKind::Kotlin,
+                language,
                 ..Default::default()
             },
             bodies: BodyTree::default(),
@@ -58,22 +58,47 @@ impl<'a> LowerCtx<'a> {
     }
 }
 
+/// The *owner* the walker is given for a body no declaration owns: the body of
+/// a `.kts` script's implicit `main`
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>), which the
+/// file itself declares ([`KotlinItemTree::script_body`]).
+///
+/// The walker threads the declaration whose body it is lowering through every
+/// statement and expression, and *uses* it at exactly two points — the
+/// [`Body::owner`](hir_expand::body::Body::owner) of an allocated body and the
+/// parent of a local declaration ([`walk::record_local`]). Both read this
+/// value as "no owning declaration": a script's body records `None`, and a
+/// local declaration its statements declare keeps a `None` parent, because
+/// neither is nested in anything. The value therefore never reaches the item
+/// tree, and no item is ever allocated with it — a script declares no item for
+/// itself.
+pub(in crate::kotlin) const NO_OWNER: ItemId = ItemId(hir_expand::arena::ArenaId(u32::MAX));
+
 /// Lowers a Kotlin file into its declaration model plus body IR, anchoring
 /// every declaration to its syntax node through `map`. The language-dispatched
 /// entry point is [`crate::lower::lower_source`], which reaches this one
-/// through [`crate::kotlin::plugin::KOTLIN`]; this one parses the text as
-/// Kotlin.
+/// through [`crate::kotlin::plugin::KOTLIN`]; this one parses the text with the
+/// production `language` names — `kotlinFile` for
+/// [`LanguageKind::Kotlin`], `script` for a `.kts`
+/// [`LanguageKind::KotlinScript`].
 ///
-/// `.kts` scripts are *not* lowered: a script's top-level statements have no
-/// file item to hang off (see [`crate::lower::lower_source`]).
-pub fn lower_kotlin_source(text: &str, map: &AstIdMap) -> (KotlinItemTree, BodyTree) {
-    let parse = syntax::SourceFile::parse(LanguageKind::Kotlin, text);
-    let file = parse.syntax_node(LanguageKind::Kotlin);
+/// A script's top-level *declarations* are the file's top-level declarations
+/// and its top-level *statements* are the body of the implicit `main` the
+/// compiler wraps them in
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>), recorded as
+/// [`KotlinItemTree::script_body`]. A `.kt` file declares no such body.
+pub fn lower_kotlin_source(
+    language: LanguageKind,
+    text: &str,
+    map: &AstIdMap,
+) -> (KotlinItemTree, BodyTree) {
+    let parse = syntax::SourceFile::parse(language, text);
+    let file = parse.syntax_node(language);
     let SourceFile::Kotlin(file) = &file else {
         unreachable!("SourceFile::parse(Kotlin) yields a Kotlin file")
     };
 
-    let mut ctx = LowerCtx::new(map);
+    let mut ctx = LowerCtx::new(language, map);
     walk::lower_file(&mut ctx, file);
     // The range arenas are allocated lock-step with the expr/local arenas;
     // assert the alignment so a direct allocation cannot silently

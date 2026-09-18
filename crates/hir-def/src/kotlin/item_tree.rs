@@ -166,6 +166,18 @@ pub struct KotlinItemTree {
     pub file_annotations: Vec<KotlinAnnotationRef>,
     pub imports: Vec<KotlinImportItem>,
     pub top: Vec<ItemId>,
+    /// The body of a `.kts` script's implicit `main`
+    /// (<https://kotlinlang.org/docs/command-line.html#run-scripts>): the
+    /// script's top-level *statements*, in source order, and the `args` the
+    /// compiler binds them to. A script's top-level *declarations* are the
+    /// file's top-level declarations and live in [`Self::top`] like a `.kt`
+    /// file's ([`crate::kotlin::lower::lower_kotlin_source`]).
+    ///
+    /// No declaration owns the body — the *file* does — so its
+    /// [`Body::owner`](hir_expand::body::Body::owner) is `None`; it is reached
+    /// through this field alone. `None` for a `.kt` file, which has no
+    /// implicit `main`.
+    pub script_body: Option<BodyId>,
     /// The local declarations of the file — a local class or local function
     /// declared inside a function body ([KLS
     /// `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration),
@@ -174,7 +186,8 @@ pub struct KotlinItemTree {
     /// `body()` and are reachable only through this list and through the body
     /// that declares them.
     ///
-    /// Empty until the Kotlin body lowering lands.
+    /// Filled by the body lowering, which records every local declaration it
+    /// lowers (`walk::record_local`).
     pub local_types: Vec<ItemId>,
     /// The declaration each item is nested in: a member's enclosing classifier,
     /// an accessor's property, a primary constructor's classifier. Indexed by
@@ -193,6 +206,7 @@ impl Default for KotlinItemTree {
             file_annotations: Vec::new(),
             imports: Vec::new(),
             top: Vec::new(),
+            script_body: None,
             local_types: Vec::new(),
             parent: Vec::new(),
             items: Arena::default(),
@@ -613,8 +627,8 @@ pub struct PropertyData {
 /// `declarations.html#classifier-initialization`](https://kotlinlang.org/spec/declarations.html#classifier-initialization)).
 #[derive(Debug, Clone, PartialEq)]
 pub struct InitData {
-    /// The lowered body; `None` until the body lowering lands. An `init` block
-    /// always has one.
+    /// The lowered body of the block. An `init` block always has one, so this
+    /// is `Some` for every lowered `init`.
     pub body: Option<BodyId>,
     /// The `ANONYMOUS_INITIALIZER` syntax node.
     pub ast: FileAstId<AnonymousInitializerNode>,

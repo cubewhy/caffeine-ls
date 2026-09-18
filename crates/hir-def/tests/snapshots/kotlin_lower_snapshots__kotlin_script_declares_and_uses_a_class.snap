@@ -1,0 +1,41 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Greeter(val name: String) {
+    fun greet(): String = "Hello, $name!"
+}
+
+val greeter = Greeter("script")
+println(greeter.greet())
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Greeter @1..78
+  primary constructor(name: String) @14..32
+  val name: String @15..31
+  fun greet(): String @39..76
+val greeter @80..112
+script body b1
+
+BODIES:
+fun greet body b0:
+  s0: expr e1
+body b1 (anonymous):
+  s1: expr e9
+  local l0: name: String
+  local l1: args: Array<String>
+  expr e0: <missing> 
+  expr e1: template (1 parts) [e0]
+  expr e2: var Greeter 
+  expr e3: literal Str("script") 
+  expr e4: call Greeter [e3]
+  expr e5: var println 
+  expr e6: var greeter 
+  expr e7: field greet [e6]
+  expr e8: call greet [e6]
+  expr e9: call println [e8]

@@ -18,6 +18,7 @@ use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
 use syntax::kotlin::{Lang, SyntaxKind as K};
 use syntax::stub::{TypeBound, TypeRef};
 
+use base_db::LanguageKind;
 use hir_expand::{ast_id_map::FileAstId, body::ExprData, name::Name};
 
 use super::LowerCtx;
@@ -35,6 +36,16 @@ use crate::kotlin::item_tree::{
 };
 use crate::kotlin::modifiers::{KotlinModifiers, KotlinVariance};
 
+/// Lowers the file's top-level declarations — and, for a `.kts` script, the
+/// body of its implicit `main`
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>).
+///
+/// The two productions share one walk: `kotlinFile` is
+/// `{topLevelObject}` ([spec: grammar-rule-kotlinFile]) and `script` is
+/// `{statement semi}` ([spec: grammar-rule-script]), and a *declaration* is a
+/// `statement` ([spec: grammar-rule-statement]) — so a script's top-level
+/// declarations are its root's declaration children exactly as a `.kt` file's
+/// are, and the root's other statements are the script's body.
 pub(super) fn lower_file(ctx: &mut LowerCtx<'_>, file: &kotlin_syntax::SourceFile) {
     for child in file.syntax_node.children() {
         match child.kind() {
@@ -66,6 +77,10 @@ pub(super) fn lower_file(ctx: &mut LowerCtx<'_>, file: &kotlin_syntax::SourceFil
             }
             _ => {}
         }
+    }
+    if ctx.tree.language == LanguageKind::KotlinScript {
+        let body = body::lower_script_body(ctx, &file.syntax_node);
+        ctx.tree.script_body = Some(body);
     }
 }
 
@@ -668,11 +683,18 @@ fn lower_object_literal(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Opti
 /// Marks `item` as a local declaration of the file: it joins `local_types`
 /// (in lowering order, which is source order) and takes `owner`, the
 /// declaration whose body is being lowered, as its parent.
+///
+/// A `.kts` script's top-level statements are the body of its implicit `main`
+/// ([`super::NO_OWNER`]): they are declared by the *file*, not by an item of
+/// it, so a local declaration they contain keeps a `None` parent — the same
+/// "not nested in a declaration" a top-level item has.
 fn record_local(ctx: &mut LowerCtx<'_>, owner: ItemId, item: ItemId) {
     if !ctx.tree.local_types.contains(&item) {
         ctx.tree.local_types.push(item);
     }
-    ctx.tree.parent[item.0.0 as usize] = Some(owner);
+    if owner != super::NO_OWNER {
+        ctx.tree.parent[item.0.0 as usize] = Some(owner);
+    }
 }
 
 /// The property a `val`/`var` class parameter declares ([KLS

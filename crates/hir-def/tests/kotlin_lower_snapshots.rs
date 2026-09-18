@@ -1011,3 +1011,50 @@ fun f(a: List<@Ann Int>) {}
          argument's names follow it"
     );
 }
+
+// -- scripts (`.kts`) --------------------------------------------------------
+
+// A `.kts` script is the `script` production
+// ([spec: grammar-rule-script]). Its top-level *declarations* are the file's
+// top-level declarations, exactly as a `.kt` file's are, and its top-level
+// *statements* are the body of the implicit `main` the compiler wraps them in
+// (<https://kotlinlang.org/docs/command-line.html#run-scripts>), recorded as
+// the item tree's `script_body`. Every fixture below compiles clean with
+// `kotlinc 2.4.20` compiled as a script (`kotlinc <file>.kts -d <out>`).
+
+body_snapshot_lang! {
+    kotlin_script_declarations_and_statements,
+    LanguageKind::KotlinScript,
+    r#"
+import kotlin.math.sqrt
+
+val side = 4.0
+
+fun area(side: Double): Double = side * side
+
+println(area(side))
+println(sqrt(side))
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_script_args,
+    LanguageKind::KotlinScript,
+    r#"
+println("got ${args.size} arguments")
+for (arg in args) println(arg)
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_script_declares_and_uses_a_class,
+    LanguageKind::KotlinScript,
+    r#"
+class Greeter(val name: String) {
+    fun greet(): String = "Hello, $name!"
+}
+
+val greeter = Greeter("script")
+println(greeter.greet())
+"#,
+}

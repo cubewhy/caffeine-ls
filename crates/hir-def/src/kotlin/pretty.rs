@@ -64,6 +64,14 @@ pub fn pretty_print(tree: &KotlinItemTree, map: &AstIdMap, source: &SourceFile) 
         render_item(tree, map, source, *id, 0, &mut out);
     }
 
+    // A `.kts` script's implicit `main` body: no item owns it, so it is
+    // rendered here rather than under one
+    // (<https://kotlinlang.org/docs/command-line.html#run-scripts>). Its
+    // statements are the file's top-level statements; a `.kt` file has none.
+    if let Some(body) = tree.script_body {
+        out.push_str(&format!("script body {body}\n"));
+    }
+
     // The local declarations of the file ([KLS
     // `declarations.html#local-class-declaration`](https://kotlinlang.org/spec/declarations.html#local-class-declaration)):
     // they are members of no classifier, so they are listed here with the

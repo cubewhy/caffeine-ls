@@ -24,13 +24,14 @@ pub(crate) static KOTLIN: Kotlin = Kotlin;
 
 impl LangLowering for Kotlin {
     fn kinds(&self) -> &'static [LanguageKind] {
-        // `.kts` scripts are not lowered: a script's top-level statements
-        // declare no file item to hang off (see [`crate::lower::lower_source`]).
-        &[LanguageKind::Kotlin]
+        // A `.kts` script lowers with the same walk as a `.kt` file, plus the
+        // body of its implicit `main`
+        // (<https://kotlinlang.org/docs/command-line.html#run-scripts>).
+        &[LanguageKind::Kotlin, LanguageKind::KotlinScript]
     }
 
-    fn lower(&self, text: &str, map: &AstIdMap) -> LoweredFile {
-        let (tree, bodies) = lower_kotlin_source(text, map);
+    fn lower(&self, kind: LanguageKind, text: &str, map: &AstIdMap) -> LoweredFile {
+        let (tree, bodies) = lower_kotlin_source(kind, text, map);
         LoweredFile {
             items: FileItemTree::new(std::sync::Arc::new(Declared(Arc::new(tree)))),
             bodies: Arc::new(bodies),
@@ -59,7 +60,8 @@ impl Declarations for Declared {
 }
 
 /// The Kotlin declaration model of `file`, `None` when the file is not Kotlin
-/// — or is a `.kts` script, which is not lowered.
+/// — a `.kts` script included, whose model carries its top-level declarations
+/// and the [`KotlinItemTree::script_body`] of its implicit `main`.
 pub fn tree(db: &dyn DefDatabase, file: FileId) -> Option<Arc<KotlinItemTree>> {
     let items = crate::db::file_item_tree(db, file);
     items

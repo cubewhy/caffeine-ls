@@ -27,6 +27,7 @@
 use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
 use stacksafe::stacksafe;
 use syntax::kotlin::{Lang, SyntaxKind as K};
+use syntax::stub::TypeRef;
 
 use hir_expand::{
     body::{
@@ -263,6 +264,73 @@ pub(super) fn is_expression(kind: K) -> bool {
     )
 }
 
+/// Lowers the body of a `.kts` script — its top-level statements, in source
+/// order, and the `args` the compiler binds them to.
+///
+/// The semantics are the command-line runner's
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>): a script
+/// compiles to a class whose constructor holds the file's top-level statements
+/// and whose `args` field is the script's argument array, and the compiler
+/// wraps both in an implicit `main`. The body is therefore the statement list
+/// a `kotlinc 2.4.20` script class's constructor holds, and its one parameter
+/// is `args: Array<String>` (§ the classfile the compiler emits: `final
+/// java.lang.String[] args`).
+///
+/// The *declarations* of the file are not part of the body: a script's
+/// top-level declaration is the file's top-level declaration
+/// ([KLS `syntax-and-grammar.html#grammar-rule-script`](https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-script)
+/// makes a declaration one statement form, and [`super::walk::lower_file`]
+/// lowers those as items), so only the statements that declare no item are
+/// lowered here. No declaration owns the body — the file does
+/// ([`super::NO_OWNER`]).
+pub(super) fn lower_script_body(ctx: &mut LowerCtx<'_>, file: &SyntaxNode<Lang>) -> BodyId {
+    let stmts: Vec<StmtId> = file
+        .children()
+        .filter(|child| is_statement(child.kind()) && !declares_item(child.kind()))
+        .map(|child| statement(ctx, super::NO_OWNER, &child))
+        .collect();
+    let args = script_args(ctx);
+    alloc_body(ctx, super::NO_OWNER, vec![args], stmts)
+}
+
+/// The `args` of a `.kts` script
+/// (<https://kotlinlang.org/docs/command-line.html#run-scripts>): the array
+/// the runner passes to the script's implicit `main`, declared as the body's
+/// one parameter so a reference to `args` resolves like any other name.
+///
+/// The source writes no declaration for it, so it carries no source range: an
+/// empty range matches no offset ([`TextRange::contains`]), and the *type* is
+/// the synthetic `Array<String>` the compiler declares it with (the classfile
+/// spells it `java.lang.String[]`).
+fn script_args(ctx: &mut LowerCtx<'_>) -> LocalId {
+    let string = TypeRef::Reference {
+        name: Name::new("String"),
+        generic_args: Vec::new(),
+    };
+    let array = TypeRef::Reference {
+        name: Name::new("Array"),
+        generic_args: vec![string],
+    };
+    alloc_local(
+        ctx,
+        Name::new("args"),
+        Some(SpannedTypeRef::synthetic(array)),
+        TextRange::default(),
+        TextRange::default(),
+    )
+}
+
+/// Whether a statement kind declares a file item rather than lower into a body
+/// ([spec: grammar-rule-statement] admits a declaration as a statement form):
+/// the kinds [`super::walk::lower_file`] lowers into the item tree, which
+/// [`lower_script_body`] must therefore leave to it.
+fn declares_item(kind: K) -> bool {
+    matches!(
+        kind,
+        K::CLASS_DECL | K::OBJECT_DECL | K::FUNCTION_DECL | K::PROPERTY_DECL | K::TYPE_ALIAS
+    )
+}
+
 /// The body of a `BLOCK`: its statements, with the parameter locals bound.
 fn lower_block_body(
     ctx: &mut LowerCtx<'_>,
@@ -274,6 +342,10 @@ fn lower_block_body(
     alloc_body(ctx, owner, params, stmts)
 }
 
+/// Allocates a body for `owner`. The body of a `.kts` script's implicit `main`
+/// is owned by no declaration ([`super::NO_OWNER`]): its
+/// [`Body::owner`](hir_expand::body::Body::owner) is `None`, which is what a
+/// `Body` whose owning declaration the source does not write records.
 fn alloc_body(
     ctx: &mut LowerCtx<'_>,
     owner: ItemId,
@@ -281,7 +353,7 @@ fn alloc_body(
     stmts: Vec<StmtId>,
 ) -> BodyId {
     BodyId(ctx.bodies.bodies.alloc(Body {
-        owner: Some(owner),
+        owner: (owner != super::NO_OWNER).then_some(owner),
         params,
         stmts,
     }))

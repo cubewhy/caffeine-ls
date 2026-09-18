@@ -27,7 +27,7 @@ impl LangLowering for Java {
         &[LanguageKind::Java]
     }
 
-    fn lower(&self, text: &str, map: &AstIdMap) -> LoweredFile {
+    fn lower(&self, _kind: LanguageKind, text: &str, map: &AstIdMap) -> LoweredFile {
         let (tree, bodies) = lower_java_source(text, map);
         LoweredFile {
             items: FileItemTree::new(std::sync::Arc::new(Declared(Arc::new(tree)))),

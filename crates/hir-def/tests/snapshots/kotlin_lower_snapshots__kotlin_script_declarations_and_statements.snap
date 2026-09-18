@@ -1,0 +1,47 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+import kotlin.math.sqrt
+
+val side = 4.0
+
+fun area(side: Double): Double = side * side
+
+println(area(side))
+println(sqrt(side))
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+import kotlin.math.sqrt; @1..26
+val side @26..42
+fun area(side: Double): Double @42..86
+script body b1
+
+BODIES:
+fun area body b0:
+  param l0: side: Double
+  s0: expr e3
+body b1 (anonymous):
+  s1: expr e8
+  s2: expr e13
+  local l0: side: Double
+  local l1: args: Array<String>
+  expr e0: literal Double 
+  expr e1: var side 
+  expr e2: var side 
+  expr e3: binary Mul [e1, e2]
+  expr e4: var println 
+  expr e5: var area 
+  expr e6: var side 
+  expr e7: call area [e6]
+  expr e8: call println [e7]
+  expr e9: var println 
+  expr e10: var sqrt 
+  expr e11: var side 
+  expr e12: call sqrt [e11]
+  expr e13: call println [e12]

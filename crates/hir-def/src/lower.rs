@@ -23,12 +23,11 @@ use crate::item_tree::{FileItemTree, LoweredFile};
 /// language-dispatched consumers route correctly.
 pub fn lower_source(language: LanguageKind, text: &str, map: &AstIdMap) -> LoweredFile {
     let Some(lowering) = crate::lang::lowering(language) else {
-        // `.kts` scripts are not lowered yet: a script's top-level statements
-        // declare no file item to hang off.
+        // An unknown-language file has no production to lower with.
         return LoweredFile {
             items: FileItemTree::empty(language),
             bodies: Arc::default(),
         };
     };
-    lowering.lower(text, map)
+    lowering.lower(language, text, map)
 }

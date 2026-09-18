@@ -9,10 +9,9 @@
 //! module ([`crate::java::plugin`], [`crate::kotlin::plugin`]).
 //!
 //! A kind is answered per *layer*: Kotlin's lowering answers for
-//! [`LanguageKind::Kotlin`] and leaves [`LanguageKind::KotlinScript`] to
-//! nobody, because a script's top-level statements declare no file item to
-//! hang off — while the Kotlin entries of the layers that do treat a script as
-//! Kotlin (its syntax, its type layer, its IDE features) answer for it.
+//! [`LanguageKind::Kotlin`] and [`LanguageKind::KotlinScript`] — a script
+//! lowers to the file's top-level declarations plus the body of its implicit
+//! `main` ([`crate::kotlin::lower::lower_kotlin_source`]).
 
 use std::any::Any;
 use std::sync::Arc;
@@ -40,17 +39,21 @@ pub trait Declarations: std::fmt::Debug + Send + Sync {
 pub trait LangLowering: Sync {
     /// The kinds this implementation answers for.
     fn kinds(&self) -> &'static [LanguageKind];
-    /// Lowers `text`, anchoring every declaration to its syntax node through
-    /// `map`.
-    fn lower(&self, text: &str, map: &AstIdMap) -> LoweredFile;
+    /// Lowers the `kind` file `text`, anchoring every declaration to its
+    /// syntax node through `map`. The kind is threaded through because one
+    /// language may parse two kinds with two productions — Kotlin reads a
+    /// `.kt` file with `kotlinFile` and a `.kts` script with `script`
+    /// ([spec: grammar-rule-kotlinFile], [spec: grammar-rule-script]) — and
+    /// the tree a file lowers to is a function of both.
+    fn lower(&self, kind: LanguageKind, text: &str, map: &AstIdMap) -> LoweredFile;
 }
 
 /// Every registered language, in lookup order.
 static LANGUAGES: &[&dyn LangLowering] =
     &[&crate::java::plugin::JAVA, &crate::kotlin::plugin::KOTLIN];
 
-/// The lowering of a file of `kind`, `None` for a kind no language lowers: an
-/// unknown-language file, and Kotlin's `.kts` script.
+/// The lowering of a file of `kind`, `None` for a kind no language lowers —
+/// an unknown-language file.
 pub fn lowering(kind: LanguageKind) -> Option<&'static dyn LangLowering> {
     LANGUAGES
         .iter()

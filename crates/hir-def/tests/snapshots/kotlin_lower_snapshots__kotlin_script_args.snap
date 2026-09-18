@@ -1,0 +1,31 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+println("got ${args.size} arguments")
+for (arg in args) println(arg)
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+script body b0
+
+BODIES:
+body b0 (anonymous):
+  s0: expr e4
+  s2: for l0 in e8
+    s1: expr e7
+  local l0: arg
+  local l1: args: Array<String>
+  expr e0: var println 
+  expr e1: var args 
+  expr e2: field size [e1]
+  expr e3: template (1 parts) [e2]
+  expr e4: call println [e3]
+  expr e5: var println 
+  expr e6: var arg 
+  expr e7: call println [e6]
+  expr e8: var args
