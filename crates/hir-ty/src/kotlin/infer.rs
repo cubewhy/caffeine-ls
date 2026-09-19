@@ -1235,7 +1235,10 @@ impl<'a> InferCtx<'a> {
             ExprData::CallableReference { receiver, name } => {
                 let kind = receiver
                     .as_ref()
-                    .map(|&receiver| self.receiver_kind(receiver))
+                    .map(|&receiver| match self.receiver_kind(receiver) {
+                        method::ReceiverKind::Classifier => method::ReceiverKind::TypeReference,
+                        kind => kind,
+                    })
                     .unwrap_or(method::ReceiverKind::Value);
                 let receiver_ty = match receiver {
                     Some(receiver) => self.infer_expr(receiver),

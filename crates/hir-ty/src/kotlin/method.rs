@@ -15,9 +15,9 @@
 //!   ([`#variable-length-parameters`](https://kotlinlang.org/spec/declarations.html#variable-length-parameters)),
 //!   named arguments matched by parameter name, then assignability of every
 //!   argument to its parameter ([`#determining-function-applicability-for-a-specific-call`](https://kotlinlang.org/spec/overload-resolution.html#determining-function-applicability-for-a-specific-call));
-//! * selection: among the applicable candidates, the one every *other*
-//!   applicable candidate's arguments can be passed to
-//!   ([`#choosing-the-most-specific-candidate-from-the-overload-candidate-set`](https://kotlinlang.org/spec/overload-resolution.html#choosing-the-most-specific-candidate-from-the-overload-candidate-set)).
+//! * selection: among applicable candidates, prefer the one whose arguments
+//!   can be forwarded to every competing candidate
+//!   (<https://kotlinlang.org/spec/overload-resolution.html#algorithm-of-msc-selection>).
 //!
 //! # Scope
 //!
@@ -663,6 +663,8 @@ pub enum MemberKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiverKind {
     Classifier,
+    /// A classifier to the left of `::`, allowing unbound instance members.
+    TypeReference,
     Value,
 }
 
@@ -1569,13 +1571,15 @@ fn java_members(
     through_kotlin: bool,
     out: &mut Vec<Member>,
 ) {
-    // The mode an access site of this language has ([`ReceiverKind`]): a
-    // *classifier* receiver reaches static members and keeps the Java layer's
-    // unfiltered enumeration (`Integer.parseInt`, `Util.INSTANCE`), and a
-    // *value* receiver reaches instance members alone.
-    let statics = kind == ReceiverKind::Classifier && !through_kotlin;
+    // Explicit type receivers call statics; `Type::member` may also name an
+    // unbound instance member. Constructors use a separate context below.
+    // https://kotlinlang.org/spec/overload-resolution.html#call-with-an-explicit-type-receiver
+    // https://kotlinlang.org/docs/java-interop.html#accessing-static-members
+    let statics = kind != ReceiverKind::Value && !through_kotlin;
+    let constructor_ctx = ctx.with_mode(InvocationMode::TypeQualified);
     let ctx = &ctx.with_mode(match kind {
-        ReceiverKind::Classifier => InvocationMode::TypeQualified,
+        ReceiverKind::Classifier => InvocationMode::Static,
+        ReceiverKind::TypeReference => InvocationMode::TypeQualified,
         ReceiverKind::Value => InvocationMode::InstanceReceiver,
     });
     // A Java *field* of the name is the property before any accessor pair is:
@@ -1586,7 +1590,11 @@ fn java_members(
     // class also declares a `void layout()` method), and a *call* filters to
     // the functions anyway, so both `x.layout` and `x.layout()` resolve.
     if let Some(field) = crate::jvm::member_set::pick_field(db, scope, receiver, name.as_str(), ctx)
-        && (statics || !field.is_static)
+        && if field.is_static {
+            statics
+        } else {
+            kind != ReceiverKind::Classifier
+        }
     {
         out.push(Member {
             target: MemberTarget::JavaField(Box::new(field)),
@@ -1681,9 +1689,13 @@ fn java_members(
             Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
             _ => name.simple_name().to_owned(),
         };
-        for method in
-            crate::jvm::member_set::member_set(db, scope, receiver, &constructor_name, ctx)
-        {
+        for method in crate::jvm::member_set::member_set(
+            db,
+            scope,
+            receiver,
+            &constructor_name,
+            &constructor_ctx,
+        ) {
             out.push(member_of_method(
                 db,
                 name.clone(),
@@ -2370,9 +2382,9 @@ fn select(
     if applicable.is_empty() {
         return None;
     }
-    // Most specific: the first candidate whose parameters every *other*
-    // applicable candidate's arguments are assignable to — a plain
-    // subtype-comparison, with declaration order breaking ties.
+    // Candidate-to-competitor forwarding: this candidate's parameters must be
+    // assignable to the other's. Declaration order only breaks remaining ties.
+    // https://kotlinlang.org/spec/overload-resolution.html#algorithm-of-msc-selection
     let picked = applicable
         .iter()
         .position(|member| {
@@ -2382,7 +2394,7 @@ fn select(
                         .params
                         .iter()
                         .zip(&other.params)
-                        .all(|(a, b)| crate::kotlin::subtyping::is_assignable(db, scope, b, a))
+                        .all(|(a, b)| crate::kotlin::subtyping::is_assignable(db, scope, a, b))
             })
         })
         .unwrap_or(0);

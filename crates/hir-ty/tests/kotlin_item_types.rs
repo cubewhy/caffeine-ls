@@ -3125,127 +3125,158 @@ class Use {
 /// reached through.
 #[test]
 fn a_java_static_member_is_reached_only_through_its_class() {
-    const JAVA_N: &str = r#"
-package a;
-
-public class N {
-    public static int stat() {
-        return 1;
-    }
-
-    public int inst() {
-        return 2;
-    }
-}
-"#;
-    const KOTLIN_USE: &str = r#"
-package a
-
+    let java = "package a; public class N { public N() {} public int field; public static int stat() { return 1; } public int inst() { return 2; } }";
+    let kotlin = r#"package a
 class Sub : N()
-
-fun statOnClass(): Int = N.stat()
-
-fun statOnValue(n: N): Int = n.stat()
-
-fun instOnValue(n: N): Int = n.inst()
-
-fun statOnSubclass(): Int = Sub.stat()
-
-fun statOnLocal(other: N): Int {
-    val N = other
-    return N.stat()
-}
+fun statOnClass() = N.stat()
+fun statOnValue(n: N) = n.stat()
+fun instOnValue(n: N) = n.inst()
+fun statOnSubclass() = Sub.stat()
+fun statOnLocal(other: N): Int { val N = other; return N.stat() }
+fun instOnClass() = N.inst()
+fun fieldOnClass() = N.field
+fun constructed() = N()
+fun unbound() = N::inst
 "#;
-    let (db, _) = kotlin_fixture(&[
-        ("/src/main/java/a/N.java", JAVA_N),
-        ("/src/main/kotlin/a/Use.kt", KOTLIN_USE),
-    ]);
-    // File 1 is the Java source, the Kotlin one file 2.
-    let file = FileId::from_raw(2);
-    let types = |name: &str| -> Vec<String> {
-        let tree = hir::hir_def::kotlin::plugin::tree(&db, file).expect("a Kotlin file");
-        let item = tree
-            .items
-            .iter()
-            .find_map(|(id, data)| match data {
-                hir_def::kotlin::item_tree::KotlinItemData::Function(function)
-                    if function.name.as_str() == name =>
-                {
-                    Some(hir_expand::ids::ItemId(id))
+    for binary in [false, true] {
+        let mut shape = common::class_with_methods_access(
+            "a/N",
+            Some("java/lang/Object"),
+            &[],
+            &[("<init>", "()V"), ("stat", "()I"), ("inst", "()I")],
+            &[],
+            &[0x0001, 0x0009, 0x0001],
+        );
+        shape.fields = &[("field", "I")];
+        let files = if binary {
+            vec![("/src/a/Use.kt", kotlin)]
+        } else {
+            vec![("/src/a/Use.kt", kotlin), ("/src/a/N.java", java)]
+        };
+        let (db, file) = kotlin_fixture_with(&files, if binary { vec![shape] } else { vec![] });
+        let tree = hir_def::kotlin::plugin::tree(&db, file).unwrap();
+        for (id, data) in tree.items.iter() {
+            let hir_def::kotlin::item_tree::KotlinItemData::Function(function) = data else {
+                continue;
+            };
+            let name = function.name.as_str();
+            let body = hir_ty::kotlin_body_types(&db, file, hir_expand::ids::ItemId(id));
+            let targets: Vec<_> = body
+                .resolved
+                .values()
+                .filter(|target| {
+                    matches!(
+                        target,
+                        hir_ty::KotlinResolvedMember::Java(_)
+                            | hir_ty::KotlinResolvedMember::JavaField(_)
+                    )
+                })
+                .collect();
+            if [
+                "statOnValue",
+                "statOnSubclass",
+                "statOnLocal",
+                "instOnClass",
+                "fieldOnClass",
+            ]
+            .contains(&name)
+            {
+                assert!(targets.is_empty(), "{binary} {name}: {targets:?}");
+                assert!(body.exprs.values().any(|ty| ty.is_error(&db)), "{name}");
+            } else {
+                assert_eq!(targets.len(), 1, "{binary} {name}");
+                assert!(
+                    body.diagnostics.is_empty(),
+                    "{name}: {:?}",
+                    body.diagnostics
+                );
+                if name == "unbound" {
+                    assert!(
+                        matches!(targets[0], hir_ty::KotlinResolvedMember::Java(method) if method.name.as_str() == "inst" && !method.is_static)
+                    );
                 }
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("no function {name}"));
-        let body = hir_ty::kotlin_body_types(&db, file, item);
-        let mut lines: Vec<String> = body
-            .exprs
-            .iter()
-            .map(|(expr, ty)| format!("e{}: {}", expr.0.0, hir_ty::display_kotlin(&db, *ty)))
-            .collect();
-        lines.sort();
-        lines
-    };
-    // `N.stat()` — the declaring class's own static.
-    let on_class = types("statOnClass");
-    assert_eq!(
-        on_class
-            .iter()
-            .filter(|line| line.ends_with(": Int"))
-            .count(),
-        1,
-        "`N.stat()` is the `Int` static: {on_class:?}"
-    );
-    assert!(
-        !on_class.iter().any(|line| line.contains("<error>")),
-        "`N.stat()` resolves: {on_class:?}"
-    );
-    // `n.stat()` — a static through a value receiver.
-    let on_value = types("statOnValue");
-    assert!(
-        on_value.iter().any(|line| line.contains("<error>")),
-        "`n.stat()` is an unresolved reference: {on_value:?}"
-    );
-    let body = {
-        let tree = hir::hir_def::kotlin::plugin::tree(&db, file).expect("a Kotlin file");
-        let item = tree
-            .items
-            .iter()
-            .find_map(|(id, data)| match data {
-                hir_def::kotlin::item_tree::KotlinItemData::Function(function)
-                    if function.name.as_str() == "statOnValue" =>
-                {
-                    Some(hir_expand::ids::ItemId(id))
+            }
+        }
+    }
+}
+
+#[test]
+fn java_overloads_choose_more_specific_parameters() {
+    let kotlin = r#"package p
+fun use() { val good: String = Overloads.pick("x"); val bad: Int = Overloads.pick("x") }
+"#;
+    for reverse in [false, true] {
+        let methods = if reverse {
+            &[
+                ("pick", "(Ljava/lang/String;)Ljava/lang/String;"),
+                ("pick", "(Ljava/lang/Object;)I"),
+            ][..]
+        } else {
+            &[
+                ("pick", "(Ljava/lang/Object;)I"),
+                ("pick", "(Ljava/lang/String;)Ljava/lang/String;"),
+            ][..]
+        };
+        let declarations = if reverse {
+            "public static String pick(String x) { return x; } public static int pick(Object x) { return 1; }"
+        } else {
+            "public static int pick(Object x) { return 1; } public static String pick(String x) { return x; }"
+        };
+        let java = format!("package p; public class Overloads {{ {declarations} }}");
+        for binary in [false, true] {
+            let files = if binary {
+                vec![("/src/p/Use.kt", kotlin)]
+            } else {
+                vec![
+                    ("/src/p/Use.kt", kotlin),
+                    ("/src/p/Overloads.java", java.as_str()),
+                ]
+            };
+            let extra = if binary {
+                vec![common::class_with_methods_access(
+                    "p/Overloads",
+                    Some("java/lang/Object"),
+                    &[],
+                    methods,
+                    &[],
+                    &[0x0009, 0x0009],
+                )]
+            } else {
+                vec![]
+            };
+            let (db, file) = kotlin_fixture_with(&files, extra);
+            let tree = hir_def::kotlin::plugin::tree(&db, file).unwrap();
+            let item = tree
+                .items
+                .iter()
+                .find(|(_, data)| data.name().is_some_and(|n| n.as_str() == "use"))
+                .unwrap()
+                .0;
+            let body = hir_ty::kotlin_body_types(&db, file, hir_expand::ids::ItemId(item));
+            let bodies = hir::file_body_tree(&db, file);
+            assert_eq!(body.diagnostics.len(), 1, "{:?}", body.diagnostics);
+            assert!(
+                matches!(&body.diagnostics[0], hir_ty::KotlinTypeError::TypeMismatch { range: Some(range), .. } if usize::from(range.start()) == kotlin.rfind("Overloads.pick").unwrap())
+            );
+            let mut selected = 0;
+            for (expr, target) in &body.resolved {
+                if let hir_ty::KotlinResolvedMember::Java(method) = target {
+                    assert_eq!(
+                        method.params,
+                        vec![Ty::reference(&db, "java.lang.String", vec![])]
+                    );
+                    assert_eq!(
+                        body.expr_ty(&db, *expr).flexible_lower(&db),
+                        Ty::reference(&db, "kotlin.String", vec![])
+                    );
+                    assert_eq!(
+                        &kotlin[bodies.expr_range(*expr).unwrap()],
+                        "Overloads.pick(\"x\")"
+                    );
+                    selected += 1;
                 }
-                _ => None,
-            })
-            .expect("statOnValue");
-        hir_ty::kotlin_body_types(&db, file, item)
-    };
-    assert!(
-        !body
-            .resolved
-            .values()
-            .any(|member| matches!(member, hir_ty::KotlinResolvedMember::Java(_))),
-        "a static reached through a value records no Java member: {:?}",
-        body.resolved
-    );
-    // `n.inst()` — the instance member still resolves.
-    let on_instance = types("instOnValue");
-    assert!(
-        !on_instance.iter().any(|line| line.contains("<error>")),
-        "`n.inst()` resolves: {on_instance:?}"
-    );
-    // `Sub.stat()` — a Kotlin subclass inherits none of its Java supertype's
-    // statics.
-    let on_subclass = types("statOnSubclass");
-    assert!(
-        on_subclass.iter().any(|line| line.contains("<error>")),
-        "`Sub.stat()` is an unresolved reference: {on_subclass:?}"
-    );
-    // A local that spells the class name shadows it.
-    let on_local = types("statOnLocal");
-    assert!(
-        on_local.iter().any(|line| line.contains("<error>")),
-        "a local named like the class is a value: {on_local:?}"
-    );
+            }
+            assert_eq!(selected, 2);
+        }
+    }
 }
