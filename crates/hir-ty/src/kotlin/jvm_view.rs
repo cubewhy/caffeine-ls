@@ -76,7 +76,7 @@ use vfs::FileId;
 
 use super::resolve::KotlinResolver;
 use super::subtyping::class_binding_args;
-use super::ty::{ty_from_kotlin, ty_from_type_ref};
+use super::ty::{ty_from_kotlin, ty_from_kotlin_return, ty_from_type_ref};
 use crate::jvm::db::TyDatabase;
 use crate::jvm::member::{Access, ClassKey, FieldData, MethodData, MethodTypeParam};
 use crate::jvm::member_set::source_top_level;
@@ -532,6 +532,15 @@ impl<'a> Shapes<'a> {
         )
     }
 
+    /// [`Shapes::ty_in_use`] at a **function's return type**, the one position
+    /// where the compiler erases `kotlin.Unit` to `void`.
+    fn ty_in_use_return(&self, resolver: &KotlinResolver<'_>, ty: &TypeRef<Name>) -> Ty {
+        ty_from_kotlin_return(
+            self.db,
+            self.instantiate(ty_from_type_ref(self.db, resolver, ty)),
+        )
+    }
+
     /// The class's declared parameters substituted with the use's arguments
     /// ([`class_binding_args`]) in a type the view already has.
     fn instantiate(&self, ty: Ty) -> Ty {
@@ -850,7 +859,7 @@ impl<'a> Shapes<'a> {
             }
         }));
         let ret = match &function.ret {
-            Some(ret) => self.ty_in_use(resolver, &ret.ty),
+            Some(ret) => self.ty_in_use_return(resolver, &ret.ty),
             // An expression-bodied function without a written type, and a
             // `Unit`-returning one, compile to `void` — the compiler's
             // signature inference is what decides which (KLS

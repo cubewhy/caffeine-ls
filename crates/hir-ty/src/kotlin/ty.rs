@@ -206,58 +206,144 @@ fn read_jvm_type(db: &dyn TyDatabase, ty: Ty, reading: JvmReading) -> Ty {
     }
 }
 
+/// Where a Kotlin type sits in the classfile the compiler emits for it — the
+/// two positions the JVM cannot represent with one shape: a *type argument*
+/// (and an array element) carries a primitive's box, and a function's
+/// **return** carries `void` for `Unit` where a value position carries the
+/// `kotlin.Unit` class (kotlinc 2.4.20, observed with `javap -p -s`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JvmPosition {
+    /// A parameter, a field, a supertype: `Int` is `int`, `Unit` is
+    /// `kotlin.Unit`.
+    Value,
+    /// A type argument or an array element: `Int` is `java.lang.Integer`.
+    Argument,
+    /// A function's return type: `Unit` is `void`, `Int` is `int`.
+    Return,
+}
+
 /// The Java or JVM type a Kotlin type denotes, for the Java layer that
 /// consumes it: the inverse of [`ty_from_java`], and erased — the classfile a
 /// Java caller reads carries no Kotlin type arguments.
 ///
-/// * `kotlin.Int` and its siblings are the JVM **primitives** ([KLS
-///   `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html):
-///   `Int` is an `int` where the compiler can unbox it, and `java.lang.Integer`
-///   is the same classifier's *boxed* form — the projection here is the
-///   primitive, which is what a method signature declares);
-/// * every other mapped classifier is the JVM class [`MAPPED_TYPES`] pairs it
-///   with, and a Kotlin classifier the table does not name keeps its own name
-///   (the classfile the compiler emits for `class Wrapper` *is* `Wrapper`) —
-///   with `$` joining nested segments, which is how the JVM spells a nested
-///   class ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2));
-/// * `T?` is `T` (a Java type has no nullability) and a definitely-non-nullable
-///   `T & Any` is `T`;
-/// * a flexible type is its `lower` half — the type the value has when it is
-///   used;
-/// * a type variable is its *erasure* ([JLS §4.6]): its first bound, or
-///   `java.lang.Object` when it has none, because a generic Kotlin declaration
-///   compiles to the erased signature;
-/// * `kotlin.Unit` is `void` where the compiler uses it as a return type, and
-///   the `kotlin.Unit` class otherwise — the JVM view of a `Unit`-returning
-///   function is `void`, so the primitive is what this returns for it;
-/// * an array is the JVM array of its element's conversion.
+/// Four rules decide the shape ([KLS
+/// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)
+/// names the classifiers the compiler maps onto JVM types; the mapping itself
+/// is spelled out in <https://kotlinlang.org/docs/java-interop.html#mapped-types>,
+/// which KLS does not cover), all observed with kotlinc 2.4.20 and
+/// `javap -p -s`:
+///
+/// * a **nullable** primitive is the JVM *box*, wherever it is written:
+///   `val x: Int?` is `java.lang.Integer getX()`, `fun f(a: Int?): Int?` is
+///   `java.lang.Integer f(java.lang.Integer)`, and a type argument is boxed
+///   the same way (`List<Int?>` is `List<java.lang.Integer>`);
+/// * a primitive in a **type argument** or an **array element** is likewise
+///   the box, while one in a *value* position — a parameter, a return, a
+///   field — stays the primitive the signature unboxes: `List<Int>` is
+///   `java.util.List<java.lang.Integer>`, `Array<Int>` is
+///   `java.lang.Integer[]`, and `fun f(a: Int): Int` is `int f(int)`;
+/// * `kotlin.Unit` is `void` in a **function's return type** only; everywhere
+///   else — a property's own type, a parameter, a type argument, an array
+///   element — it is the `kotlin.Unit` class: `fun g(): Unit` is `void g()`
+///   while `val u: Unit` is `kotlin.Unit getU()`, `fun takeUnit(x: Unit)` is
+///   `void takeUnit(kotlin.Unit)`, `Array<Unit>` is `kotlin.Unit[]` and
+///   `List<Unit>` is `List<kotlin.Unit>`;
+/// * Kotlin's `Array<T>` *is* the JVM array `T[]`, whatever `T` is —
+///   `Array<String>` is `java.lang.String[]`, `Array<Unit>`
+///   `kotlin.Unit[]` — which is how the builtins layer already reads a
+///   lookup for the same classifier ([`crate::kotlin::builtins::jvm_ty`]).
+///
+/// Every other mapped classifier is the JVM class [`MAPPED_TYPES`] pairs it
+/// with, and a Kotlin classifier the table does not name keeps its own name
+/// (the classfile the compiler emits for `class Wrapper` *is* `Wrapper`) —
+/// with `$` joining nested segments, which is how the JVM spells a nested
+/// class ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)).
+/// A definitely-non-nullable `T & Any` reads as `T`, a flexible type as its
+/// `lower` half — the type the value has when it is used — and a type variable
+/// as its *erasure* ([JLS §4.6]): its first bound, or `java.lang.Object` when
+/// it has none, because a generic Kotlin declaration compiles to the erased
+/// signature.
+///
+/// A recorded deviation: a primitive *array* classifier (`kotlin.IntArray`,
+/// `kotlin.LongArray`, …) is projected as its own name rather than as the JVM
+/// primitive array it compiles to, and the Java→Kotlin reading of `int[]` is
+/// `Array<Int>` for the same reason — the classifier's member surface (`size`,
+/// indexing) is the builtins layer's and is keyed on the array kind
+/// (<https://kotlinlang.org/docs/java-interop.html#mapped-types>: the arrays
+/// are `int[]` ↔ `IntArray`, which this projection leaves to that layer).
 pub fn ty_from_kotlin(db: &dyn TyDatabase, ty: Ty) -> Ty {
+    ty_from_kotlin_in(db, ty, JvmPosition::Value)
+}
+
+/// [`ty_from_kotlin`] at a **function's return type** — the one position where
+/// `kotlin.Unit` is `void` (see its rules). An accessor's return type is *not*
+/// one: a getter carries the property's own type, so `val u: Unit` compiles to
+/// `kotlin.Unit getU()` (kotlinc 2.4.20).
+pub fn ty_from_kotlin_return(db: &dyn TyDatabase, ty: Ty) -> Ty {
+    ty_from_kotlin_in(db, ty, JvmPosition::Return)
+}
+
+fn ty_from_kotlin_in(db: &dyn TyDatabase, ty: Ty, position: JvmPosition) -> Ty {
     match ty.kind(db) {
         TyKind::Reference { name, args, local } => {
-            if let Some(primitive) = primitive_of_mapped(name) {
-                return Ty::primitive(db, primitive);
+            // Kotlin's `Array<T>` is the JVM array `T[]`, and its element
+            // carries the box a type argument does. An `Array` written with no
+            // argument is an error the declaration checker already reports, and
+            // keeps the fallback below.
+            if name.as_str() == "kotlin.Array"
+                && let [element] = args.as_slice()
+            {
+                return Ty::array(db, ty_from_kotlin_in(db, *element, JvmPosition::Argument));
+            }
+            if let Some((primitive, boxed)) = primitive_of_mapped(name) {
+                return match position {
+                    JvmPosition::Argument => Ty::reference(db, boxed, Vec::new()),
+                    JvmPosition::Value | JvmPosition::Return => Ty::primitive(db, primitive),
+                };
             }
             if name.as_str() == "kotlin.Unit" {
-                return Ty::void(db);
+                return match position {
+                    JvmPosition::Return => Ty::void(db),
+                    JvmPosition::Value | JvmPosition::Argument => {
+                        Ty::reference(db, "kotlin.Unit", Vec::new())
+                    }
+                };
             }
             // The JVM name of a nested classifier joins with `$`
             // ([JVMS §4.2]).
             let jvm = java_name(name);
-            let args = args.iter().map(|arg| ty_from_kotlin(db, *arg)).collect();
+            let args = args
+                .iter()
+                .map(|arg| ty_from_kotlin_in(db, *arg, JvmPosition::Argument))
+                .collect();
             match local {
                 Some(class) => Ty::local_reference(db, *class, jvm, args),
                 None => Ty::reference(db, jvm, args),
             }
         }
-        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => ty_from_kotlin(db, *inner),
-        TyKind::Flexible { lower, .. } => ty_from_kotlin(db, *lower),
+        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => {
+            // A nullability wrapper over a primitive is the JVM **box**: a Java
+            // type has no nullability, and only the box can hold the null. The
+            // wrapper is a nullability form rather than a written primitive, so
+            // both spellings (`Int?` and the flexible type's `T & Any` upper
+            // half) take it.
+            if let TyKind::Reference { name, .. } = inner.kind(db)
+                && let Some((_, boxed)) = primitive_of_mapped(name)
+            {
+                return Ty::reference(db, boxed, Vec::new());
+            }
+            ty_from_kotlin_in(db, *inner, position)
+        }
+        TyKind::Flexible { lower, .. } => ty_from_kotlin_in(db, *lower, position),
         TyKind::TypeVar { bounds, .. } => match bounds.first() {
-            Some(bound) => ty_from_kotlin(db, *bound),
+            Some(bound) => ty_from_kotlin_in(db, *bound, position),
             None => Ty::reference(db, "java.lang.Object", Vec::new()),
         },
         TyKind::Array(inner) => {
-            let inner = ty_from_kotlin(db, **inner);
-            // `kotlin.Array<T>`'s element is the JVM array's component type.
+            // The JVM/classfile spelling, which a Kotlin *source* type does not
+            // produce: its component is already whatever the compiler erased to,
+            // so it is read as an argument.
+            let inner = ty_from_kotlin_in(db, **inner, JvmPosition::Argument);
             Ty::array(db, inner)
         }
         // Primitives, `void` and the Java-only shapes are already JVM types.
@@ -265,20 +351,24 @@ pub fn ty_from_kotlin(db: &dyn TyDatabase, ty: Ty) -> Ty {
     }
 }
 
-/// The JVM primitive a mapped Kotlin classifier is, when it is one: `kotlin.Int`
-/// is an `int` in a signature, and the boxed `java.lang.Integer` its allocated
-/// form ([KLS
-/// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)).
-fn primitive_of_mapped(name: &Name) -> Option<PrimitiveType> {
+/// The JVM primitive a mapped Kotlin classifier is, when it is one, paired with
+/// the **box** the same classifier takes where the compiler cannot unbox it —
+/// a type argument, an array element, a nullable position: `kotlin.Int` is an
+/// `int` in a signature, and the `java.lang.Integer` the same classifier
+/// compiles to when the value cannot stay one ([KLS
+/// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html);
+/// <https://kotlinlang.org/docs/java-interop.html#mapped-types> pairs each with
+/// its wrapper).
+fn primitive_of_mapped(name: &Name) -> Option<(PrimitiveType, &'static str)> {
     Some(match name.as_str() {
-        "kotlin.Int" => PrimitiveType::Int,
-        "kotlin.Long" => PrimitiveType::Long,
-        "kotlin.Float" => PrimitiveType::Float,
-        "kotlin.Double" => PrimitiveType::Double,
-        "kotlin.Boolean" => PrimitiveType::Boolean,
-        "kotlin.Byte" => PrimitiveType::Byte,
-        "kotlin.Char" => PrimitiveType::Char,
-        "kotlin.Short" => PrimitiveType::Short,
+        "kotlin.Int" => (PrimitiveType::Int, "java.lang.Integer"),
+        "kotlin.Long" => (PrimitiveType::Long, "java.lang.Long"),
+        "kotlin.Float" => (PrimitiveType::Float, "java.lang.Float"),
+        "kotlin.Double" => (PrimitiveType::Double, "java.lang.Double"),
+        "kotlin.Boolean" => (PrimitiveType::Boolean, "java.lang.Boolean"),
+        "kotlin.Byte" => (PrimitiveType::Byte, "java.lang.Byte"),
+        "kotlin.Char" => (PrimitiveType::Char, "java.lang.Character"),
+        "kotlin.Short" => (PrimitiveType::Short, "java.lang.Short"),
         _ => return None,
     })
 }

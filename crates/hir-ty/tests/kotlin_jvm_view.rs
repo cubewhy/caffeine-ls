@@ -717,6 +717,173 @@ fn a_propertys_accessor_is_the_member_each_direction_names() {
     );
 }
 
+/// The fixture of [`a_kotlin_primitive_and_unit_are_the_classfiles_types`]: the
+/// positions a Kotlin type can sit in, one declaration each.
+const POSITIONS_KT: &str = r#"
+package m6
+
+class B {
+    val x: Int? = null
+    var y: Long? = null
+
+    fun f(a: Int?): Int? = a
+
+    fun g(): Unit {}
+
+    fun h(a: Boolean?) {}
+
+    val u: Unit = Unit
+
+    fun takeUnit(x: Unit) {}
+
+    fun takeArr(a: Array<String>) {}
+
+    fun giveArr(): Array<Int> = arrayOf()
+
+    fun giveUnitArr(): Array<Unit> = arrayOf()
+}
+
+val u: List<Unit> = listOf()
+val l: List<Int?> = listOf()
+val ni: List<Int> = listOf()
+val arr: Array<Int> = arrayOf()
+
+@JvmField val fu: List<Unit> = listOf()
+@JvmField val fl: List<Int?> = listOf()
+@JvmField val fni: List<Int> = listOf()
+@JvmField val farr: Array<Int> = arrayOf()
+"#;
+
+/// A Kotlin primitive and `Unit` take the shape the position they sit in gives
+/// them — the box in a type argument or an array element, the primitive in a
+/// value position, and `void` only in a *function's* return type. kotlinc
+/// 2.4.20, `javap -p -s m6.B m6.BKt`:
+///
+/// ```text
+/// public final class m6.B {
+///   private final java.lang.Integer x;
+///   private java.lang.Long y;
+///   private final kotlin.Unit u;
+///   public final java.lang.Integer getX();
+///   public final java.lang.Long getY();
+///   public final void setY(java.lang.Long);
+///   public final java.lang.Integer f(java.lang.Integer);
+///   public final void g();
+///   public final void h(java.lang.Boolean);
+///   public final kotlin.Unit getU();
+///   public final void takeUnit(kotlin.Unit);
+///   public final void takeArr(java.lang.String[]);
+///   public final java.lang.Integer[] giveArr();
+///   public final kotlin.Unit[] giveUnitArr();
+/// }
+/// public final class m6.BKt {
+///   private static final java.util.List<kotlin.Unit> u;
+///   private static final java.util.List<java.lang.Integer> l;
+///   private static final java.util.List<java.lang.Integer> ni;
+///   private static final java.lang.Integer[] arr;
+///   public static final java.util.List<kotlin.Unit> fu;
+///   public static final java.util.List<java.lang.Integer> fl;
+///   public static final java.util.List<java.lang.Integer> fni;
+///   public static final java.lang.Integer[] farr;
+///   public static final java.util.List<kotlin.Unit> getU();
+///   public static final java.util.List<java.lang.Integer> getL();
+///   public static final java.util.List<java.lang.Integer> getNi();
+///   public static final java.lang.Integer[] getArr();
+/// }
+/// ```
+///
+/// The four rules the projection follows are
+/// <https://kotlinlang.org/docs/java-interop.html#mapped-types>'s: a *nullable*
+/// primitive is the box (`x`, `y`, `f`'s argument and return, `h`'s argument,
+/// `l`'s and `fl`'s argument); a primitive in a *type argument* or an array
+/// element is the box too (`ni`, `l`, `arr`'s and `farr`'s argument,
+/// `giveArr`'s component), while a value position keeps the primitive; `Unit`
+/// is `void` only where a *function* returns it (`g()`, not the accessor
+/// `getU()`) and the `kotlin.Unit` class everywhere else (`u`, `fu`,
+/// `takeUnit`, `giveUnitArr`'s component, the facade's `List<Unit>`); and
+/// Kotlin's `Array<T>` is the JVM array `T[]` (`takeArr`'s
+/// `java.lang.String[]`, `giveArr`'s `java.lang.Integer[]`).
+#[test]
+fn a_kotlin_primitive_and_unit_are_the_classfiles_types() {
+    let (db, file) = fixture(&[("/src/main/kotlin/m6/B.kt", POSITIONS_KT)]);
+    assert_eq!(
+        methods(
+            &db,
+            file,
+            "B",
+            &[
+                "getX",
+                "getY",
+                "setY",
+                "f",
+                "g",
+                "h",
+                "getU",
+                "takeUnit",
+                "takeArr",
+                "giveArr",
+                "giveUnitArr",
+            ]
+        ),
+        vec![
+            // `public final java.lang.Integer getX();`
+            "public final java.lang.Integer getX()",
+            // `public final java.lang.Long getY();`
+            "public final java.lang.Long getY()",
+            // `public final void setY(java.lang.Long);`
+            "public final void setY(java.lang.Long)",
+            // `public final java.lang.Integer f(java.lang.Integer);`
+            "public final java.lang.Integer f(java.lang.Integer)",
+            // `public final void g();` — a `Unit`-returning *function*.
+            "public final void g()",
+            // `public final void h(java.lang.Boolean);`
+            "public final void h(java.lang.Boolean)",
+            // `public final kotlin.Unit getU();` — an accessor's return type is
+            // the property's own, not a function's.
+            "public final kotlin.Unit getU()",
+            // `public final void takeUnit(kotlin.Unit);`
+            "public final void takeUnit(kotlin.Unit)",
+            // `public final void takeArr(java.lang.String[]);`
+            "public final void takeArr(java.lang.String[])",
+            // `public final java.lang.Integer[] giveArr();`
+            "public final java.lang.Integer[] giveArr()",
+            // `public final kotlin.Unit[] giveUnitArr();`
+            "public final kotlin.Unit[] giveUnitArr()",
+        ]
+    );
+    // The facade's top-level properties: a `List`'s argument carries the box,
+    // and an `Array` is the JVM array.
+    assert_eq!(
+        facade_methods(&db, file, &["getU", "getL", "getNi", "getArr"]),
+        vec![
+            // `public static final java.util.List<kotlin.Unit> getU();`
+            "public static final java.util.List<kotlin.Unit> getU()",
+            // `public static final java.util.List<java.lang.Integer> getL();`
+            "public static final java.util.List<java.lang.Integer> getL()",
+            // `public static final java.util.List<java.lang.Integer> getNi();`
+            "public static final java.util.List<java.lang.Integer> getNi()",
+            // `public static final java.lang.Integer[] getArr();`
+            "public static final java.lang.Integer[] getArr()",
+        ]
+    );
+    // The *field* position is a `@JvmField`'s (a plain `val`'s backing field is
+    // private, and the module table exposes only `const val`/`@JvmField`
+    // fields).
+    assert_eq!(
+        facade_fields(&db, file, &["fu", "fl", "fni", "farr"]),
+        vec![
+            // `public static final java.util.List<kotlin.Unit> fu;`
+            "public static final java.util.List<kotlin.Unit> fu",
+            // `public static final java.util.List<java.lang.Integer> fl;`
+            "public static final java.util.List<java.lang.Integer> fl",
+            // `public static final java.util.List<java.lang.Integer> fni;`
+            "public static final java.util.List<java.lang.Integer> fni",
+            // `public static final java.lang.Integer[] farr;`
+            "public static final java.lang.Integer[] farr",
+        ]
+    );
+}
+
 /// What `@JvmName` renames, and what it does not. kotlinc 2.4.20, `javap -p
 /// m6.ShapesKt`:
 ///
