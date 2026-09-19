@@ -27,13 +27,14 @@
 //! [`crate::java::resolve::method_params`] for the library half, where the
 //! classfile gives the descriptors directly).
 //!
-//! Extension members declared in *other* files are not collected yet — the
-//! file's own extensions are, through the same member walk — and ties in the
-//! most-specific step fall back to declaration order rather than KLS's full
-//! `MSC` algorithm. Both are recorded deviations; the call sites of this
-//! milestone (the body inference's calls and the IDE's hover) resolve declared
-//! members, and every candidate that survives applicability has the *same*
-//! parameter types in the tests that pin them.
+//! Extension members are collected from the three scopes in which they are in
+//! scope — the enclosing classifiers', the file's own top-level ones, and those
+//! of every package in scope, reached through the source symbol index
+//! ([`collect_extension_members`]) — while ties in the most-specific step fall
+//! back to declaration order rather than KLS's full `MSC` algorithm, a recorded
+//! deviation. Ties are rare in practice: every candidate that survives
+//! applicability against the same arguments has the same parameter types in the
+//! tests that pin them.
 
 use triomphe::Arc;
 
