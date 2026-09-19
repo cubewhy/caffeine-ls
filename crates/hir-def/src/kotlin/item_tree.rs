@@ -108,7 +108,7 @@ pub struct ConstructorDelegation {
     pub ast: FileAstId<ConstructorDelegationCallNode>,
 }
 
-use crate::kotlin::modifiers::{KotlinModifiers, KotlinVariance};
+use crate::kotlin::modifiers::{KotlinModifierFlags, KotlinModifiers, KotlinVariance};
 
 /// The syntax-node markers of the [`FileAstId`]s stored in the Kotlin item
 /// tree. Zero-sized; they type the id's role without constraining the node's
@@ -263,6 +263,47 @@ impl KotlinItemTree {
     /// The declaration `item` is nested in; `None` for a top-level item.
     pub fn parent_of(&self, item: ItemId) -> Option<ItemId> {
         self.parent.get(item.0.0 as usize).copied().flatten()
+    }
+
+    /// The components of a `data class` — the properties its primary
+    /// constructor's parameters declare, in parameter order — or `None` when
+    /// the declaration is not a `data class` of the shape the compiler gives
+    /// components to.
+    ///
+    /// KLS requires the shape: a `data class`'s primary constructor declares
+    /// `val`/`var` parameters only
+    /// ([KLS
+    /// `declarations.html#data-class-declaration`](https://kotlinlang.org/spec/declarations.html#data-class-declaration),
+    /// <https://kotlinlang.org/docs/data-classes.html>), so every parameter is
+    /// one whose property the lowerer wrote at the head of the class body
+    /// (`lower_class_parameter_property`, in the order the parameters are
+    /// written). kotlinc 2.4.20 rejects the other shapes —
+    /// `data class P(val x: Int, y: Int)` is `data class must have only
+    /// property (val/var) constructor parameters` — so such a declaration gets
+    /// no components rather than false ones.
+    ///
+    /// The component the *compiler* generates for the `n`-th property is
+    /// `componentN`, which is this order.
+    pub fn data_class_components(&self, class: &ClassData) -> Option<Vec<ItemId>> {
+        if class.kind != KotlinClassKind::Class
+            || !class.modifiers.flags.contains(KotlinModifierFlags::DATA)
+        {
+            return None;
+        }
+        let KotlinItemData::Constructor(constructor) = self.data(class.primary_constructor?) else {
+            return None;
+        };
+        let mut components = Vec::with_capacity(constructor.params.len());
+        for parameter in &constructor.params {
+            let property = class.body.iter().copied().find(|&member| {
+                matches!(
+                    self.data(member),
+                    KotlinItemData::Property(property) if property.name == parameter.param.name
+                )
+            })?;
+            components.push(property);
+        }
+        (!components.is_empty()).then_some(components)
     }
 
     /// The candidate fully qualified names the written name `name` may denote

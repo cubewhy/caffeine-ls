@@ -114,6 +114,17 @@ pub fn java_view_members(
             }
         }
     }
+    // The members the *classifier* declares through the compiler rather than in
+    // its body — a `data class`'s `componentN`/`copy`
+    // ([`Shapes::push_data_class`]) — under the same name filter its body's
+    // are.
+    shapes.push_data_class(
+        &resolver_of(db, tree, source.file, source.item),
+        source.item,
+        class,
+        name,
+        &mut out,
+    );
     // `object Util` reaches its members through `Util.INSTANCE`, and a
     // companion object through the `Companion` field; the *field* is what
     // [`java_view_fields`] answers, the members stay instance members.
@@ -968,6 +979,121 @@ impl<'a> Shapes<'a> {
             raw_erased: false,
             descriptor: None,
         });
+    }
+
+    /// The `componentN` and `copy` a `data class` generates, when this
+    /// classifier is one ([`KotlinItemTree::data_class_components`] is the
+    /// shape rule).
+    ///
+    /// kotlinc 2.4.20's classfile for
+    /// `data class Point(val x: Int, var y: String) { val label: String = "p" }`
+    /// carries
+    ///
+    /// ```text
+    /// public final int component1();
+    /// public final java.lang.String component2();
+    /// public final Point copy(int, java.lang.String);
+    /// public static Point copy$default(Point, int, java.lang.String, int, java.lang.Object);
+    /// ```
+    ///
+    /// — one `componentN` per component property, in declaration order, whose
+    /// return type is that property's *erased* type, and one `copy` taking all
+    /// of them in order and returning the class's own type. Both are `final`
+    /// (kotlinc emits `ACC_FINAL` on each, whatever the class's modality) at
+    /// the class's own access. `copy$default` is the compiler's
+    /// `ACC_SYNTHETIC` bridge for a call that omits arguments — a Java caller
+    /// never writes it, and the classfile readers filter synthetics the same
+    /// way ([`crate::jvm::member_set`]) — so it is not pushed.
+    ///
+    /// `equals`/`hashCode`/`toString` are *not* generated here: they override
+    /// `java.lang.Object`'s, and a Java caller resolves them through `Object`,
+    /// which the class extends
+    /// (<https://kotlinlang.org/docs/data-classes.html> lists them among the
+    /// generated members; [`crate::jvm::member_set`] reaches them from the
+    /// supertype walk instead).
+    fn push_data_class(
+        &self,
+        resolver: &KotlinResolver<'_>,
+        item: ItemId,
+        class: &ClassData,
+        name: &str,
+        out: &mut Vec<MethodData>,
+    ) {
+        let Some(components) = self.tree.data_class_components(class) else {
+            return;
+        };
+        let component_types: Vec<Ty> = components
+            .iter()
+            .map(|&component| match self.tree.data(component) {
+                KotlinItemData::Property(property) => {
+                    self.property_ty(resolver, property, component)
+                }
+                // Unreachable: a component *is* a property
+                // ([`KotlinItemTree::data_class_components`] found it by
+                // that shape), and a `void` return is the shape that
+                // reports least.
+                _ => Ty::void(self.db),
+            })
+            .collect();
+        // The class's own type, as the classfile names it.
+        let class_ty = ty_from_kotlin(self.db, self.owner.as_ty(self.db, Vec::new()));
+        for (index, ty) in component_types.iter().enumerate() {
+            let component = format!("component{}", index + 1);
+            if name == component {
+                out.push(self.generated_method(
+                    item,
+                    &component,
+                    Vec::new(),
+                    *ty,
+                    class.modifiers.visibility,
+                ));
+            }
+        }
+        if name == "copy" {
+            out.push(self.generated_method(
+                item,
+                "copy",
+                component_types,
+                class_ty,
+                class.modifiers.visibility,
+            ));
+        }
+    }
+
+    /// One method the compiler *generates* for a classifier — a `data class`'s
+    /// `componentN`/`copy` ([`Shapes::push_data_class`]) — in the shape they
+    /// share: an instance method of the class, `final`, at the class's own
+    /// access, with no type parameters, nothing thrown and no parameter names
+    /// (the compiler writes none into the classfile).
+    fn generated_method(
+        &self,
+        item: ItemId,
+        name: &str,
+        params: Vec<Ty>,
+        ret: Ty,
+        visibility: KotlinVisibility,
+    ) -> MethodData {
+        MethodData {
+            name: name.to_owned(),
+            owner: self.owner.clone(),
+            owner_file: Some(self.file),
+            decl_item: Some(item),
+            params,
+            param_names: None,
+            ret,
+            throws: Vec::new(),
+            varargs: false,
+            is_static: false,
+            abstract_: false,
+            is_final: true,
+            access: access(visibility),
+            declaring_package: self.package.clone(),
+            declaring_top_level: Some(self.top_level.clone()),
+            declaring_interface: self.is_interface(),
+            type_params: Vec::new(),
+            raw_erased: false,
+            descriptor: None,
+        }
     }
 
     /// The JVM field of a declaration, when the compiler emits one for it.

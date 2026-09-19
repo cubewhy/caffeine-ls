@@ -1831,6 +1831,49 @@ fun probe(): Int {
     );
 }
 
+/// A `data class` declares its components through the *compiler*, not in its
+/// body, and they are the members a destructuring declaration binds
+/// (`componentN`, [KLS
+/// `declarations.html#destructuring-declarations`](https://kotlinlang.org/spec/declarations.html#destructuring-declarations))
+/// and a `copy` call resolves against
+/// ([KLS
+/// `declarations.html#data-class-declaration`](https://kotlinlang.org/spec/declarations.html#data-class-declaration),
+/// <https://kotlinlang.org/docs/data-classes.html>).
+///
+/// kotlinc 2.4.20 reports exactly one error for this fixture —
+/// `initializer type mismatch: expected 'Int', actual 'String'.` for the
+/// deliberately wrong binding — which is what shows `y` is `component2`'s
+/// `String` and not the fallback type of a receiver that declares no such
+/// member; the named and positional `copy` calls and the reads of their results
+/// meanwhile resolve.
+#[test]
+fn a_data_class_declares_its_components_and_copy() {
+    let source = r#"
+data class Point(val x: Int, var y: String) {
+    val label: String = "p"
+}
+
+fun probe(point: Point): String {
+    val (x, y) = point
+    val wrong: Int = y
+    val renamed: Point = point.copy(y = "q")
+    val positional: Point = point.copy(2, "q")
+    return renamed.label + positional.y + x.toString()
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    let diagnostics: Vec<&str> = rendered
+        .lines()
+        .filter(|line| line.contains("kotlin."))
+        .collect();
+    assert_eq!(
+        diagnostics,
+        vec!["kotlin.type-mismatch: initializer type mismatch: expected 'Int', actual 'String'."],
+        "the components and both `copy` calls resolve, and `y` is `String`: {rendered}"
+    );
+}
+
 /// A `return` whose value the declared return type cannot accept is the
 /// compiler's mismatch, worded as an assignment's
 /// ([KLS `expressions.html#jump-expressions`](https://kotlinlang.org/spec/expressions.html#jump-expressions)):

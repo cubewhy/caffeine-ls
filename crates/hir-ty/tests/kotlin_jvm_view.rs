@@ -783,3 +783,54 @@ fn a_jvm_name_written_as_a_constant_renames_the_member() {
         ]
     );
 }
+
+/// A `data class` generates one `componentN` per component property, in
+/// declaration order, and a `copy` taking them all and returning the class's
+/// own type. `kotlinc 2.4.20` + `javap -p` on
+///
+/// ```kotlin
+/// data class Point(val x: Int, var y: String) {
+///     val label: String = "p"
+/// }
+/// ```
+///
+/// ```text
+/// public final int component1();
+/// public final java.lang.String component2();
+/// public final Point copy(int, java.lang.String);
+/// public static Point copy$default(Point, int, java.lang.String, int, java.lang.Object);
+/// public java.lang.String toString();
+/// public int hashCode();
+/// public boolean equals(java.lang.Object);
+/// ```
+///
+/// — `component2` is the `var`'s type, the *non*-component `label` generates
+/// nothing, and `copy$default` is the compiler's `ACC_SYNTHETIC` bridge, which
+/// a Java caller never writes.
+#[test]
+fn a_data_class_carries_its_generated_components_and_copy() {
+    let source = r#"
+data class Point(val x: Int, var y: String) {
+    val label: String = "p"
+}
+"#;
+    let (db, file) = fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    assert_eq!(
+        methods(&db, file, "Point", &["component1", "component2", "copy"]),
+        vec![
+            "public final int component1()",
+            "public final java.lang.String component2()",
+            "public final Point copy(int, java.lang.String)",
+        ]
+    );
+    assert!(
+        methods(&db, file, "Point", &["copy$default"]).is_empty(),
+        "the synthetic bridge is not a member a Java caller writes"
+    );
+    // `equals`/`hashCode`/`toString` are the class's overrides of `Object`'s,
+    // which the supertype walk reaches: nothing is generated here for them.
+    assert!(
+        methods(&db, file, "Point", &["equals", "hashCode", "toString"]).is_empty(),
+        "the `Object` overrides come from `java.lang.Object`"
+    );
+}

@@ -38,6 +38,7 @@
 use triomphe::Arc;
 
 use hir::hir_def::kotlin::item_tree::{KotlinItemData, KotlinItemTree};
+use hir_expand::ids::ItemId;
 use hir_expand::name::Name;
 use vfs::FileId;
 
@@ -1113,6 +1114,9 @@ fn kotlin_members(
         _ => None,
     };
     let primary = class.and_then(|class| class.primary_constructor);
+    // The *instantiated* component types of a `data class`, or `None` when this
+    // is not one ([`ClassData`]'s own shape rule).
+    let components = class.and_then(|class| tree.data_class_components(class));
     // An `enum class` declares `entries` through the compiler, not in its body:
     // `Enum.entries` is a `List` of the enum's own type ([KLS
     // `declarations.html#enum-class-declaration`](https://kotlinlang.org/spec/declarations.html#enum-class-declaration)
@@ -1121,25 +1125,74 @@ fn kotlin_members(
     if name.as_str() == "entries"
         && matches!(class, Some(class) if class.kind == hir::hir_def::kotlin::item_tree::KotlinClassKind::Enum)
     {
-        out.push(Member {
-            target: MemberTarget::Builtin {
-                ret: Ty::reference(
-                    db,
-                    "kotlin.collections.List",
-                    vec![match reference_fqn(db, receiver) {
-                        Some(fqn) => Ty::reference(db, fqn, Vec::new()),
-                        None => Ty::reference(db, "kotlin.Any", Vec::new()),
-                    }],
-                ),
-            },
-            name: name.clone(),
-            kind: MemberKind::Property,
-            params: Vec::new(),
-            param_names: Arc::from(Vec::new()),
-            defaulted: Arc::from(Vec::new()),
-            vararg: false,
-            extension: false,
-        });
+        out.push(builtin_member(
+            name.clone(),
+            MemberKind::Property,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Ty::reference(
+                db,
+                "kotlin.collections.List",
+                vec![match reference_fqn(db, receiver) {
+                    Some(fqn) => Ty::reference(db, fqn, Vec::new()),
+                    None => Ty::reference(db, "kotlin.Any", Vec::new()),
+                }],
+            ),
+        ));
+    }
+    // A `data class` declares `componentN` and `copy` through the compiler, not
+    // in its body ([KLS
+    // `declarations.html#data-class-declaration`](https://kotlinlang.org/spec/declarations.html#data-class-declaration),
+    // <https://kotlinlang.org/docs/data-classes.html>): one `componentN` per
+    // component property, in declaration order, and a `copy` whose parameters
+    // *are* those properties — each with the property's value as its default,
+    // so a call may write any subset of them by name
+    // (`point.copy(y = 2)`). They are what a destructuring declaration
+    // (`val (x, y) = point`, [`super::infer`]'s `destructured_types`) and a
+    // `copy` call resolve through, and what a Java caller reads as
+    // `component1()`/`copy(…)` ([`super::jvm_view`]).
+    //
+    // `equals`/`hashCode`/`toString` are *not* generated here: they override
+    // `kotlin.Any`'s ([KLS
+    // `declarations.html#classifier-declaration`](https://kotlinlang.org/spec/declarations.html#classifier-declaration)),
+    // which every receiver already reaches.
+    if let Some(components) = &components {
+        let component_ty = |property: ItemId| {
+            let ty = super::db::item_ty(db, file, property);
+            match binding.is_empty() {
+                true => ty,
+                false => ty.substitute(db, &binding),
+            }
+        };
+        if let Some(index) = component_index(name) {
+            if let Some(property) = components.get(index - 1) {
+                out.push(builtin_member(
+                    name.clone(),
+                    MemberKind::Function,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    component_ty(*property),
+                ));
+            }
+        }
+        if name.as_str() == "copy" {
+            out.push(builtin_member(
+                name.clone(),
+                MemberKind::Function,
+                components.iter().copied().map(component_ty).collect(),
+                components
+                    .iter()
+                    .filter_map(|property| match tree.data(*property) {
+                        KotlinItemData::Property(property) => Some(property.name.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                vec![true; components.len()],
+                *receiver,
+            ));
+        }
     }
     for member in tree.data(item).body().iter().copied().chain(primary) {
         let data = tree.data(member);
@@ -1288,6 +1341,38 @@ fn kotlin_members(
             extension: false,
         });
     }
+}
+
+/// A member a *language* declares but no declaration carries: a `data class`'s
+/// `componentN`/`copy`, an `enum class`'s `entries`, a `Double.toInt` intrinsic
+/// ([`MemberTarget::Builtin`]). Its type is the immaterialized return type the
+/// caller gives it.
+fn builtin_member(
+    name: Name,
+    kind: MemberKind,
+    params: Vec<Ty>,
+    param_names: Vec<Name>,
+    defaulted: Vec<bool>,
+    ret: Ty,
+) -> Member {
+    Member {
+        target: MemberTarget::Builtin { ret },
+        name,
+        kind,
+        params,
+        param_names: Arc::from(param_names),
+        defaulted: Arc::from(defaulted),
+        vararg: false,
+        extension: false,
+    }
+}
+
+/// The 1-based index of a `componentN` name, or `None` for any other name: the
+/// `N` of the member a `data class` generates per component ([`kotlin_members`]
+/// and <https://kotlinlang.org/docs/destructuring-declarations.html>).
+fn component_index(name: &Name) -> Option<usize> {
+    let index = name.as_str().strip_prefix("component")?.parse().ok()?;
+    (index > 0).then_some(index)
 }
 
 /// The members `name` names on a Java or classfile receiver ([KLS
