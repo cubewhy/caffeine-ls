@@ -133,6 +133,86 @@ fn interop_fixture(files: &[(&str, &str)]) -> (TestDatabase, hir::SourceSetId) {
 }
 
 #[test]
+fn executable_kotlin_java_interop_signatures() {
+    let kotlin = r#"package proof
+fun answer() = 42
+class Probe {
+    fun choose(x: Any?) = x ?: "fallback"
+    fun require(x: String?) = x ?: throw IllegalArgumentException()
+    fun `when`() = 1
+}
+class Words(vararg val values: String)
+class Numbers(vararg val values: Int)
+"#;
+    let java = r#"package proof;
+public class Smoke {
+    public static void main(String[] args) {
+        Probe p = new Probe();
+        Object chosen = p.choose(Integer.valueOf(7));
+        String required = p.require("ok");
+        String[] words = new Words("a", "b").getValues();
+        int[] numbers = new Numbers(3, 4).getValues();
+        System.out.println(AppKt.answer() + ":" + chosen + ":" + required
+            + ":" + p.when() + ":" + words.length + ":" + numbers[1]);
+    }
+}
+"#;
+    let (db, _) = interop_fixture(&[
+        ("/src/main/kotlin/proof/app.kt", kotlin),
+        ("/src/main/java/proof/Smoke.java", java),
+        // Signature-only supplements to the minimal JDK fixture; the two
+        // interoperability sources above are identical to the executable oracle.
+        (
+            "/jdk/java/lang/Integer.java",
+            "package java.lang; public final class Integer extends Number { public static native Integer valueOf(int value); public native int intValue(); public native long longValue(); public native float floatValue(); public native double doubleValue(); }",
+        ),
+        (
+            "/jdk/java/lang/System.java",
+            "package java.lang; public final class System { public static final java.io.PrintStream out = null; }",
+        ),
+        (
+            "/jdk/java/io/PrintStream.java",
+            "package java.io; public class PrintStream { public native void println(String value); }",
+        ),
+    ]);
+    let file = FileId::from_raw(2);
+    assert!(hir_ty::class_diagnostics(&db, file).is_empty());
+    let tree = hir_def::java::plugin::tree(&db, file);
+    let bodies = hir::file_body_tree(&db, file);
+    let (item, _) = common::all_items(&tree).into_iter().find(|(_, data)| {
+        matches!(data, hir_def::java::item_tree::ItemData::Method(method) if method.name.as_str() == "main")
+    }).unwrap();
+    let types = hir_ty::body_types(&db, file, item).unwrap();
+    assert!(types.diagnostics.is_empty(), "{:?}", types.diagnostics);
+    let string = Ty::reference(&db, "java.lang.String", vec![]);
+    let int = Ty::primitive(&db, syntax::stub::PrimitiveType::Int);
+    for (call, expected) in [
+        ("AppKt.answer()", int),
+        (
+            "p.choose(Integer.valueOf(7))",
+            Ty::reference(&db, "java.lang.Object", vec![]),
+        ),
+        ("p.require(\"ok\")", string),
+        ("p.when()", int),
+        (
+            "new Words(\"a\", \"b\").getValues()",
+            Ty::array(&db, string),
+        ),
+        ("new Numbers(3, 4).getValues()", Ty::array(&db, int)),
+    ] {
+        let actual = types
+            .exprs
+            .iter()
+            .find_map(|(expr, ty)| {
+                let range = bodies.expr_range(*expr)?;
+                (&java[range] == call).then_some(*ty)
+            })
+            .expect(call);
+        assert_eq!(actual, expected, "{call}");
+    }
+}
+
+#[test]
 fn java_reads_vararg_property_arrays() {
     let kotlin = r#"package p
 class Words(vararg var values: String)
