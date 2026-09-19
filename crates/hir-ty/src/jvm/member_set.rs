@@ -1037,6 +1037,66 @@ pub(crate) fn source_top_level(package: Option<&str>, fqn: &str) -> String {
     }
 }
 
+/// Erases a classfile member type using the declarations of its type variables.
+/// Signature references carry names, not bounds; erasing their lowered bare
+/// variables would incorrectly replace every bounded parameter with `Object`.
+/// [JLS §4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6)
+/// instead follows the leftmost bound, including bounds naming other parameters.
+fn library_type_erasure<'a>(
+    db: &dyn TyDatabase,
+    mut tyref: &'a hir::TypeRef<hir::Symbol>,
+    class_params: &'a [syntax::stub::TypeParameter<hir::Symbol>],
+    mut method_params: &'a [syntax::stub::TypeParameter<hir::Symbol>],
+) -> Ty {
+    let mut remaining = class_params.len() + method_params.len();
+    let mut dimensions = 0;
+    let mut erased = loop {
+        match tyref {
+            hir::TypeRef::TypeVariable(name) => {
+                // A bound chain can visit each declaration only once. F-bounds
+                // terminate at their reference type without traversing arguments.
+                if remaining == 0 {
+                    break Ty::error(db);
+                }
+                remaining -= 1;
+                let parameter = if let Some(parameter) = method_params
+                    .iter()
+                    .find(|parameter| parameter.name == *name)
+                {
+                    Some(parameter)
+                } else {
+                    // A class parameter's bound is in class scope, outside any
+                    // shadowing method parameter ([JLS §6.4.1]).
+                    method_params = &[];
+                    class_params
+                        .iter()
+                        .find(|parameter| parameter.name == *name)
+                };
+                let Some(bound) = parameter.and_then(|parameter| parameter.bounds.first()) else {
+                    break Ty::reference(db, "java.lang.Object", Vec::new());
+                };
+                tyref = bound;
+            }
+            hir::TypeRef::Array(inner) => {
+                dimensions += 1;
+                tyref = inner;
+            }
+            hir::TypeRef::Reference { name, .. } => {
+                break Ty::reference(
+                    db,
+                    Name::new(db.hir_state().interner.resolve(name)),
+                    Vec::new(),
+                );
+            }
+            _ => break crate::java::resolve::ty_from_library(db, tyref).erasure(db),
+        }
+    };
+    for _ in 0..dimensions {
+        erased = Ty::array(db, erased);
+    }
+    erased
+}
+
 /// The methods of a library class, whose `Signature` attribute
 /// ([JVMS §4.7.9.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.9.1))
 /// may declare type parameters. The class's parameters are bound to `args`;
@@ -1137,41 +1197,42 @@ fn library_class_methods(
         // formal types mention a type variable (the class's or the method's
         // own) or the method declares its own type parameters; a member whose
         // formals are ground (`void m(String)`) stays checked.
-        let raw_erased = is_raw
-            && !flags.is_static()
+        let raw_instance = is_raw && !flags.is_static();
+        let raw_erased = raw_instance
             && (!method.type_params.is_empty()
                 || method
                     .params
                     .iter()
                     .any(|param| member_lower(&param.param_type).contains_type_var(db)));
-        let type_params = method
-            .type_params
-            .iter()
-            .zip(method_names.iter())
-            .map(|(tp, tp_name)| MethodTypeParam {
-                scope: TypeVarScope::LibraryMethod {
-                    owner: owner.clone(),
-                    method: method_name.clone(),
-                    name: tp_name.clone(),
-                },
-                // The bound is instantiated with the declaring class's type
-                // arguments: a `<U extends T>` bound on a generic class
-                // references the class type parameter `T`, which resolves to
-                // the receiver's actual argument here (§18.5.2.2). A bound
-                // over the method's own type parameters is untouched by the
-                // class binding and stays a bare type variable.
-                bounds: tp.bounds.iter().map(member_lower).collect(),
-            })
-            .collect();
-        // JLS 4.8: the *instance* members of a raw type have erased
-        // signatures. A static member does not depend on the receiver's
-        // type arguments at all, so its own generics stay intact.
-        let is_static_member = flags.is_static();
-        let erase = |ty: Ty| {
-            if is_raw && !is_static_member {
-                ty.erasure(db)
+        let type_params = if raw_instance {
+            // An erased method signature has no type parameters (JLS §4.6).
+            Vec::new()
+        } else {
+            method
+                .type_params
+                .iter()
+                .zip(method_names.iter())
+                .map(|(tp, tp_name)| MethodTypeParam {
+                    scope: TypeVarScope::LibraryMethod {
+                        owner: owner.clone(),
+                        method: method_name.clone(),
+                        name: tp_name.clone(),
+                    },
+                    // A `<U extends T>` bound sees the class's actual argument;
+                    // the method's own parameters remain declaration-scoped.
+                    bounds: tp.bounds.iter().map(member_lower).collect(),
+                })
+                .collect()
+        };
+        // [JLS §4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8):
+        // raw instance members are erased; static members retain their generics.
+        // The bounded erasure is also the signature compared for implementation
+        // ([§8.4.8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.1)).
+        let member_type = |tyref: &hir::TypeRef<hir::Symbol>| {
+            if raw_instance {
+                library_type_erasure(db, tyref, &class.type_params, &method.type_params)
             } else {
-                ty
+                member_lower(tyref)
             }
         };
         out.push(MethodData {
@@ -1185,16 +1246,11 @@ fn library_class_methods(
             params: method
                 .params
                 .iter()
-                .map(|param| erase(member_lower(&param.param_type)))
+                .map(|param| member_type(&param.param_type))
                 .collect(),
             param_names: None,
-            ret: erase(member_lower(&method.return_type)),
-            throws: method
-                .throws_list
-                .iter()
-                .map(&member_lower)
-                .map(erase)
-                .collect(),
+            ret: member_type(&method.return_type),
+            throws: method.throws_list.iter().map(member_type).collect(),
             varargs: JvmAccessFlags::from_bits_retain(method.flags).is_varargs(),
             is_static: JvmAccessFlags::from_bits_retain(method.flags).is_static(),
             abstract_: JvmAccessFlags::from_bits_retain(method.flags).is_abstract(),
@@ -1383,13 +1439,11 @@ fn library_class_fields(
         // static field does not depend on the receiver's type arguments, so
         // its declared type stays intact.
         let ty = {
-            let ty =
-                crate::java::resolve::ty_from_library_signature(db, &field.field_type, &class_ctx)
-                    .substitute(db, &binding);
             if is_raw && !is_static {
-                ty.erasure(db)
+                library_type_erasure(db, &field.field_type, &class.type_params, &[])
             } else {
-                ty
+                crate::java::resolve::ty_from_library_signature(db, &field.field_type, &class_ctx)
+                    .substitute(db, &binding)
             }
         };
         out.push(FieldData {

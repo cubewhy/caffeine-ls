@@ -92,7 +92,8 @@ read-only third-party code: they never appear in `workspace/diagnostic`.
 Java references to inherited member types resolve to the declaring class,
 including protected types named through a subclass. Member-class visibility is
 read from `InnerClasses`; versioned library caches are rebuilt when this
-metadata changes.
+metadata changes. Raw generic instance members erase type variables to their
+declared leftmost bounds, while static members retain their generic signatures.
 
 The `caffeine_ls.downloadSources` setting (`download_sources` in the server's
 `initializationOptions`) lets the build system fetch missing dependency sources
