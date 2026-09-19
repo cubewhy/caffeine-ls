@@ -265,6 +265,15 @@ pub fn file_facade_fields(db: &dyn TyDatabase, file: FileId, name: &str) -> Vec<
 /// The name is the source set's ([`hir::module_name`], which the build systems
 /// set to the project's name); a workspace that declares none compiles an
 /// *unnamed* module, whose compiler default is `main` (`m$main()`).
+///
+/// A recorded deviation on the *source* of the name: `ProjectData::name` is the
+/// build tool's own project name, and Kotlin's Gradle and Maven plugins pass it
+/// as `-module-name` for a source set's main compilation — a test compilation
+/// compiles under a name of its own (`<project>_test`), which this model does
+/// not distinguish, so an `internal` member of a *test* source set is mangled
+/// with the project's name rather than the test compilation's. A second source
+/// for the name is not guessed: the model carries one, and the name is read
+/// where the compilers' command lines are built.
 fn module_suffix(db: &dyn TyDatabase, file: FileId) -> String {
     let module = hir::source_set_for_file(db, file)
         .and_then(|source_set| hir::module_name(db, &source_set))
