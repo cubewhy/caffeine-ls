@@ -684,6 +684,8 @@ fn a_propertys_accessor_is_the_member_each_direction_names() {
     let site = CallSite {
         file,
         item: Some(class_item(&db, file, "Props")),
+        // A property read is a *value* receiver's member.
+        receiver: hir_ty::kotlin::method::ReceiverKind::Value,
     };
     let kinds = |name: &str| {
         kotlin_declared_members(

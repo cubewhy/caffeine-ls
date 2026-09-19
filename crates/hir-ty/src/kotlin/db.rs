@@ -316,6 +316,9 @@ pub(crate) fn delegated_value_ty(
     let site = crate::kotlin::method::CallSite {
         file: file_id,
         item: item_id,
+        // A delegated property's `getValue` runs on the *delegate expression*,
+        // a value.
+        receiver: crate::kotlin::method::ReceiverKind::Value,
     };
     match crate::kotlin::method::pick_callable(
         db,

@@ -59,7 +59,7 @@ use syntax::KotlinDiagnosticCode;
 use vfs::FileId;
 
 use crate::jvm::db::TyDatabase;
-use crate::kotlin::method::{self, CallSite, Member, MemberKind, MemberTarget};
+use crate::kotlin::method::{self, CallSite, Member, MemberKind, MemberTarget, ReceiverKind};
 use crate::kotlin::resolve::KotlinResolver;
 use crate::kotlin::ty::{display_kotlin, ty_from_java, ty_from_type_ref};
 use crate::ty::{Ty, TyKind};
@@ -487,6 +487,9 @@ fn check_class(
     let site = CallSite {
         file,
         item: Some(item),
+        // A Kotlin declaration's member walks stand on the *instance* the
+        // declaration introduces, an override's included.
+        receiver: ReceiverKind::Value,
     };
     let class_ty = super::db::item_ty(db, file, item);
     check_class_modifiers(db, file, tree, item, class, location, out);

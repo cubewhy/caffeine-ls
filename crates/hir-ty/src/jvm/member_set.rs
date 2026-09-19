@@ -61,6 +61,14 @@ pub enum InvocationMode {
     /// `expression.m(...)`: all members except static methods declared in an
     /// interface are candidates.
     Virtual,
+    /// A member access from a language that admits no static member through a
+    /// receiver *expression* — Kotlin resolves `j.stat()`, a static of `j`'s
+    /// class, as an unresolved reference and reaches the member through the
+    /// class name alone
+    /// (<https://kotlinlang.org/docs/java-interop.html#static-methods>). Not a
+    /// JLS mode: the JLS's `Virtual` admits a static method of a class
+    /// ([§15.12.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.3)).
+    InstanceReceiver,
 }
 
 /// The context of a method invocation: how the name is qualified (the

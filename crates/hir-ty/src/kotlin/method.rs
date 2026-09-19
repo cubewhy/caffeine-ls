@@ -657,6 +657,17 @@ pub enum MemberKind {
     Constructor,
 }
 
+/// How the receiver of a member lookup was written: a *classifier*
+/// (`java.lang.System`, `Integer`) or a value. Kotlin resolves a Java static
+/// member on the declaring classifier alone, so the two are not
+/// interchangeable
+/// (<https://kotlinlang.org/docs/java-interop.html#static-methods>).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiverKind {
+    Classifier,
+    Value,
+}
+
 /// The declaration a call site stands in: what a *Java* member's access control
 /// is checked against ([`access_context_for_kotlin`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -668,6 +679,10 @@ pub struct CallSite {
     /// the file — [`access_context_of_file`] — exactly as a Kotlin file's top
     /// level is.
     pub item: Option<hir_expand::ids::ItemId>,
+    /// How the receiver the lookup runs on was written
+    /// ([`ReceiverKind`]) — a value by default, which is what every site
+    /// without a receiver expression stands on.
+    pub receiver: ReceiverKind,
 }
 
 /// One written argument of a call: its type, and the parameter name it was
@@ -736,6 +751,8 @@ pub fn declared_members(
         &mut seen,
         &mut out,
         true,
+        site.receiver,
+        false,
     );
     out
 }
@@ -947,6 +964,7 @@ pub fn local_class_of(db: &dyn TyDatabase, ty: &Ty) -> Option<hir::SourceClass> 
 
 /// The members of the receiver and of every supertype of its supertype
 /// closure, most-derived first, each classifier visited once.
+#[allow(clippy::too_many_arguments)]
 fn collect_members(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -957,6 +975,11 @@ fn collect_members(
     seen: &mut rustc_hash::FxHashSet<ReceiverKey>,
     out: &mut Vec<Member>,
     include_companion: bool,
+    kind: ReceiverKind,
+    // Whether the walk has descended from a *Kotlin* classifier into this
+    // receiver — which is what makes its Java statics out of reach
+    // ([`java_members`]).
+    through_kotlin: bool,
 ) {
     let Some(key) = receiver_key(db, receiver) else {
         return;
@@ -964,11 +987,16 @@ fn collect_members(
     if !seen.insert(key.clone()) {
         return;
     }
+    // Whether this receiver *is* a Kotlin declaration, so its supertypes
+    // contribute no Java statics (`class KS : N()` reaches none of `N`'s,
+    // kotlinc 2.4.20).
+    let mut kotlin_classifier = false;
     match &key {
         // A local classifier is walked from the item tree of its own file: it is
         // a declaration of that file exactly as a named one is, and the
         // Kotlin twin of the Java layer's `ClassKey::Local` member walk.
         ReceiverKey::Local(class) => {
+            kotlin_classifier = true;
             let tree = hir::file_item_tree(db, class.file);
             if let Some(tree) = hir_def::kotlin::plugin::model(&tree) {
                 let resolver = KotlinResolver::for_item(db, class.file, tree, class.item);
@@ -1055,7 +1083,17 @@ fn collect_members(
             // Kotlin's by [`member_of_method`].
             let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
                 if let Some(jvm) = super::builtins::jvm_ty(db, *receiver) {
-                    java_members(db, scope, &jvm, name, ctx, constructors, out);
+                    java_members(
+                        db,
+                        scope,
+                        &jvm,
+                        name,
+                        ctx,
+                        constructors,
+                        kind,
+                        through_kotlin,
+                        out,
+                    );
                 }
                 return;
             };
@@ -1064,6 +1102,7 @@ fn collect_members(
                     let tree = hir::file_item_tree(db, class.file);
                     match hir_def::kotlin::plugin::model(&tree) {
                         Some(tree) => {
+                            kotlin_classifier = true;
                             let resolver =
                                 KotlinResolver::for_item(db, class.file, tree, class.item);
                             kotlin_members(
@@ -1080,12 +1119,30 @@ fn collect_members(
                             );
                         }
                         // A Java source class: its members are the Java layer's.
-                        None => java_members(db, scope, receiver, name, ctx, constructors, out),
+                        None => java_members(
+                            db,
+                            scope,
+                            receiver,
+                            name,
+                            ctx,
+                            constructors,
+                            kind,
+                            through_kotlin,
+                            out,
+                        ),
                     }
                 }
-                hir::Resolved::Library(_) => {
-                    java_members(db, scope, receiver, name, ctx, constructors, out)
-                }
+                hir::Resolved::Library(_) => java_members(
+                    db,
+                    scope,
+                    receiver,
+                    name,
+                    ctx,
+                    constructors,
+                    kind,
+                    through_kotlin,
+                    out,
+                ),
                 // A Kotlin file's facade class: Kotlin reaches a file's top-level
                 // declarations by *import*, not through the facade's name, so the
                 // arm contributes nothing here — the file's own top level is what
@@ -1101,7 +1158,19 @@ fn collect_members(
     // into a source supertype list and converts a Java or classfile supertype
     // to the Kotlin type it denotes.
     for supertype in super::subtyping::supertypes(db, scope, receiver) {
-        collect_members(db, scope, &supertype, name, ctx, false, seen, out, false);
+        collect_members(
+            db,
+            scope,
+            &supertype,
+            name,
+            ctx,
+            false,
+            seen,
+            out,
+            false,
+            kind,
+            through_kotlin || kotlin_classifier,
+        );
     }
 }
 
@@ -1475,6 +1544,22 @@ fn component_index(name: &Name) -> Option<usize> {
 ///   the treatment: it declares the property itself;
 /// * a Java field is a Kotlin *property* of its own name — Kotlin reads a Java
 ///   field directly.
+///
+/// *Statics* are reached through a **classifier** receiver alone: a value
+/// receiver admits no static member, so `j.stat()` — a static of `j`'s class —
+/// is an unresolved reference
+/// (<https://kotlinlang.org/docs/java-interop.html#static-methods>; the mode
+/// the Java layer applies is [`InvocationMode::InstanceReceiver`]), while
+/// `N.stat()` and `Integer.MAX_VALUE` resolve on the class name. A *Kotlin*
+/// classifier inherits none of its Java supertypes' statics: `class KS : N()`
+/// leaves `KS.stat()` unresolved (kotlinc 2.4.20), which is what the
+/// `through_kotlin` flag carries. A **Java** subclass inherits them, as Java
+/// itself does (`class Sub extends N` compiles `Sub.stat()` — kotlinc keeps
+/// Java's own rule for a Java class). A Kotlin class *compiled to a classfile*
+/// is read as a Java class here, so its statics stay reachable through a
+/// subclass — a recorded deviation, since the distinction lives in the
+/// `kotlin.Metadata` attribute this model does not decode.
+#[allow(clippy::too_many_arguments)]
 fn java_members(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -1482,14 +1567,19 @@ fn java_members(
     name: &Name,
     ctx: &InvocationContext,
     constructors: bool,
+    kind: ReceiverKind,
+    through_kotlin: bool,
     out: &mut Vec<Member>,
 ) {
-    // Kotlin draws no static/instance distinction at a *class* receiver
-    // (`Integer.parseInt`, `Util.INSTANCE`), and an instance receiver's calls
-    // are instance members — the mode a Kotlin access site has is therefore
-    // "everything the type declares", which is the Java layer's
-    // `TypeQualified` (the one mode that filters nothing).
-    let ctx = &ctx.with_mode(InvocationMode::TypeQualified);
+    // The mode an access site of this language has ([`ReceiverKind`]): a
+    // *classifier* receiver reaches static members and keeps the Java layer's
+    // unfiltered enumeration (`Integer.parseInt`, `Util.INSTANCE`), and a
+    // *value* receiver reaches instance members alone.
+    let statics = kind == ReceiverKind::Classifier && !through_kotlin;
+    let ctx = &ctx.with_mode(match kind {
+        ReceiverKind::Classifier => InvocationMode::TypeQualified,
+        ReceiverKind::Value => InvocationMode::InstanceReceiver,
+    });
     // A Java *field* of the name is the property before any accessor pair is:
     // kotlinc 2.4.20 reads `val w: Int = java.awt.Dimension().width` as the
     // `int` field, not as `getWidth()`'s `double`. The accessors follow, so a
@@ -1498,6 +1588,7 @@ fn java_members(
     // class also declares a `void layout()` method), and a *call* filters to
     // the functions anyway, so both `x.layout` and `x.layout()` resolve.
     if let Some(field) = crate::jvm::member_set::pick_field(db, scope, receiver, name.as_str(), ctx)
+        && (statics || !field.is_static)
     {
         out.push(Member {
             target: MemberTarget::JavaField(Box::new(field)),
@@ -1514,6 +1605,9 @@ fn java_members(
         for method in
             crate::jvm::member_set::member_set(db, scope, receiver, accessor.as_str(), ctx)
         {
+            if method.is_static && !statics {
+                continue;
+            }
             // A getter takes no arguments and returns the property's type.
             let mut member = member_of_method(db, name.clone(), MemberKind::Getter, method);
             member.params = Vec::new();
@@ -1524,6 +1618,9 @@ fn java_members(
         for method in
             crate::jvm::member_set::member_set(db, scope, receiver, accessor.as_str(), ctx)
         {
+            if method.is_static && !statics {
+                continue;
+            }
             // A setter's parameter is the property's type, which
             // [`member_of_method`] converts.
             out.push(member_of_method(
@@ -1535,6 +1632,9 @@ fn java_members(
         }
     }
     for method in crate::jvm::member_set::member_set(db, scope, receiver, name.as_str(), ctx) {
+        if method.is_static && !statics {
+            continue;
+        }
         // A Java *source* constructor is a method named after its class — the
         // name a Kotlin `Box(…)` call writes — and it is the `Constructor`
         // candidate the branch below pushes. Pushing it as a `Function` as well

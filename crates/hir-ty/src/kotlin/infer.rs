@@ -950,13 +950,15 @@ impl<'a> InferCtx<'a> {
                         Some(path) => match self.resolver.class_fqn(&path) {
                             Some(fqn) => Ty::reference(self.db, fqn, Vec::new()),
                             None => {
+                                let kind = self.receiver_kind(target);
                                 let receiver = self.infer_expr(target);
-                                self.member_ty(expr, &receiver, &name)
+                                self.member_ty(expr, &receiver, &name, kind)
                             }
                         },
                         None => {
+                            let kind = self.receiver_kind(target);
                             let receiver = self.infer_expr(target);
-                            self.member_ty(expr, &receiver, &name)
+                            self.member_ty(expr, &receiver, &name, kind)
                         }
                     }
                 }
@@ -1052,6 +1054,7 @@ impl<'a> InferCtx<'a> {
                                         )
                                     }
                                     None => {
+                                        let kind = self.receiver_kind(receiver);
                                         let receiver_ty = self.infer_expr(receiver);
                                         self.call_ty(
                                             expr,
@@ -1062,6 +1065,7 @@ impl<'a> InferCtx<'a> {
                                             trailing,
                                             &written,
                                             expected,
+                                            kind,
                                         )
                                     }
                                 }
@@ -1080,7 +1084,18 @@ impl<'a> InferCtx<'a> {
             } => {
                 let receiver_ty = self.infer_expr(receiver);
                 let arg_ty = self.infer_expr(arg);
-                self.call_ty(expr, &receiver_ty, &name, &[arg_ty], &[], None, &[], None)
+                // An infix call's receiver is a value, never a classifier.
+                self.call_ty(
+                    expr,
+                    &receiver_ty,
+                    &name,
+                    &[arg_ty],
+                    &[],
+                    None,
+                    &[],
+                    None,
+                    method::ReceiverKind::Value,
+                )
             }
             ExprData::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.infer_expr(lhs);
@@ -1210,6 +1225,10 @@ impl<'a> InferCtx<'a> {
             ExprData::Block(stmt) => self.block_ty(stmt),
             ExprData::Lambda { params, body } => self.infer_lambda(&params, body),
             ExprData::CallableReference { receiver, name } => {
+                let kind = receiver
+                    .as_ref()
+                    .map(|&receiver| self.receiver_kind(receiver))
+                    .unwrap_or(method::ReceiverKind::Value);
                 let receiver_ty = match receiver {
                     Some(receiver) => self.infer_expr(receiver),
                     // A top-level callable reference (`::helper`): the name is
@@ -1230,7 +1249,7 @@ impl<'a> InferCtx<'a> {
                 if name.as_str() == "class" {
                     return self.class_of(receiver_ty);
                 }
-                self.member_ty(expr, &receiver_ty, &name)
+                self.member_ty(expr, &receiver_ty, &name, kind)
             }
             ExprData::ClassLit(ty) => {
                 // `Foo::class` — the class reference of the classifier it names
@@ -2173,11 +2192,40 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The call site every member lookup is attributed to.
+    /// The call site every member lookup is attributed to — the receiver a
+    /// *value*, which is what a lookup without a written receiver stands on.
     fn site(&self) -> method::CallSite {
+        self.site_at(method::ReceiverKind::Value)
+    }
+
+    /// [`Self::site`] at a written receiver of `kind` ([`method::ReceiverKind`]):
+    /// a lookup whose receiver *is* a classifier (`N.stat()`,
+    /// `Integer.MAX_VALUE`) is not the lookup a value receiver makes.
+    fn site_at(&self, receiver: method::ReceiverKind) -> method::CallSite {
         method::CallSite {
             file: self.file,
             item: self.item,
+            receiver,
+        }
+    }
+
+    /// Whether a receiver *expression* names a classifier rather than a value —
+    /// `java.lang.System.currentTimeMillis()` is written on the class,
+    /// `sb.length` on a value. A local, parameter or lambda parameter of the
+    /// same simple name shadows the classifier ([KLS
+    /// `scopes-and-identifiers.html#scopes-and-identifiers`](https://kotlinlang.org/spec/scopes-and-identifiers.html#scopes-and-identifiers)),
+    /// so the name is checked against the body's own bindings first.
+    fn receiver_kind(&self, expr: ExprId) -> method::ReceiverKind {
+        let Some(path) = self.name_path(expr) else {
+            return method::ReceiverKind::Value;
+        };
+        let simple = Name::new(path.split('.').next().unwrap_or(path.as_str()));
+        if self.binding(&simple).is_some() {
+            return method::ReceiverKind::Value;
+        }
+        match self.resolver.class_fqn(&path) {
+            Some(_) => method::ReceiverKind::Classifier,
+            None => method::ReceiverKind::Value,
         }
     }
 
@@ -2187,7 +2235,9 @@ impl<'a> InferCtx<'a> {
     /// resolves on.
     fn safe_member_ty(&mut self, member: ExprId, receiver: &Ty, expected: Option<Ty>) -> Ty {
         let ty = match self.bodies.expr(member).clone() {
-            ExprData::FieldAccess { name, .. } => self.member_ty(member, receiver, &name),
+            ExprData::FieldAccess { name, .. } => {
+                self.member_ty(member, receiver, &name, method::ReceiverKind::Value)
+            }
             ExprData::MethodCall {
                 name,
                 type_args,
@@ -2221,8 +2271,15 @@ impl<'a> InferCtx<'a> {
                         let arg_tys: Vec<Ty> =
                             args.iter().map(|arg| self.infer_expr(*arg)).collect();
                         self.call_ty(
-                            member, receiver, &name, &arg_tys, &arg_names, trailing, &written,
+                            member,
+                            receiver,
+                            &name,
+                            &arg_tys,
+                            &arg_names,
+                            trailing,
+                            &written,
                             expected,
+                            method::ReceiverKind::Value,
                         )
                     }
                 }
@@ -2236,9 +2293,16 @@ impl<'a> InferCtx<'a> {
     /// The type of the member `name` on `receiver`: a property's type, the
     /// return type of a function the member set resolves, the field's type of a
     /// Java field — each in its *Kotlin* form, so a classfile member's type is
-    /// the platform type it denotes ([`method::Member::ty`]).
-    fn member_ty(&mut self, expr: ExprId, receiver: &Ty, name: &Name) -> Ty {
-        let members = method::member_set(self.db, &self.scope, receiver, name, self.site());
+    /// the platform type it denotes ([`method::Member::ty`]). `kind` is how the
+    /// receiver was written ([`Self::receiver_kind`]).
+    fn member_ty(
+        &mut self,
+        expr: ExprId,
+        receiver: &Ty,
+        name: &Name,
+        kind: method::ReceiverKind,
+    ) -> Ty {
+        let members = method::member_set(self.db, &self.scope, receiver, name, self.site_at(kind));
         match members.first() {
             Some(member) => {
                 let ty = member.ty(self.db);
@@ -2263,9 +2327,17 @@ impl<'a> InferCtx<'a> {
         trailing: Option<usize>,
         written: &[Ty],
         expected: Option<Ty>,
+        kind: method::ReceiverKind,
     ) -> Ty {
         let args = call_args(arg_tys, arg_names, trailing);
-        match method::pick_callable(self.db, &self.scope, receiver, name, &args, self.site()) {
+        match method::pick_callable(
+            self.db,
+            &self.scope,
+            receiver,
+            name,
+            &args,
+            self.site_at(kind),
+        ) {
             Some(member) => {
                 let ty =
                     member.call_ty_with(self.db, &self.scope, arg_tys, written, expected.as_ref());
@@ -2310,7 +2382,7 @@ impl<'a> InferCtx<'a> {
                 &self.scope,
                 &class,
                 name,
-                self.site(),
+                self.site_at(method::ReceiverKind::Classifier),
             ));
         }
         candidates.extend(method::top_level_candidates(
@@ -2498,6 +2570,7 @@ impl<'a> InferCtx<'a> {
         let call_args = call_args(&arg_types, arg_names, trailing);
         let candidate = match receiver {
             CallReceiver::Expr(receiver) => {
+                let kind = self.receiver_kind(*receiver);
                 let receiver_ty = self.infer_expr(*receiver);
                 method::pick_callable(
                     self.db,
@@ -2505,7 +2578,7 @@ impl<'a> InferCtx<'a> {
                     &receiver_ty,
                     name,
                     &call_args,
-                    self.site(),
+                    self.site_at(kind),
                 )
             }
             CallReceiver::Type(receiver_ty) => method::pick_callable(
@@ -2565,7 +2638,7 @@ impl<'a> InferCtx<'a> {
                             &class,
                             name,
                             &call_args,
-                            self.site(),
+                            self.site_at(method::ReceiverKind::Classifier),
                         )
                     })
                     .or_else(|| {
@@ -2818,7 +2891,16 @@ impl<'a> InferCtx<'a> {
         expected: Option<Ty>,
     ) -> Ty {
         let args = call_args(arg_tys, arg_names, trailing);
-        match method::pick_callable(self.db, &self.scope, class, name, &args, self.site()) {
+        // The receiver is the *classifier* itself: Kotlin's constructors are
+        // reached through the class name (`Foo(1)`), never through a value.
+        match method::pick_callable(
+            self.db,
+            &self.scope,
+            class,
+            name,
+            &args,
+            self.site_at(method::ReceiverKind::Classifier),
+        ) {
             Some(member) => {
                 self.record_member(expr, &member);
                 // The constructed class takes the type arguments the call

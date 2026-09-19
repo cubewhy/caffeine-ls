@@ -755,6 +755,10 @@ pub(crate) fn mode_allows(method: &MethodData, ctx: &InvocationContext) -> bool 
         InvocationMode::TypeQualified => true,
         // Super and interface invocations select only instance members.
         InvocationMode::Super | InvocationMode::Interface => !method.is_static,
+        // A language that reaches no static member through a receiver
+        // expression: only the instance members are candidates, own statics
+        // included ([`InvocationMode::InstanceReceiver`]).
+        InvocationMode::InstanceReceiver => !method.is_static,
         // §15.12.3 MethodName form: the member set is the virtual one plus the
         // static interface methods the searched type itself declares. The
         // static-interface-owner rule (declared-in-receiver-only, never
