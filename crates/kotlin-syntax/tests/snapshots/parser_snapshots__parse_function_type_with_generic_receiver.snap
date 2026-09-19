@@ -1,0 +1,74 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+val fill: List<Int>.() -> Unit = {}
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "fill"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "Int"
+GREATER ">"
+DOT "."
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "Unit"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..36
+  IMPORT_LIST@0..0
+  PROPERTY_DECL@0..36
+    VAL_KW@0..3 "val"
+    WHITESPACE@3..4 " "
+    VARIABLE_DECLARATION@4..30
+      IDENTIFIER@4..8 "fill"
+      COLON@8..9 ":"
+      WHITESPACE@9..10 " "
+      TYPE@10..30
+        FUNCTION_TYPE@10..30
+          RECEIVER_TYPE@10..20
+            USER_TYPE@10..19
+              IDENTIFIER@10..14 "List"
+              TYPE_ARGUMENTS@14..19
+                LESS@14..15 "<"
+                TYPE_PROJECTION@15..18
+                  TYPE@15..18
+                    USER_TYPE@15..18
+                      IDENTIFIER@15..18 "Int"
+                GREATER@18..19 ">"
+            DOT@19..20 "."
+          VALUE_PARAMETERS@20..22
+            L_PAREN@20..21 "("
+            R_PAREN@21..22 ")"
+          WHITESPACE@22..23 " "
+          ARROW@23..25 "->"
+          WHITESPACE@25..26 " "
+          TYPE@26..30
+            USER_TYPE@26..30
+              IDENTIFIER@26..30 "Unit"
+    WHITESPACE@30..31 " "
+    EQUAL@31..32 "="
+    WHITESPACE@32..33 " "
+    LAMBDA_LITERAL@33..35
+      L_BRACE@33..34 "{"
+      R_BRACE@34..35 "}"
+    NEWLINE@35..36 "\n"

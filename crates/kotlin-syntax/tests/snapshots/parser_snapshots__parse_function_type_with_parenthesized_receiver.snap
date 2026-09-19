@@ -1,0 +1,82 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+val pair: (A).(B) -> C = { c }
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "pair"
+COLON ":"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "A"
+R_PAREN ")"
+DOT "."
+L_PAREN "("
+IDENTIFIER "B"
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "C"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+IDENTIFIER "c"
+WHITESPACE " "
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..31
+  IMPORT_LIST@0..0
+  PROPERTY_DECL@0..31
+    VAL_KW@0..3 "val"
+    WHITESPACE@3..4 " "
+    VARIABLE_DECLARATION@4..22
+      IDENTIFIER@4..8 "pair"
+      COLON@8..9 ":"
+      WHITESPACE@9..10 " "
+      TYPE@10..22
+        FUNCTION_TYPE@10..22
+          RECEIVER_TYPE@10..14
+            PARENTHESIZED_TYPE@10..13
+              L_PAREN@10..11 "("
+              TYPE@11..12
+                USER_TYPE@11..12
+                  IDENTIFIER@11..12 "A"
+              R_PAREN@12..13 ")"
+            DOT@13..14 "."
+          VALUE_PARAMETERS@14..17
+            L_PAREN@14..15 "("
+            TYPE@15..16
+              USER_TYPE@15..16
+                IDENTIFIER@15..16 "B"
+            R_PAREN@16..17 ")"
+          WHITESPACE@17..18 " "
+          ARROW@18..20 "->"
+          WHITESPACE@20..21 " "
+          TYPE@21..22
+            USER_TYPE@21..22
+              IDENTIFIER@21..22 "C"
+    WHITESPACE@22..23 " "
+    EQUAL@23..24 "="
+    WHITESPACE@24..25 " "
+    LAMBDA_LITERAL@25..30
+      L_BRACE@25..26 "{"
+      WHITESPACE@26..27 " "
+      EXPRESSION_STATEMENT@27..28
+        PRIMARY_EXPRESSION@27..28
+          IDENTIFIER@27..28 "c"
+      WHITESPACE@28..29 " "
+      R_BRACE@29..30 "}"
+    NEWLINE@30..31 "\n"

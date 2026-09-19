@@ -1,0 +1,142 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+val second = fun List<Int>.(i: Int): Int = i
+
+val plain = fun (i: Int): Int = i
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "second"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "Int"
+GREATER ">"
+DOT "."
+L_PAREN "("
+IDENTIFIER "i"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "i"
+NEWLINE "\n\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "plain"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FUN_KW "fun"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "i"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "i"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..80
+  IMPORT_LIST@0..0
+  PROPERTY_DECL@0..46
+    VAL_KW@0..3 "val"
+    WHITESPACE@3..4 " "
+    VARIABLE_DECLARATION@4..10
+      IDENTIFIER@4..10 "second"
+    WHITESPACE@10..11 " "
+    EQUAL@11..12 "="
+    WHITESPACE@12..13 " "
+    ANONYMOUS_FUNCTION@13..44
+      FUN_KW@13..16 "fun"
+      WHITESPACE@16..17 " "
+      RECEIVER_TYPE@17..27
+        USER_TYPE@17..26
+          IDENTIFIER@17..21 "List"
+          TYPE_ARGUMENTS@21..26
+            LESS@21..22 "<"
+            TYPE_PROJECTION@22..25
+              TYPE@22..25
+                USER_TYPE@22..25
+                  IDENTIFIER@22..25 "Int"
+            GREATER@25..26 ">"
+        DOT@26..27 "."
+      VALUE_PARAMETERS@27..35
+        L_PAREN@27..28 "("
+        VALUE_PARAMETER@28..34
+          IDENTIFIER@28..29 "i"
+          COLON@29..30 ":"
+          WHITESPACE@30..31 " "
+          TYPE@31..34
+            USER_TYPE@31..34
+              IDENTIFIER@31..34 "Int"
+        R_PAREN@34..35 ")"
+      COLON@35..36 ":"
+      WHITESPACE@36..37 " "
+      TYPE@37..40
+        USER_TYPE@37..40
+          IDENTIFIER@37..40 "Int"
+      WHITESPACE@40..41 " "
+      EQUAL@41..42 "="
+      WHITESPACE@42..43 " "
+      PRIMARY_EXPRESSION@43..44
+        IDENTIFIER@43..44 "i"
+    NEWLINE@44..46 "\n\n"
+  PROPERTY_DECL@46..80
+    VAL_KW@46..49 "val"
+    WHITESPACE@49..50 " "
+    VARIABLE_DECLARATION@50..55
+      IDENTIFIER@50..55 "plain"
+    WHITESPACE@55..56 " "
+    EQUAL@56..57 "="
+    WHITESPACE@57..58 " "
+    ANONYMOUS_FUNCTION@58..79
+      FUN_KW@58..61 "fun"
+      WHITESPACE@61..62 " "
+      VALUE_PARAMETERS@62..70
+        L_PAREN@62..63 "("
+        VALUE_PARAMETER@63..69
+          IDENTIFIER@63..64 "i"
+          COLON@64..65 ":"
+          WHITESPACE@65..66 " "
+          TYPE@66..69
+            USER_TYPE@66..69
+              IDENTIFIER@66..69 "Int"
+        R_PAREN@69..70 ")"
+      COLON@70..71 ":"
+      WHITESPACE@71..72 " "
+      TYPE@72..75
+        USER_TYPE@72..75
+          IDENTIFIER@72..75 "Int"
+      WHITESPACE@75..76 " "
+      EQUAL@76..77 "="
+      WHITESPACE@77..78 " "
+      PRIMARY_EXPRESSION@78..79
+        IDENTIFIER@78..79 "i"
+    NEWLINE@79..80 "\n"

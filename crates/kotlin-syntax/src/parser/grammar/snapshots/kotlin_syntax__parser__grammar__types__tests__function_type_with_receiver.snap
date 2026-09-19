@@ -5,6 +5,7 @@ expression: out
 StartNode(TYPE)
 StartNode(FUNCTION_TYPE)
 StartNode(RECEIVER_TYPE)
+Tombstone
 StartNode(USER_TYPE)
 AddToken
 FinishNode

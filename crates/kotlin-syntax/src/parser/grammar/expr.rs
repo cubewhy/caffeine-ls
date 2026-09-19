@@ -1115,8 +1115,9 @@ fn object_literal(p: &mut Parser) {
     m.complete(p, OBJECT_LITERAL);
 }
 
-/// `anonymousFunction`: ['suspend'] 'fun' [receiverType '.'] parameters
-///                      [':' type] [functionBody]
+/// `anonymousFunction`: ['suspend'] {NL} 'fun' [{NL} type {NL} '.'] {NL}
+///                      parametersWithOptionalType [{NL} ':' {NL} type]
+///                      [{NL} typeConstraints] [{NL} functionBody]
 /// [spec: grammar-rule-anonymousFunction] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-anonymousFunction
 fn anonymous_function(p: &mut Parser) {
     let m = p.start();
@@ -1127,12 +1128,13 @@ fn anonymous_function(p: &mut Parser) {
     p.expect(FUN_KW);
     eat_nl(p);
 
-    // Optional receiver type followed by `.` (rare in anonymous functions):
-    // `fun String.(x: Int): Unit {}`.
-    if p.at(IDENTIFIER) && p.nth(1) == Some(DOT) && p.nth(2) == Some(L_PAREN) {
-        crate::parser::grammar::types::user_type(p);
-        eat_nl(p);
-        p.expect(DOT);
+    // Optional receiver followed by `.` — `fun String.(x: Int): Unit {}`. The
+    // rule writes it as a `type`, and the *receiver* form is the one that has
+    // the separating dot, so the lookahead that decides it is the same one a
+    // function type uses ([spec: grammar-rule-receiverType]); the parse
+    // consumes the separator itself, whatever token spelled it.
+    if crate::parser::grammar::types::at_receiver_type(p) {
+        crate::parser::grammar::types::receiver_type(p);
         eat_nl(p);
     }
 
@@ -1143,6 +1145,13 @@ fn anonymous_function(p: &mut Parser) {
         p.bump();
         eat_nl(p);
         type_(p);
+        eat_nl(p);
+    }
+
+    // `[{NL} typeConstraints]` — the `where` clause the rule allows on an
+    // anonymous function, in the same shape a named declaration writes it.
+    if p.at_contextual_kw(ContextualKeyword::Where) {
+        crate::parser::grammar::decl::type_constraints(p);
         eat_nl(p);
     }
 

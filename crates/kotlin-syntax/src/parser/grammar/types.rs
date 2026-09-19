@@ -2,6 +2,7 @@ use crate::{
     ContextualKeyword, Parser, SyntaxKind,
     SyntaxKind::*,
     grammar::{annotations::annotation, eat_nl, names::simple_identifier},
+    parser::marker::Marker,
 };
 
 /// `type`: [typeModifiers] (functionType | parenthesizedType | nullableType
@@ -159,58 +160,128 @@ fn type_projection_modifiers(p: &mut Parser) {
     }
 }
 
-/// Whether the current token starts a `functionType` (with or without a
-/// receiver). Uses pure lookahead so a parenthesized / nullable / user type
-/// is never mistaken for a function type.
+/// Whether the current token starts a `functionType`
+/// ([spec: grammar-rule-functionType]): either a receiver followed by the
+/// parameter list, or a parameter list followed by `->`. Pure lookahead, so a
+/// parenthesized, nullable or user type is never mistaken for a function type.
 fn at_function_type(p: &Parser) -> bool {
-    // `( … )` followed by `->`
-    if p.at(L_PAREN) {
-        return scan_closing_paren_then(p, 0, |after, after2| {
-            after == Some(ARROW) || (after == Some(NEWLINE) && after2 == Some(ARROW))
+    if at_receiver_type(p) {
+        return true;
+    }
+    // `functionTypeParameters {NL} '->' {NL} type` — the receiver-less form,
+    // whose parameter list is the parenthesized type the `type` alternative
+    // would otherwise claim.
+    let start = skip_type_modifiers(p, 0);
+    p.nth(start) == Some(L_PAREN) && scan_closing_paren_then(p, start, at_arrow)
+}
+
+/// Whether the current tokens are a `receiverType` followed by `{NL} '.'` —
+/// the optional prefix of a `functionType` ([spec: grammar-rule-functionType]).
+///
+/// The three forms `receiverType` allows are all covered
+/// ([spec: grammar-rule-receiverType]):
+/// `[typeModifiers] (parenthesizedType | nullableType | typeReference)`.
+/// `at_function_type` shares this, so the receiver's presence is decided
+/// exactly once and the two callers cannot disagree.
+pub(crate) fn at_receiver_type(p: &Parser) -> bool {
+    let start = skip_type_modifiers(p, 0);
+    if p.nth(start) == Some(L_PAREN) {
+        // `(A).(B) -> C`: the parenthesized *receiver* (the parameter list of
+        // a receiver-less function type is followed by `->` instead). A
+        // nullable parenthesized receiver — `(A)?.(B) -> C` — writes its
+        // quests between the parens and the dot.
+        return scan_closing_paren_then(p, start, |p, after| {
+            let mut i = skip_nl(p, after);
+            while p.nth(i) == Some(QUESTION) {
+                i = skip_nl(p, i + 1);
+            }
+            at_receiver_separator(p, i)
         });
     }
+    scan_type_reference(p, start).is_some_and(|after| at_receiver_separator(p, after))
+}
 
-    // receiver form `T. ( … ) -> R` or `T.( … ) -> R`
-    if p.at(IDENTIFIER) {
-        // walk `simpleIdentifier` (possibly qualified), then require `. (`.
-        let mut i = 0;
-        loop {
-            match nth_nl(p, i) {
-                Some(IDENTIFIER) => {
-                    if matches!(nth_nl(p, i + 1), Some(DOT))
-                        && matches!(nth_nl(p, i + 2), Some(L_PAREN))
-                    {
-                        return scan_closing_paren_then(p, i + 2, |after, after2| {
-                            after == Some(ARROW)
-                                || (after == Some(NEWLINE) && after2 == Some(ARROW))
-                        });
-                    }
-                    i += 1;
-                }
-                Some(DOT) => i += 1,
-                _ => return false,
-            }
+/// The index of the first token after any `typeModifiers`
+/// ([spec: grammar-rule-typeModifiers]: `annotation | ('suspend' {NL})`).
+fn skip_type_modifiers(p: &Parser, start: usize) -> usize {
+    let mut i = start;
+    loop {
+        if p.nth(i) == Some(AT) {
+            i = super::decl::skip_annotation(p, i);
+        } else if p.nth_at_contextual_kw(i, ContextualKeyword::Suspend) {
+            i = skip_nl(p, i + 1);
+        } else {
+            return i;
         }
     }
-
-    false
 }
 
 /// `p.nth(i)` skipping NEWLINE tokens.
 fn nth_nl(p: &Parser, i: usize) -> Option<SyntaxKind> {
-    let mut j = i;
-    while p.nth(j) == Some(NEWLINE) {
-        j += 1;
-    }
-    p.nth(j)
+    p.nth(skip_nl(p, i))
 }
 
-/// Scan forward from `start` skipping newlines until a balanced `)` is found,
-/// then test `fn(after, after2)` against the following tokens.
+/// The index of the first token at or after `i` that is not a newline.
+fn skip_nl(p: &Parser, mut i: usize) -> usize {
+    while p.nth(i) == Some(NEWLINE) {
+        i += 1;
+    }
+    i
+}
+
+/// `{NL} '->'` — the arrow that follows a `functionType`'s parameter list.
+fn at_arrow(p: &Parser, at: usize) -> bool {
+    p.nth(skip_nl(p, at)) == Some(ARROW)
+}
+
+/// Scan a `typeReference` textually and return the index just past it, or
+/// `None` when the tokens do not spell one.
+///
+/// `typeReference: userType | 'dynamic'` and
+/// `userType: simpleUserType {{NL} '.' {NL} simpleUserType}` with
+/// `simpleUserType: simpleIdentifier [{NL} typeArguments]`
+/// ([spec: grammar-rule-typeReference]); `typeArguments`' angle brackets are
+/// balanced, so a nested `List<Map<K, V>>` scans as one type. A trailing `?`
+/// set is consumed too, since `nullableType` is one of the forms a receiver
+/// may take ([spec: grammar-rule-nullableType]).
+fn scan_type_reference(p: &Parser, start: usize) -> Option<usize> {
+    let mut i = skip_nl(p, start);
+    if p.nth_at_contextual_kw(i, ContextualKeyword::Dynamic) {
+        i = skip_nl(p, i + 1);
+    } else {
+        loop {
+            if p.nth(i) != Some(IDENTIFIER) {
+                return None;
+            }
+            i = skip_nl(p, i + 1);
+            if p.nth(i) == Some(LESS) {
+                let after = super::decl::skip_balanced(p, i, LESS, GREATER);
+                if after == i {
+                    return None; // unbalanced `<`
+                }
+                i = skip_nl(p, after);
+            }
+            // A `.` continues the qualification only when a `simpleUserType`
+            // follows it — otherwise it is the receiver's own separator.
+            if p.nth(i) == Some(DOT) && nth_nl(p, i + 1) == Some(IDENTIFIER) {
+                i = skip_nl(p, i + 1);
+                continue;
+            }
+            break;
+        }
+    }
+    while p.nth(skip_nl(p, i)) == Some(QUESTION) {
+        i = skip_nl(p, i) + 1;
+    }
+    Some(i)
+}
+
+/// Scan forward from `start` until a balanced `)` is found, then test
+/// `test(p, after)` with `after` the index just past that `)`.
 fn scan_closing_paren_then(
     p: &Parser,
     start: usize,
-    test: impl Fn(Option<SyntaxKind>, Option<SyntaxKind>) -> bool,
+    test: impl Fn(&Parser, usize) -> bool,
 ) -> bool {
     let mut depth = 0;
     let mut i = start;
@@ -220,7 +291,7 @@ fn scan_closing_paren_then(
             Some(R_PAREN) => {
                 depth -= 1;
                 if depth == 0 {
-                    return test(p.nth(i + 1), p.nth(i + 2));
+                    return test(p, i + 1);
                 }
             }
             Some(EOF) | None => return false,
@@ -230,23 +301,102 @@ fn scan_closing_paren_then(
     }
 }
 
+/// Which token spelled the `{NL} '.'` that ends a `functionType`'s receiver
+/// ([spec: grammar-rule-functionType]: `[receiverType {NL} '.' {NL}]`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReceiverSeparator {
+    /// A `.` token of its own, after the receiver's type.
+    Dot,
+    /// A single `SAFE_ACCESS` token. The lexer writes an adjacent `?` and `.`
+    /// as one token — KLS's `safeNav: QUEST_NO_WS '.'` ([spec:
+    /// grammar-rule-safeNav]) lexed as a unit — so on a nullable receiver the
+    /// token carries both the trailing quest *and* the separator, and no `.`
+    /// is left to consume.
+    SafeAccess,
+}
+
+/// `receiverType`: [typeModifiers] (parenthesizedType | nullableType | typeReference)
+/// [spec: grammar-rule-receiverType] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-receiverType
+///
+/// Consumes the separating `{NL} '.'` as well and reports which token spelled
+/// it ([`ReceiverSeparator`]), so the caller knows whether a `.` still
+/// follows.
+///
+/// The node holds the receiver's type *alone*: one inner type node, which is
+/// what `lower_function_type` reads as the function's first parameter and as
+/// the `this` of the function's body. A declaration's receiver
+/// (`fun T.name()`) is a different `RECEIVER_TYPE` shape — see
+/// `decl::parse_receiver_type` — because its node also has to spell out where
+/// the declaration's name begins.
+pub(crate) fn receiver_type(p: &mut Parser) -> ReceiverSeparator {
+    let m = p.start();
+    type_modifiers(p);
+    eat_nl(p);
+
+    let separator = if p.at(L_PAREN) {
+        // `parenthesizedType`, and the `nullableType` that may wrap it:
+        // `(A).(B) -> C` and `(A)?.(B) -> C`.
+        let wrapper = p.start();
+        let inner = p.start();
+        parenthesized_type(p);
+        inner.complete(p, PARENTHESIZED_TYPE);
+        eat_nl(p);
+        finish_receiver_type(p, wrapper)
+    } else {
+        // `typeReference`, and the `nullableType` that may wrap it.
+        let wrapper = p.start();
+        type_reference(p);
+        eat_nl(p);
+        finish_receiver_type(p, wrapper)
+    };
+
+    m.complete(p, RECEIVER_TYPE);
+    separator
+}
+
+/// Ends a receiver's type: the `{NL} (quest {quest})` of a `nullableType`
+/// ([spec: grammar-rule-nullableType]) and the separating `{NL} '.'`
+/// ([spec: grammar-rule-functionType]).
+///
+/// `wrapper` is the marker opened before the inner type node, so the
+/// `NULLABLE_TYPE` it completes — or abandons — spans that node.
+fn finish_receiver_type(p: &mut Parser, wrapper: Marker) -> ReceiverSeparator {
+    if p.at(QUESTION) {
+        nullable_quests(p);
+        eat_nl(p);
+        wrapper.complete(p, NULLABLE_TYPE);
+    } else if p.at(SAFE_ACCESS) {
+        // The merged quest and dot ([`ReceiverSeparator::SafeAccess`]).
+        p.bump();
+        wrapper.complete(p, NULLABLE_TYPE);
+        return ReceiverSeparator::SafeAccess;
+    } else {
+        wrapper.abandon(p);
+    }
+    p.expect(DOT);
+    ReceiverSeparator::Dot
+}
+
+/// Whether the tokens at `at` are the separating `{NL} '.'` of a
+/// `functionType` receiver followed by the parameter list's `(`
+/// ([spec: grammar-rule-functionType]: `[receiverType {NL} '.' {NL}]`).
+fn at_receiver_separator(p: &Parser, at: usize) -> bool {
+    let i = skip_nl(p, at);
+    match p.nth(i) {
+        Some(DOT | SAFE_ACCESS) => p.nth(skip_nl(p, i + 1)) == Some(L_PAREN),
+        _ => false,
+    }
+}
+
 /// `functionType`: [receiverType {NL} '.' {NL}] functionTypeParameters
 ///                 {NL} '->' {NL} type
 /// [spec: grammar-rule-functionType] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionType
 fn function_type(p: &mut Parser) {
     let m = p.start();
 
-    // Optional receiver: an identifier list followed by `.` and `(`.
-    if p.at(IDENTIFIER)
-        && matches!(nth_nl(p, 1), Some(DOT))
-        && matches!(nth_nl(p, 2), Some(L_PAREN))
-    {
-        let r = p.start();
-        type_reference(p);
+    if at_receiver_type(p) {
+        receiver_type(p);
         eat_nl(p);
-        p.expect(DOT);
-        eat_nl(p);
-        r.complete(p, RECEIVER_TYPE);
     }
 
     function_type_parameters(p);
@@ -284,6 +434,12 @@ fn function_type_parameters(p: &mut Parser) {
                 break;
             }
             eat_nl(p);
+            // `[{NL} ',']` — the trailing comma the rule allows, as every other
+            // list in this grammar parses it ([spec:
+            // grammar-rule-typeArguments]).
+            if p.at(R_PAREN) {
+                break;
+            }
         }
     }
 

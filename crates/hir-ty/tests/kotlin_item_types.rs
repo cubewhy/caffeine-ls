@@ -990,6 +990,52 @@ mod interop_types {
         assert_eq!(hir_ty::display_kotlin(&db, n).to_string(), "String");
     }
 
+    /// A function type's receiver is its *first* type argument: the receiver is
+    /// the `this` of the function's body, so it takes the position of the first
+    /// parameter in `FunctionN<P1, …, PN, R>`
+    /// (<https://kotlinlang.org/docs/lambdas.html#function-types>), and `N` is
+    /// the number of *parameters*. `List<Int>.() -> Unit` is therefore
+    /// `Function1<List<Int>, Unit>` and `Map<String, Int>.(String) -> Int` is
+    /// `Function2<Map<String, Int>, String, Int>`; kotlinc 2.4.20 accepts both
+    /// declarations.
+    #[test]
+    fn a_function_types_receiver_is_its_first_type_argument() {
+        let source = r#"
+val fill: List<Int>.() -> Unit = {}
+
+val look: Map<String, Int>.(String) -> Int = { 0 }
+"#;
+        let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+
+        let fill = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "fill"));
+        let TyKind::Reference { name, args, .. } = fill.kind(&db) else {
+            panic!("a function type is a reference type");
+        };
+        assert_eq!(name.to_string(), "kotlin.Function1");
+        assert_eq!(
+            hir_ty::display_kotlin(&db, args[0]).to_string(),
+            "List<Int>",
+            "the receiver is the first argument"
+        );
+        assert_eq!(hir_ty::display_kotlin(&db, args[1]).to_string(), "Unit");
+
+        let look = hir_ty::kotlin_item_ty(&db, file, item_named(&db, file, "look"));
+        let TyKind::Reference { name, args, .. } = look.kind(&db) else {
+            panic!("a function type is a reference type");
+        };
+        assert_eq!(
+            name.to_string(),
+            "kotlin.Function2",
+            "`N` counts the parameters, not the receiver"
+        );
+        assert_eq!(
+            hir_ty::display_kotlin(&db, args[0]).to_string(),
+            "Map<String, Int>"
+        );
+        assert_eq!(hir_ty::display_kotlin(&db, args[1]).to_string(), "String");
+        assert_eq!(hir_ty::display_kotlin(&db, args[2]).to_string(), "Int");
+    }
+
     /// A type parameter is not a classifier and takes no type arguments ([KLS
     /// `type-system.html#classifier-types`](https://kotlinlang.org/spec/type-system.html#classifier-types)):
     /// `type arguments are not allowed for type parameters.` (kotlinc 2.4.20),

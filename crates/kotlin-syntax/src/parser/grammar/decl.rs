@@ -167,7 +167,15 @@ fn at_primary_constructor(p: &Parser) -> bool {
 /// `.` ([spec: grammar-rule-functionDeclaration] / [spec: grammar-rule-propertyDeclaration]),
 /// so the receiver parse must never "eat" the final `.`/name pair: e.g.
 /// `String.toURI` splits into receiver `String` + name `toURI`, not into a
-/// qualified type `String.toURI`.
+/// qualified type `String.toURI`. That split is what makes this parse differ
+/// from a *function type*'s receiver (`types::receiver_type`), which has no
+/// name to leave behind: this node carries the receiver's segments — the
+/// identifiers, their `typeArguments` and a trailing `?` — as its own children,
+/// while a function type's node carries one inner *type* node (a
+/// `PARENTHESIZED_TYPE`, `NULLABLE_TYPE` or `USER_TYPE`). The two shapes are
+/// deliberately distinct, and the lowering reads each in its own caller
+/// (`lower_type_node`'s `RECEIVER_TYPE` arm for this one, `lower_function_type`
+/// for the other).
 fn parse_receiver_type(p: &mut Parser) -> bool {
     if !p.at(IDENTIFIER) {
         return false;
@@ -288,7 +296,7 @@ fn nth_is_modifier(p: &Parser, i: usize) -> bool {
 /// Skips a balanced `@Name`, `@Name(...)`, `@Name[...]` or `@target:Name`
 /// annotation starting at index `i` (pointing at `@`); returns the index
 /// after it.
-fn skip_annotation(p: &Parser, mut i: usize) -> usize {
+pub(crate) fn skip_annotation(p: &Parser, mut i: usize) -> usize {
     i += 1; // @
     if p.nth(i) == Some(IDENTIFIER) {
         i += 1;
@@ -311,7 +319,15 @@ fn skip_annotation(p: &Parser, mut i: usize) -> usize {
     }
 }
 
-fn skip_balanced(p: &Parser, mut i: usize, open: SyntaxKind, close: SyntaxKind) -> usize {
+/// Skips a balanced `open`…`close` run starting at index `i`, returning the
+/// index just past the matching `close` — or `i` itself when the tokens are
+/// unbalanced (the caller's "not a balanced run" answer).
+pub(crate) fn skip_balanced(
+    p: &Parser,
+    mut i: usize,
+    open: SyntaxKind,
+    close: SyntaxKind,
+) -> usize {
     let mut depth = 0;
     loop {
         match p.nth(i) {

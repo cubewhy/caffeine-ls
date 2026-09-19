@@ -1,0 +1,65 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+val render: T?.() -> Unit = {}
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "render"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "T"
+SAFE_ACCESS "?."
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "Unit"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..31
+  IMPORT_LIST@0..0
+  PROPERTY_DECL@0..31
+    VAL_KW@0..3 "val"
+    WHITESPACE@3..4 " "
+    VARIABLE_DECLARATION@4..25
+      IDENTIFIER@4..10 "render"
+      COLON@10..11 ":"
+      WHITESPACE@11..12 " "
+      TYPE@12..25
+        FUNCTION_TYPE@12..25
+          RECEIVER_TYPE@12..15
+            NULLABLE_TYPE@12..15
+              USER_TYPE@12..13
+                IDENTIFIER@12..13 "T"
+              SAFE_ACCESS@13..15 "?."
+          VALUE_PARAMETERS@15..17
+            L_PAREN@15..16 "("
+            R_PAREN@16..17 ")"
+          WHITESPACE@17..18 " "
+          ARROW@18..20 "->"
+          WHITESPACE@20..21 " "
+          TYPE@21..25
+            USER_TYPE@21..25
+              IDENTIFIER@21..25 "Unit"
+    WHITESPACE@25..26 " "
+    EQUAL@26..27 "="
+    WHITESPACE@27..28 " "
+    LAMBDA_LITERAL@28..30
+      L_BRACE@28..29 "{"
+      R_BRACE@29..30 "}"
+    NEWLINE@30..31 "\n"

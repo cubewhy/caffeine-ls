@@ -1,0 +1,93 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+val both: (Int, String,) -> Boolean = { _, _ -> true }
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "both"
+COLON ":"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "Int"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "String"
+COMMA ","
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "Boolean"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+UNDERSCORE "_"
+COMMA ","
+WHITESPACE " "
+UNDERSCORE "_"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+TRUE_KW "true"
+WHITESPACE " "
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..55
+  IMPORT_LIST@0..0
+  PROPERTY_DECL@0..40
+    VAL_KW@0..3 "val"
+    WHITESPACE@3..4 " "
+    VARIABLE_DECLARATION@4..35
+      IDENTIFIER@4..8 "both"
+      COLON@8..9 ":"
+      WHITESPACE@9..10 " "
+      TYPE@10..35
+        FUNCTION_TYPE@10..35
+          VALUE_PARAMETERS@10..24
+            L_PAREN@10..11 "("
+            TYPE@11..14
+              USER_TYPE@11..14
+                IDENTIFIER@11..14 "Int"
+            COMMA@14..15 ","
+            WHITESPACE@15..16 " "
+            TYPE@16..22
+              USER_TYPE@16..22
+                IDENTIFIER@16..22 "String"
+            COMMA@22..23 ","
+            R_PAREN@23..24 ")"
+          WHITESPACE@24..25 " "
+          ARROW@25..27 "->"
+          WHITESPACE@27..28 " "
+          TYPE@28..35
+            USER_TYPE@28..35
+              IDENTIFIER@28..35 "Boolean"
+    WHITESPACE@35..36 " "
+    EQUAL@36..37 "="
+    WHITESPACE@37..38 " "
+    LAMBDA_LITERAL@38..40
+      L_BRACE@38..39 "{"
+      WHITESPACE@39..40 " "
+      MISSING@40..40
+  UNDERSCORE@40..41 "_"
+  COMMA@41..42 ","
+  WHITESPACE@42..43 " "
+  UNDERSCORE@43..44 "_"
+  WHITESPACE@44..45 " "
+  ARROW@45..47 "->"
+  WHITESPACE@47..48 " "
+  TRUE_KW@48..52 "true"
+  WHITESPACE@52..53 " "
+  R_BRACE@53..54 "}"
+  NEWLINE@54..55 "\n"

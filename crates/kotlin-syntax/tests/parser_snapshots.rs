@@ -455,6 +455,60 @@ parser_snapshot!(
 );
 
 // ————————————————————————————————————————————————————————————————
+// Function types: every `receiverType` form the rule allows
+// ([spec: grammar-rule-receiverType], [spec: grammar-rule-functionType]),
+// the trailing comma of `functionTypeParameters` ([spec:
+// grammar-rule-functionTypeParameters]) and an anonymous function's own
+// receiver ([spec: grammar-rule-anonymousFunction]). Each fixture is valid
+// Kotlin, confirmed with `kotlinc 2.4.20` (the unresolved names are the
+// point of the fixture: the *shape* must parse).
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_function_type_with_nullable_receiver,
+    indoc! {r#"
+        val render: T?.() -> Unit = {}
+    "#}
+);
+
+parser_snapshot!(
+    parse_function_type_with_generic_receiver,
+    indoc! {r#"
+        val fill: List<Int>.() -> Unit = {}
+    "#}
+);
+
+parser_snapshot!(
+    parse_function_type_with_generic_receiver_and_parameter,
+    indoc! {r#"
+        val look: Map<K, V>.(K) -> V = { get(it)!! }
+    "#}
+);
+
+parser_snapshot!(
+    parse_function_type_with_parenthesized_receiver,
+    indoc! {r#"
+        val pair: (A).(B) -> C = { c }
+    "#}
+);
+
+parser_snapshot!(
+    parse_function_type_with_trailing_comma,
+    indoc! {r#"
+        val both: (Int, String,) -> Boolean = { _, _ -> true }
+    "#}
+);
+
+parser_snapshot!(
+    parse_anonymous_function_with_receiver,
+    indoc! {r#"
+        val second = fun List<Int>.(i: Int): Int = i
+
+        val plain = fun (i: Int): Int = i
+    "#}
+);
+
+// ————————————————————————————————————————————————————————————————
 // Class headers: `class C internal constructor(...)` and its plain
 // `class C constructor(...)` form ([spec: grammar-rule-primaryConstructor]).
 // ————————————————————————————————————————————————————————————————
