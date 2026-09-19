@@ -799,9 +799,7 @@ fn collect_extension_members(
     }
     // 2. The library's extensions: the classpath's facades carry them as static
     //    members whose first parameter is the receiver.
-    if std::env::var_os("CAFFEINE_KT_NO_LIBRARY_EXT").is_none() {
-        library_extension_members(db, scope, site.file, receiver, name, out);
-    }
+    library_extension_members(db, scope, site.file, receiver, name, out);
     // 3. The file's own top-level extensions.
     let resolver = resolver_of_site(db, site.file, tree, site.item);
     for &top in &tree.top {
