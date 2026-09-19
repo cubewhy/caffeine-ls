@@ -1,0 +1,29 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun cast(item: Any?): Any? {
+    val chained = item as String as? Int
+    return chained
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun cast(item: Any?): Any? @1..91
+
+BODIES:
+fun cast body b0:
+  param l0: item: Any?
+  s0: decl l1 = e2
+  s1: expr e4
+  local l0: item: Any?
+  local l1: chained
+  expr e0: var item 
+  expr e1: castString [e0]
+  expr e2: cast?Int [e1]
+  expr e3: var chained 
+  expr e4: jump Return [e3]

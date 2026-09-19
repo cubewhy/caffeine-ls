@@ -830,16 +830,46 @@ fn expr_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
         // is `null`, `1 as String?` throws `ClassCastException`), and the IR
         // records which one was written.
         K::AS_EXPRESSION => {
-            let (Some(value), Some(ty)) = (child_expression(node), cast_type(node)) else {
+            let Some(value) = child_expression(node) else {
                 return ExprData::Missing;
             };
+            // `asExpression: prefixUnaryExpression {{NL} asOperator {NL} type}`
+            // with `asOperator: 'as' | 'as?'`
+            // ([spec: grammar-rule-asExpression], [spec:
+            // grammar-rule-asOperator]): every operator applies to the
+            // expression built so far, so `x as A as? B` is a cast *of a cast*,
+            // not one cast of `x`. The operator is a single token — `as?` lexes
+            // as `AS_SAFE`, `as` as `AS_KW` — so the safety is read off that
+            // token rather than guessed from a `?` child.
+            let mut casts: Vec<(bool, SyntaxNode<Lang>)> = Vec::new();
+            let mut safe = false;
+            for element in node.children_with_tokens() {
+                match element {
+                    NodeOrToken::Token(token) if is_token(&token, K::AS_SAFE) => safe = true,
+                    NodeOrToken::Token(token) if is_token(&token, K::AS_KW) => safe = false,
+                    NodeOrToken::Node(ty) if is_type_node(ty.kind()) => casts.push((safe, ty)),
+                    _ => {}
+                }
+            }
+            // The node carries the *last* cast's data and every earlier one is
+            // an expression entry of its own, so the whole node allocates one
+            // entry rather than a duplicate (the shape `postfix` uses).
+            let Some(((safe, ty), inner_casts)) = casts.split_last() else {
+                return ExprData::Missing;
+            };
+            let mut operand = expr(ctx, owner, &value);
+            for (safe, ty) in inner_casts {
+                let data = ExprData::Cast {
+                    ty: spanned_type(ctx, ty),
+                    expr: operand,
+                    safe: *safe,
+                };
+                operand = alloc_expr(ctx, data, node.text_range());
+            }
             ExprData::Cast {
-                ty: spanned_type(ctx, &ty),
-                expr: expr(ctx, owner, &value),
-                safe: node
-                    .children_with_tokens()
-                    .filter_map(NodeOrToken::into_token)
-                    .any(|token| is_token(&token, K::QUESTION)),
+                ty: spanned_type(ctx, ty),
+                expr: operand,
+                safe: *safe,
             }
         }
         K::IS_EXPRESSION => {
@@ -942,7 +972,7 @@ fn primary(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
             Some(token) if is_token(&token, K::IDENTIFIER) => {
                 ExprData::Var(Name::new(token.text()))
             }
-            Some(token) => literal(ctx, &token),
+            Some(token) => literal(ctx, &token, false),
             None => ExprData::Missing,
         };
     };
@@ -968,7 +998,7 @@ fn primary(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
 /// pattern the compiler gives that value. The unsigned *type* the compiler
 /// gives such a literal is not modelled — a recorded deviation, since the
 /// model has no `kotlin.UInt` classifier to name.
-pub(super) fn literal(_ctx: &LowerCtx<'_>, token: &SyntaxToken<Lang>) -> ExprData {
+pub(super) fn literal(_ctx: &LowerCtx<'_>, token: &SyntaxToken<Lang>, raw: bool) -> ExprData {
     let text = token.text();
     match token.kind() {
         K::INTEGER_LITERAL => {
@@ -1039,13 +1069,13 @@ pub(super) fn literal(_ctx: &LowerCtx<'_>, token: &SyntaxToken<Lang>) -> ExprDat
                 .strip_prefix('\'')
                 .and_then(|rest| rest.strip_suffix('\''))
                 .unwrap_or(text);
-            match decode_string_content(content).chars().next() {
+            match decode_string_content(content, raw).chars().next() {
                 Some(value) => ExprData::Literal(Literal::Char(value)),
                 None => ExprData::Missing,
             }
         }
         K::STRING_LITERAL | K::STRING_CONTENT => {
-            ExprData::Literal(Literal::Str(decode_string_content(text)))
+            ExprData::Literal(Literal::Str(decode_string_content(text, raw)))
         }
         // `null` is not a literal of the IR's value kinds: it is its own form.
         K::NULL_KW => ExprData::Null,
@@ -1056,7 +1086,17 @@ pub(super) fn literal(_ctx: &LowerCtx<'_>, token: &SyntaxToken<Lang>) -> ExprDat
 /// The decoded value of a Kotlin string's content: the JVM escapes
 /// ([KLS `syntax-and-grammar.html`](https://kotlinlang.org/spec/syntax-and-grammar.html)
 /// gives the lexical grammar; Kotlin has no Unicode-escape pass, unlike Java).
-fn decode_string_content(text: &str) -> String {
+///
+/// A *raw* string's content is not decoded at all: `multiLineStringLiteral` has
+/// no escape production ([spec: grammar-rule-multiLineStringLiteral]), so
+/// `"""a\nb"""` is the four characters `a`, `\`, `n` and `b` — kotlinc 2.4.20
+/// reads it as a backslash followed by `n`, not a newline. The lexer already
+/// treats the two modes apart (it only emits an escape token outside a raw
+/// string), so the flag only has to stop the decoder here.
+fn decode_string_content(text: &str, raw: bool) -> String {
+    if raw {
+        return text.to_owned();
+    }
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
@@ -1094,20 +1134,35 @@ fn decode_string_content(text: &str) -> String {
     out
 }
 
+/// Whether a string node was written as a *raw* (multi-line) string: the
+/// parser opens those with `OPEN_RAW_QUOTE` ([spec:
+/// grammar-rule-multiLineStringLiteral]), so the token's presence is the mode.
+pub(super) fn raw_string(node: &SyntaxNode<Lang>) -> bool {
+    node.children_with_tokens()
+        .filter_map(NodeOrToken::into_token)
+        .any(|token| is_token(&token, K::OPEN_RAW_QUOTE))
+}
+
 /// A string literal: a plain literal, or a template over its interpolations
 /// ([KLS
 /// `expressions.html#string-interpolation-expressions`](https://kotlinlang.org/spec/expressions.html#string-interpolation-expressions)).
+///
+/// A raw string's literal text is kept verbatim, escapes included ([KLS
+/// `syntax-and-grammar.html`](https://kotlinlang.org/spec/syntax-and-grammar.html)
+/// has no escape production for `multiLineStringLiteral`); its interpolations
+/// are templates like any other string's.
 fn string_template(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
     let entries: Vec<SyntaxNode<Lang>> = node
         .children()
         .filter(|child| is(child, K::STRING_TEMPLATE))
         .collect();
     if entries.is_empty() {
+        let raw = raw_string(node);
         let text = node
             .children_with_tokens()
             .filter_map(NodeOrToken::into_token)
             .filter(|token| token.kind() == K::STRING_CONTENT)
-            .map(|token| decode_string_content(token.text()))
+            .map(|token| decode_string_content(token.text(), raw))
             .collect::<String>();
         return ExprData::Literal(Literal::Str(text));
     }
@@ -1471,7 +1526,8 @@ fn navigation(
     }
 }
 
-/// A prefix expression `!x`, `-x`, `+x`, `++x`, `--x`
+/// A prefix expression `!x`, `-x`, `+x`, `++x`, `--x`, or one prefixed by a
+/// label or an annotation
 /// ([KLS `expressions.html#prefix-expressions`](https://kotlinlang.org/spec/expressions.html#prefix-expressions)).
 fn prefix(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
     let Some(inner) = child_expression(node) else {
@@ -1487,27 +1543,38 @@ fn prefix(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Exp
             )
         })
         .map(|token| token.kind());
+    let Some(op) = op else {
+        // A prefix that is not one of the operators is an `annotation`
+        // (`@Ann 1`) or a `label` (`l@ 1`) (`unaryPrefix: annotation | label |
+        // (prefixUnaryOperator {NL})`, [spec: grammar-rule-unaryPrefix]), and
+        // neither carries a value: a label is a jump target and an annotation
+        // applied to an expression is not one of the IR's value forms. The node
+        // therefore denotes its operand, and carries the operand's own data
+        // rather than an entry of its own.
+        return expr_data(ctx, owner, &inner);
+    };
     let inner = expr(ctx, owner, &inner);
     match op {
-        Some(K::PLUS_PLUS) => ExprData::Unary {
+        K::PLUS_PLUS => ExprData::Unary {
             op: UnaryOp::Inc,
             expr: inner,
         },
-        Some(K::MINUS_MINUS) => ExprData::Unary {
+        K::MINUS_MINUS => ExprData::Unary {
             op: UnaryOp::Dec,
             expr: inner,
         },
         // `+x` is the identity on numbers; the IR has no unary plus.
-        Some(K::PLUS) => ExprData::Paren(inner),
-        Some(K::NOT) => ExprData::Unary {
+        K::PLUS => ExprData::Paren(inner),
+        K::NOT => ExprData::Unary {
             op: UnaryOp::Not,
             expr: inner,
         },
-        Some(K::MINUS) => ExprData::Unary {
+        // `-x` is the only remaining prefix operator ([spec:
+        // grammar-rule-prefixUnaryOperator]).
+        _ => ExprData::Unary {
             op: UnaryOp::Minus,
             expr: inner,
         },
-        _ => ExprData::Missing,
     }
 }
 

@@ -1621,6 +1621,39 @@ fun probe(): Int {
 
 // -- extension members and named arguments ------------------------------------
 
+/// A cast keeps the *written* operator: `as T` is `T` and `as? T` its nullable
+/// form ([KLS
+/// `expressions.html#cast-expressions`](https://kotlinlang.org/spec/expressions.html#cast-expressions)),
+/// and `asExpression`'s operators nest to the left, so a chain is a cast of a
+/// cast ([spec: grammar-rule-asExpression]). The inferred property types below
+/// are the three claims: the plain cast is the target, the safe cast is its
+/// nullable form, and the chain applied its *second* operator to the first
+/// cast's result — `Int?`, not `Int`. kotlinc 2.4.20 accepts this fixture,
+/// warning only that the chain's `as? Int` can never succeed for a value that
+/// was just cast to `String`.
+#[test]
+fn a_cast_keeps_its_direction_and_its_safety() {
+    let source = r#"
+class Probe(val item: Any?) {
+    val plain = item as String
+    val safe = item as? String
+    val chained = item as String as? Int
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_types(&db, file);
+    for expected in [
+        "val plain: String",
+        "val safe: String?",
+        "val chained: Int?",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "expected {expected:?} in:\n{rendered}"
+        );
+    }
+}
+
 /// A top-level extension is resolved on a receiver of the type it extends as
 /// long as no *member* of that name applies, a member wins where both exist
 /// ([KLS

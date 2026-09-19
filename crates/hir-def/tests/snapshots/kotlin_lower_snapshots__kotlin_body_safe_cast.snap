@@ -1,0 +1,21 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun cast(item: Any?): String? = item as? String
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun cast(item: Any?): String? @1..49
+
+BODIES:
+fun cast body b0:
+  param l0: item: Any?
+  s0: expr e1
+  local l0: item: Any?
+  expr e0: var item 
+  expr e1: cast?String [e0]

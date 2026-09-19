@@ -1,0 +1,33 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun raw(name: String): String {
+    val literal = """a\nb"""
+    val template = """hello ${name}
+world"""
+    return template
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun raw(name: String): String @1..128
+
+BODIES:
+fun raw body b0:
+  param l0: name: String
+  s0: decl l1 = e0
+  s1: decl l2 = e2
+  s2: expr e4
+  local l0: name: String
+  local l1: literal
+  local l2: template
+  expr e0: literal Str("a\\nb") 
+  expr e1: var name 
+  expr e2: template (1 parts) [e1]
+  expr e3: var template 
+  expr e4: jump Return [e3]

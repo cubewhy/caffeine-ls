@@ -1646,7 +1646,7 @@ fn literal_value(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemAnnotationV
     else {
         return unresolved(node);
     };
-    match body::literal(ctx, &token) {
+    match body::literal(ctx, &token, body::raw_string(node)) {
         ExprData::Literal(literal) => ItemAnnotationValue::Literal(literal),
         _ => unresolved(node),
     }

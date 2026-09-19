@@ -43,7 +43,7 @@ fun render body b0:
   expr e6: not-null [e5]
   expr e7: field length [e6]
   expr e8: var item 
-  expr e9: castString [e8]
+  expr e9: cast?String [e8]
   expr e10: var item 
   expr e11: castString [e10]
   expr e12: <missing> 

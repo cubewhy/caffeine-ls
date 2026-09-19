@@ -1058,3 +1058,64 @@ val greeter = Greeter("script")
 println(greeter.greet())
 "#,
 }
+
+// -- the casts, raw strings and prefixed expressions the walker dropped ------
+//
+// Three lowering bugs of the same shape: a form the parser produces that the
+// walker read as something else (or as nothing). Each fixture below was
+// compiled with `/home/cubewhy/.local/bin/kotlinc` (kotlinc-jvm 2.4.20, JRE 25)
+// and is accepted by it; the raw string's *value* was read back from the
+// running program — `"""a\nb"""` is the four characters `a`, `\`, `n` and `b`,
+// the backslash included, since `multiLineStringLiteral` has no escape
+// production ([spec: grammar-rule-multiLineStringLiteral]).
+
+body_snapshot_lang! {
+    kotlin_body_safe_cast,
+    LanguageKind::Kotlin,
+    r#"
+fun cast(item: Any?): String? = item as? String
+"#,
+}
+
+// `asExpression: prefixUnaryExpression {NL} ('as' {NL} type)*` — the operators
+// nest to the left, so this is one cast of another, not a single cast of
+// `item` ([spec: grammar-rule-asExpression]).
+body_snapshot_lang! {
+    kotlin_body_chained_cast,
+    LanguageKind::Kotlin,
+    r#"
+fun cast(item: Any?): Any? {
+    val chained = item as String as? Int
+    return chained
+}
+"#,
+}
+
+body_snapshot_lang! {
+    kotlin_body_raw_string,
+    LanguageKind::Kotlin,
+    r#"
+fun raw(name: String): String {
+    val literal = """a\nb"""
+    val template = """hello ${name}
+world"""
+    return template
+}
+"#,
+}
+
+// `prefixUnaryExpression: {unaryPrefix} postfixUnaryExpression` where the
+// prefix is `annotation | label | prefixUnaryOperator` ([spec:
+// grammar-rule-prefixUnaryExpression]); a label or an annotation is not a
+// value, so the expression is its operand.
+body_snapshot_lang! {
+    kotlin_body_labelled_and_annotated_prefix,
+    LanguageKind::Kotlin,
+    r#"
+fun prefixes(): Int {
+    val labelled = loop@ 1
+    val annotated = @Ann 1
+    return labelled + annotated
+}
+"#,
+}

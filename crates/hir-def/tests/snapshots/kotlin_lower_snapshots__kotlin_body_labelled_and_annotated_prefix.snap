@@ -1,0 +1,31 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+fun prefixes(): Int {
+    val labelled = loop@ 1
+    val annotated = @Ann 1
+    return labelled + annotated
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+fun prefixes(): Int @1..110
+
+BODIES:
+fun prefixes body b0:
+  s0: decl l0 = e0
+  s1: decl l1 = e1
+  s2: expr e5
+  local l0: labelled
+  local l1: annotated
+  expr e0: literal Int(1) 
+  expr e1: literal Int(1) 
+  expr e2: var labelled 
+  expr e3: var annotated 
+  expr e4: binary Add [e2, e3]
+  expr e5: jump Return [e4]
