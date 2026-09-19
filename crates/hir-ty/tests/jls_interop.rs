@@ -212,6 +212,38 @@ fn the_java_layer_answers_for_a_kotlin_class() {
     );
 }
 
+/// A Java *declaration* type naming a Kotlin class is well-formed: the Java
+/// declaration checks resolve `Box<String>` to the Kotlin class beside them and
+/// then ask the Java layer a question about it — the number of type parameters
+/// it declares ([JLS §4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5)).
+/// That class is another language's declaration: it has no Java item, and its
+/// item id indexes the Kotlin model's arena, so the Java item tree must never
+/// be indexed with it.
+///
+/// kotlinc 2.4.20 compiles `Box.kt` clean and `javac` compiles the Java half
+/// against the Kotlin output, so a Java field of a Kotlin type is a
+/// well-formed declaration.
+#[test]
+fn a_java_declaration_type_naming_a_kotlin_class_is_well_formed() {
+    let files = [
+        (
+            "/src/main/kotlin/a/Box.kt",
+            "package a\n\nclass Box<T>(val value: T)\n",
+        ),
+        (
+            "/src/main/java/a/Holder.java",
+            "package a;\n\npublic class Holder {\n    Box<String> box;\n}\n",
+        ),
+    ];
+    let (db, _) = interop_fixture(&files);
+    let java_file = FileId::from_raw(2);
+    let diagnostics = hir_ty::class_diagnostics(&db, java_file);
+    assert!(
+        diagnostics.is_empty(),
+        "a Java field of a Kotlin type is well-formed: {diagnostics:?}"
+    );
+}
+
 /// A top-level declaration of *another* Kotlin file is resolvable: a property
 /// or a function the file's own package or an import names is the one the
 /// workspace's symbol index holds under that fully qualified name ([KLS

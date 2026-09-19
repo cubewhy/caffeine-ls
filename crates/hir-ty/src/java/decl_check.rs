@@ -3009,8 +3009,9 @@ fn sealed_permits(
         // A Kotlin file's facade is neither sealed nor a permitted subclass.
         hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
-            let tree = hir_def::java::plugin::tree(db, source.file);
-            let (permits, sealed) = match tree.data(source.item) {
+            // A class of another language has no Java declaration ([`java_item`]).
+            let (tree, item) = crate::java::resolve::java_item(db, source)?;
+            let (permits, sealed) = match tree.data(item) {
                 ItemData::Class(d) | ItemData::Interface(d) => {
                     (&d.permits, d.modifiers.is_sealed())
                 }
@@ -3021,8 +3022,7 @@ fn sealed_permits(
                 return None;
             }
             let file_scope = scope_for_file(db, source.file);
-            let resolver =
-                crate::java::resolve::Resolver::for_item(db, source.file, &tree, source.item);
+            let resolver = crate::java::resolve::Resolver::for_item(db, source.file, &tree, item);
             Some(
                 permits
                     .iter()
@@ -4010,8 +4010,11 @@ fn class_is_sealed(db: &dyn TyDatabase, resolved: &hir::Resolved) -> bool {
             false
         }
         hir::Resolved::Source(source) => {
-            let tree = hir_def::java::plugin::tree(db, source.file);
-            class_like_modifiers(tree.data(source.item)).is_some_and(|m| m.is_sealed())
+            // A class of another language has no Java declaration ([`java_item`]).
+            let Some((tree, item)) = crate::java::resolve::java_item(db, *source) else {
+                return false;
+            };
+            class_like_modifiers(tree.data(item)).is_some_and(|m| m.is_sealed())
         }
         hir::Resolved::Library(class) => hir::class_record(db, class)
             .and_then(|record| match record.as_ref() {
@@ -4110,11 +4113,19 @@ fn class_simple_name(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Name {
     match resolved {
         // A facade is named after the file it belongs to.
         hir::Resolved::Facade { fqn, .. } => Name::new(fqn.simple_name()),
-        hir::Resolved::Source(source) => hir_def::java::plugin::tree(db, source.file)
-            .data(source.item)
-            .name()
-            .cloned()
-            .unwrap_or_else(|| Name::new("")),
+        hir::Resolved::Source(source) => match crate::java::resolve::java_item(db, *source) {
+            Some((tree, item)) => tree
+                .data(item)
+                .name()
+                .cloned()
+                .unwrap_or_else(|| Name::new("")),
+            // A class of another language has no Java declaration
+            // ([`java_item`]); the source symbol index names it in any
+            // language, which keeps the diagnostic readable.
+            None => crate::java::resolve::source_class_fqn_of(db, *source)
+                .map(|fqn| Name::new(fqn.simple_name()))
+                .unwrap_or_else(|| Name::new("")),
+        },
         hir::Resolved::Library(_) => Name::new(resolved.fqn(db).as_name().simple_name()),
     }
 }

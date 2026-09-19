@@ -416,9 +416,10 @@ fn expected_type(db: &dyn TyDatabase, expected: &Ty) -> Ty {
 /// `java.util.List`, and has no classfile of its own
 /// ([`super::builtins`]) — from the JVM type's.
 ///
-/// A *Java source* class's parameters are not read here: their scope belongs to
-/// the Java layer's own resolution, and a recorded gap keeps the type
-/// uninstantiated rather than guessing.
+/// A *Java source* class\'s parameters are read from the Java item tree through
+/// the Java layer\'s own resolution ([`java_source_type_vars`]) — the same path
+/// its members\' signatures take — so `LinkedList<File>(…)` written in Kotlin
+/// binds the Java class\'s parameter.
 pub fn class_type_vars(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn: &Name) -> Vec<Ty> {
     let resolve = |name: &str| hir::fqn_resolve(db, scope, name);
     let resolved = resolve(fqn.as_str())

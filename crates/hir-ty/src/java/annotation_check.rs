@@ -1751,13 +1751,14 @@ fn enum_constants(
         // A Kotlin file's facade declares no enum.
         hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
-            let source_tree = hir_def::java::plugin::tree(db, source.file);
-            if !matches!(source_tree.data(source.item), ItemData::Enum(_)) {
+            // A class of another language has no Java declaration ([`java_item`]).
+            let (tree, item) = crate::java::resolve::java_item(db, source)?;
+            if !matches!(tree.data(item), ItemData::Enum(_)) {
                 return None;
             }
             let mut out = Vec::new();
-            for &child in source_tree.data(source.item).body() {
-                if let ItemData::EnumConstant(constant) = source_tree.data(child) {
+            for &child in tree.data(item).body() {
+                if let ItemData::EnumConstant(constant) = tree.data(child) {
                     out.push(constant.name.as_str().to_owned());
                 }
             }
@@ -1824,15 +1825,16 @@ fn annotation_type(
         // A Kotlin file's facade is not an annotation interface.
         hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
-            let source_tree = hir_def::java::plugin::tree(db, source.file);
-            if !matches!(source_tree.data(source.item), ItemData::Annotation(_)) {
+            // A class of another language has no Java declaration ([`java_item`]).
+            let (source_tree, item) = crate::java::resolve::java_item(db, source)?;
+            if !matches!(source_tree.data(item), ItemData::Annotation(_)) {
                 return None;
             }
             // The elements are the methods of the annotation declaration; their
             // return types resolve in the annotation's own file scope
             // ([§6.5.5.1]).
             let file_scope = crate::java::resolve::scope_for_file(db, source.file);
-            let resolver = Resolver::for_item(db, source.file, &source_tree, source.item);
+            let resolver = Resolver::for_item(db, source.file, &source_tree, item);
             // §9.6.1/§9.7.1: whether an element declares a default is read
             // from the *annotation type's own* source — not from the lowered
             // default expression, which a default written as a nested
@@ -1840,7 +1842,7 @@ fn annotation_type(
             // produce.
             let default_ctx = range_ctx(db, source.file, source_tree.language);
             let mut out = Vec::new();
-            for &child in source_tree.data(source.item).body() {
+            for &child in source_tree.data(item).body() {
                 if let ItemData::Method(method) = source_tree.data(child)
                     && let Some(ret) = &method.sig.ret
                 {
@@ -1954,8 +1956,9 @@ fn resolve_annotation_type(
     match hir::fqn_resolve(db, scope, fqn)? {
         hir::Resolved::Facade { .. } => None,
         hir::Resolved::Source(source) => {
-            let source_tree = hir_def::java::plugin::tree(db, source.file);
-            match source_tree.data(source.item) {
+            // A class of another language has no Java declaration ([`java_item`]).
+            let (source_tree, item) = crate::java::resolve::java_item(db, source)?;
+            match source_tree.data(item) {
                 ItemData::Annotation(annotation) => {
                     // The `@Target` argument list was lowered with the
                     // annotation type's own declaration ([§9.7.1]); the
@@ -1966,7 +1969,7 @@ fn resolve_annotation_type(
                     // `@interface Target` that shadows the JDK annotation
                     // ([§6.5.5.1]) does not.
                     let file_scope = crate::java::resolve::scope_for_file(db, source.file);
-                    let resolver = Resolver::for_item(db, source.file, &source_tree, source.item);
+                    let resolver = Resolver::for_item(db, source.file, &source_tree, item);
                     annotation
                         .annotations
                         .iter()

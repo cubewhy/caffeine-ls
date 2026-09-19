@@ -153,8 +153,11 @@ impl InferCtx<'_> {
             // A Kotlin file's facade declares no record.
             hir::Resolved::Facade { .. } => None,
             hir::Resolved::Source(source) => {
-                let tree = hir_def::java::plugin::tree(self.db, source.file);
-                match tree.data(source.item) {
+                // A class of another language has no Java declaration
+                // ([`crate::java::resolve::java_item`]) — and Kotlin has no
+                // Java record.
+                let (tree, item) = crate::java::resolve::java_item(self.db, source)?;
+                match tree.data(item) {
                     ItemData::Record(record) => Some(record.components.len()),
                     _ => None,
                 }

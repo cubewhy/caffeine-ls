@@ -1763,8 +1763,9 @@ pub fn type_argument_arity(
             // A classfile without a `Signature` attribute declares none.
             .or(Some(0)),
         hir::Resolved::Source(source) => {
-            let tree = hir_def::java::plugin::tree(db, source.file);
-            match tree.data(source.item) {
+            // A class of another language has no Java declaration ([`java_item`]).
+            let (tree, item) = java_item(db, *source)?;
+            match tree.data(item) {
                 ItemData::Class(d) | ItemData::Interface(d) => Some(d.type_params.len()),
                 ItemData::Record(d) => Some(d.type_params.len()),
                 // Enums and annotations cannot declare type parameters
@@ -2143,4 +2144,17 @@ pub fn ty_from_library_signature(
 pub(crate) fn item_data(tree: &ItemTree, item_id: ItemId) -> Option<&ItemData> {
     // `Arena::get` panics on unknown ids, so bounds-check first.
     (item_id.0.0 < tree.items.len() as u32).then(|| tree.data(item_id))
+}
+
+/// The Java declaration model of a *source* class with its item id, `None`
+/// when the class is declared by another language: a Kotlin declaration has
+/// no Java item, and its id indexes the Kotlin model's arena, which
+/// [`ItemTree::data`] does not bounds-check
+/// ([`hir_def::java::plugin::declares_file`]).
+pub(crate) fn java_item(
+    db: &dyn TyDatabase,
+    source: hir::SourceClass,
+) -> Option<(triomphe::Arc<ItemTree>, ItemId)> {
+    crate::lang::is_java_file(db, source.file)
+        .then(|| (hir_def::java::plugin::tree(db, source.file), source.item))
 }

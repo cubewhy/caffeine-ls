@@ -239,8 +239,12 @@ impl Lub<'_> {
             hir::Resolved::Library(_) => hir::class_generic_info(self.db, &resolved)
                 .is_some_and(|info| !info.type_params.is_empty()),
             hir::Resolved::Source(source) => {
-                let tree = hir_def::java::plugin::tree(self.db, source.file);
-                match tree.data(source.item) {
+                // A class of another language has no Java declaration
+                // ([`crate::java::resolve::java_item`]).
+                let Some((tree, item)) = crate::java::resolve::java_item(self.db, source) else {
+                    return false;
+                };
+                match tree.data(item) {
                     hir_def::java::item_tree::ItemData::Class(data)
                     | hir_def::java::item_tree::ItemData::Interface(data) => {
                         !data.type_params.is_empty()

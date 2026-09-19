@@ -96,16 +96,14 @@ pub fn ty_from_type_ref(
 /// * a *reference* name is rewritten through the mapping table, so
 ///   `java.lang.String` is `kotlin.String` and `java.util.List` is
 ///   `kotlin.collections.List`;
-/// * a reference type coming from a **classfile** declaration — one with no
-///   Kotlin source, so the compiler has no nullability information about it —
-///   is wrapped in the platform type `T!`, which is the flexible type
-///   `T..T?` ([KLS
+/// * a reference type whose name is not Kotlin\'s own is wrapped in the
+///   platform type `T!`, which is the flexible type `T..T?` ([KLS
 ///   `type-system.html#flexible-types`](https://kotlinlang.org/spec/type-system.html#flexible-types)).
-///   A *Java source* type is not wrapped: within a mixed source set the
-///   compiler reads the Java source\'s annotations, and this model carries no
-///   `@Nullable`-equivalent for it — a recorded deviation, and one that only
-///   under-reports nullability (a Java source type stays usable from Kotlin
-///   without an unsafe-call warning either way).
+///   A *Java source* type is wrapped like a classfile\'s, because this model
+///   carries no `@Nullable`-equivalent for the Java source\'s annotations — a
+///   recorded deviation, and one that only under-reports nullability (a Java
+///   source type stays usable from Kotlin without an unsafe-call warning
+///   either way).
 pub fn ty_from_java(db: &dyn TyDatabase, ty: Ty) -> Ty {
     read_jvm_type(db, ty, JvmReading::Java)
 }

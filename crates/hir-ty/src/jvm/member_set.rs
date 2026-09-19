@@ -8,8 +8,8 @@
 //! ([`all_methods`], [`all_methods_raw`], [`abstract_methods`]) and the field
 //! side ([`pick_field`]). Which language's *declarations* answer for a class is
 //! not this module's business: the per-class enumeration reaches the language's
-//! own layer ([`crate::java::method`] today, through the registry tomorrow) and
-//! the per-language selection rules (the JLS §15.12 applicability and
+//! own layer through the registry ([`crate::lang::member_source`]) and the
+//! per-language selection rules (the JLS §15.12 applicability and
 //! specificity phases) stay in the language that has them.
 
 use rustc_hash::{FxHashMap, FxHashSet};
