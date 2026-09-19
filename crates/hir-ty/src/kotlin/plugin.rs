@@ -5,13 +5,15 @@
 use triomphe::Arc;
 
 use base_db::LanguageKind;
+use hir::hir_def::kotlin::item_tree::{KotlinClassKind, KotlinItemData};
+use hir::hir_def::kotlin::modifiers::KotlinModality;
 use hir_expand::name::Name;
 use rustc_hash::FxHashSet;
 use vfs::FileId;
 
 use crate::{
     jvm::db::TyDatabase,
-    jvm::member::{FieldData, MethodData},
+    jvm::member::{FieldData, JvmClassKind, MethodData},
     jvm::member_set::InvocationContext,
     kotlin::{
         jvm_view::{file_facade_fields, file_facade_members, java_view_fields, java_view_members},
@@ -104,6 +106,71 @@ impl JvmMemberSource for Kotlin {
             // A file's facade carries its top-level `const val`s.
             hir::Resolved::Facade { file, .. } => file_facade_fields(db, *file, name),
             hir::Resolved::Library(_) => Vec::new(),
+        }
+    }
+
+    /// KLS gives an interface's body-less member no implementation
+    /// ([KLS `declarations.html#classifier-declaration`](https://kotlinlang.org/spec/declarations.html#classifier-declaration)):
+    /// the classfile carries it `abstract`, and the JVM view is where that flag
+    /// is derived ([`Shapes::member_flags`], which marks an interface member
+    /// with no body abstract and one with a body the `default` method). A
+    /// *class* declares no abstract member of its own here — an abstract member
+    /// it inherits is found by the caller's walk — and neither does a
+    /// classfile-backed Kotlin declaration.
+    fn abstract_methods(
+        &self,
+        db: &dyn TyDatabase,
+        class: &hir::Resolved,
+        _args: &[Ty],
+    ) -> Vec<MethodData> {
+        let hir::Resolved::Source(source) = class else {
+            return Vec::new();
+        };
+        java_view_members(db, *source, "")
+            .into_iter()
+            .filter(|method| method.abstract_ && !method.is_static)
+            .collect()
+    }
+
+    /// The JVM kind of a Kotlin classifier, from the kind its declaration
+    /// writes and the modality it compiles with
+    /// (<https://kotlinlang.org/docs/java-interop.html#classes-and-interfaces>):
+    /// an `interface` and an `annotation class` are interfaces in the
+    /// classfile, an `enum class` is an enum, and `class`/`object`/
+    /// `companion object` are classes.
+    ///
+    /// A `class` is `final` unless it writes `open`, `abstract` or `sealed`
+    /// ([KLS
+    /// `declarations.html#classifier-declaration`](https://kotlinlang.org/spec/declarations.html#classifier-declaration)),
+    /// and so are an `object` and a `companion object`, which cannot be
+    /// subclassed at all. Every other member of the tuple is `false`: an
+    /// interface is never final, and neither is an enum whose entries may write
+    /// bodies — the classfile still marks the `final` the compiler emits, and
+    /// nothing here needs to claim it.
+    fn kind(&self, db: &dyn TyDatabase, class: &hir::Resolved) -> Option<(JvmClassKind, bool)> {
+        match class {
+            // A file's facade is a final class.
+            hir::Resolved::Facade { .. } => Some((JvmClassKind::Facade, true)),
+            hir::Resolved::Library(_) => None,
+            hir::Resolved::Source(source) => {
+                let tree = hir::file_item_tree(db, source.file);
+                let tree = hir_def::kotlin::plugin::model(&tree)?;
+                let KotlinItemData::Class(declaration) = tree.data(source.item) else {
+                    return None;
+                };
+                let kind = match declaration.kind {
+                    KotlinClassKind::Interface => JvmClassKind::Interface,
+                    KotlinClassKind::Annotation => JvmClassKind::Annotation,
+                    KotlinClassKind::Enum => JvmClassKind::Enum,
+                    KotlinClassKind::Class
+                    | KotlinClassKind::Object
+                    | KotlinClassKind::CompanionObject => JvmClassKind::Class,
+                };
+                let final_ = declaration.kind != KotlinClassKind::Interface
+                    && declaration.kind != KotlinClassKind::Annotation
+                    && declaration.modifiers.modality == KotlinModality::Final;
+                Some((kind, final_))
+            }
         }
     }
 }

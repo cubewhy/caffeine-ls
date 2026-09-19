@@ -41,7 +41,8 @@
 use rustc_hash::FxHashMap;
 use vfs::FileId;
 
-use hir::hir_def::kotlin::item_tree::{KotlinItemData, KotlinItemTree};
+use hir::hir_def::kotlin::item_tree::{KotlinClassKind, KotlinItemData, KotlinItemTree};
+use hir::hir_def::kotlin::modifiers::KotlinModifierFlags;
 use hir_expand::body::{
     BodyId, ExprData, ExprId, JumpKind, LocalId, StmtData, StmtId, WhenCondition,
 };
@@ -52,6 +53,7 @@ use super::diagnostics::{KotlinTypeError, MismatchTarget};
 use super::method::{self, CallArg};
 use super::resolve::KotlinResolver;
 use crate::jvm::db::TyDatabase;
+use crate::jvm::member::MethodData;
 use crate::ty::{Ty, TyKind};
 
 /// The types a body's inference produced.
@@ -1600,6 +1602,79 @@ impl<'a> InferCtx<'a> {
         self.local_binding(&name)
     }
 
+    /// The single abstract method a Kotlin lambda may convert against, if any.
+    ///
+    /// Kotlin converts a lambda against a **`fun interface`** and nothing else:
+    /// an ordinary Kotlin interface with one abstract method does *not* accept
+    /// one — kotlinc 2.4.20 rejects `val f: Action = { }` with
+    /// `type mismatch: inferred type is () -> Unit but Action was expected`
+    /// for `interface Action { fun run() }` while accepting it for
+    /// `fun interface Action`. A Java functional interface (from source or from
+    /// a classfile) converts by Java's rules, whatever it is declared with
+    /// (<https://kotlinlang.org/docs/java-interop.html#sam-conversions>).
+    ///
+    /// The method comes from the shared member set
+    /// ([`crate::jvm::member_set::single_abstract_method`]), so its parameters
+    /// are *JVM-view* shapes: erased, and read back by the language that
+    /// declares the interface ([`Self::sam_parameter`]).
+    fn kotlin_sam(&self, expected: Ty) -> Option<MethodData> {
+        if self.is_kotlin_non_fun_interface(&expected) {
+            return None;
+        }
+        crate::jvm::member_set::single_abstract_method(self.db, &self.scope, &expected)
+    }
+
+    /// The Kotlin type one parameter of the functional interface `sam` has at
+    /// the call site.
+    ///
+    /// A Kotlin declaration's shape is read back as its own type
+    /// ([`super::ty::ty_from_jvm_view`]); a Java source's or a classfile's is a
+    /// *platform* type in Kotlin
+    /// (<https://kotlinlang.org/docs/java-interop.html#null-safety-and-platform-types>),
+    /// which is what [`super::ty::ty_from_java`] gives exactly when the
+    /// interface is not a Kotlin declaration.
+    fn sam_parameter(&self, sam: &MethodData, param: Ty) -> Ty {
+        match sam.owner_file {
+            Some(file) if !crate::lang::is_java_file(self.db, file) => {
+                super::ty::ty_from_jvm_view(self.db, param)
+            }
+            _ => super::ty::ty_from_java(self.db, param),
+        }
+    }
+
+    /// Whether `ty` is a Kotlin *source* classifier that Kotlin's own SAM
+    /// conversion rule does not apply to: an `interface` or `annotation class`
+    /// whose declaration writes no `fun` before the keyword
+    /// ([`KotlinModifierFlags::FUN_INTERFACE`], kotlinc's
+    /// <https://kotlinlang.org/docs/fun-interfaces.html>).
+    ///
+    /// Only a `/fun` interface is a SAM conversion target in Kotlin, so this is
+    /// the gate that keeps `interface Action { fun run() }` from accepting a
+    /// lambda; a *Java* interface is not gated here at all.
+    fn is_kotlin_non_fun_interface(&self, ty: &Ty) -> bool {
+        let Some(hir::Resolved::Source(source)) =
+            crate::java::resolve::reference_class(self.db, &self.scope, ty)
+        else {
+            return false;
+        };
+        // A classfile declares no Kotlin declaration, and a facade is no
+        // interface.
+        let tree = hir::file_item_tree(self.db, source.file);
+        let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
+            return false;
+        };
+        let KotlinItemData::Class(class) = tree.data(source.item) else {
+            return false;
+        };
+        matches!(
+            class.kind,
+            KotlinClassKind::Interface | KotlinClassKind::Annotation
+        ) && !class
+            .modifiers
+            .flags
+            .contains(KotlinModifierFlags::FUN_INTERFACE)
+    }
+
     /// The types a *lambda* literal has ([KLS
     /// `expressions.html#lambda-literals`](https://kotlinlang.org/spec/expressions.html#lambda-literals)):
     /// its parameters take the types of the function type it is inferred
@@ -1614,11 +1689,12 @@ impl<'a> InferCtx<'a> {
         let expected = self.expected_lambdas.last().copied();
         // What the position the lambda stands in declares: a function type's
         // parameters and the receiver that type gives it
-        // ([`Self::lambda_receivers`]), or — where a *Java* functional interface
-        // is expected — the single abstract method's parameters
+        // ([`Self::lambda_receivers`]), or — where a *functional interface* is
+        // expected — the single abstract method's parameters
         // (<https://kotlinlang.org/docs/java-interop.html#sam-conversions>,
         // which KLS does not cover: `listFiles { it }`'s `it` is the
-        // `FilenameFilter`'s parameter).
+        // `FilenameFilter`'s parameter, and `Action { it }`'s is a Kotlin `fun
+        // interface`'s — [`Self::kotlin_sam`] is the gate between the two).
         let (declared_params, receiver) = match expected {
             Some(expected) => match self.function_arity(&expected) {
                 Some(arity) => (
@@ -1632,17 +1708,13 @@ impl<'a> InferCtx<'a> {
                     self.function_parameter_ty(&expected, 0)
                         .map(|ty| self.decapture(&ty)),
                 ),
-                None => match crate::jvm::member_set::single_abstract_method(
-                    self.db,
-                    &self.scope,
-                    &expected,
-                ) {
+                None => match self.kotlin_sam(expected) {
                     // A functional interface's parameters are *parameters*: `it`
                     // is its single one, and `this` stays the enclosing receiver.
                     Some(sam) => (
                         sam.params
                             .iter()
-                            .map(|param| self.decapture(&super::ty::ty_from_java(self.db, *param)))
+                            .map(|param| self.decapture(&self.sam_parameter(&sam, *param)))
                             .collect(),
                         None,
                     ),

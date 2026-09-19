@@ -43,6 +43,7 @@ use crate::{
         BoundKind, Ty, TyData, TyKind, TypeVarScope, WildcardBound, boxed_type, unboxed_primitive,
     },
     jvm::db::{ScopeId, ScopeKind, TyDatabase},
+    lang::JvmMemberSource,
 };
 
 /// The direct supertypes of `ty`
@@ -377,6 +378,11 @@ pub(crate) fn enum_constants(
 /// `final` ([JLS §8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1),
 /// [§8.1.1.2], [§8.9], [§9.1]). Unresolvable names yield `None`; callers must
 /// stay permissive there.
+///
+/// The answer is the *Java* layer's own — a Java declaration's items and a
+/// classfile's flags — because that is what this function's callers
+/// ([`super::decl_check`]) ask about. A site that must classify a class of any
+/// language asks the registry instead ([`crate::jvm::member_set::class_kind`]).
 pub(crate) fn class_like_and_final(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -384,34 +390,8 @@ pub(crate) fn class_like_and_final(
 ) -> Option<(bool, bool)> {
     let (name, _) = ty.as_reference(db)?;
     let resolved = resolve_name(db, scope, name)?;
-    match resolved {
-        // A Kotlin file's facade is a final class.
-        hir::Resolved::Facade { .. } => Some((true, true)),
-        hir::Resolved::Library(library) => {
-            let record = hir::class_record(db, &library)?;
-            let syntax::stub::ClassOrModuleStub::Class(class) = record.as_ref() else {
-                return None;
-            };
-            // JVM access flags ([JVMS §4.1]): an interface carries ACC_INTERFACE, a
-            // final class ACC_FINAL. A record is implicitly final ([§8.10]).
-            let flags = JvmAccessFlags::from_bits_retain(class.flags);
-            let interface = flags.is_interface();
-            let final_ = flags.is_final() || class.is_record;
-            Some((!interface, !interface && final_))
-        }
-        hir::Resolved::Source(source) => {
-            let tree = hir_def::java::plugin::tree(db, source.file);
-            match item_data(&tree, source.item)? {
-                ItemData::Class(d) => Some((true, d.modifiers.is_final())),
-                ItemData::Record(_) => Some((true, true)),
-                // §8.9: an enum without constant bodies is implicitly final,
-                // but treating every enum as final only ever tightens a cast
-                // check that single inheritance already makes disjoint.
-                ItemData::Enum(_) => Some((true, true)),
-                _ => Some((false, false)),
-            }
-        }
-    }
+    let (kind, final_) = crate::java::plugin::JAVA.kind(db, &resolved)?;
+    Some((!kind.is_interface(), final_))
 }
 
 /// Whether the named reference type is an interface or annotation type — the

@@ -64,6 +64,18 @@ pub enum JvmClassKind {
     Facade,
 }
 
+impl JvmClassKind {
+    /// Whether the classfile marks the kind with `ACC_INTERFACE`
+    /// ([JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1)):
+    /// an interface, or an annotation type, which is one
+    /// ([JLS §9.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6)).
+    /// This is the question a functional-interface test asks of a class
+    /// ([§9.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.8)).
+    pub fn is_interface(self) -> bool {
+        matches!(self, JvmClassKind::Interface | JvmClassKind::Annotation)
+    }
+}
+
 /// The access of a member ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)),
 /// derived from the classfile access flags (ACC_PUBLIC, ACC_PRIVATE,
 /// ACC_PROTECTED, [JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1))

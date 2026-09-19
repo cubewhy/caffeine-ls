@@ -593,6 +593,72 @@ fun statement(x: Int) {
     );
 }
 
+/// Kotlin's own SAM conversion is gated on a **`fun interface`**: a Kotlin
+/// lambda converts against one — and against a *Java* functional interface,
+/// from source or from a classfile — but not against an ordinary Kotlin
+/// interface that merely declares one abstract method
+/// (<https://kotlinlang.org/docs/fun-interfaces.html>): kotlinc 2.4.20 reports
+/// `cannot infer type for value parameter 'text'` for the `Naming` lambda below
+/// and an `argument type mismatch` for the `StringConsumer` one, which is the
+/// split asserted here.
+///
+/// The observable is the lambda's `it` — the parameter the conversion gives it
+/// ([KLS
+/// `expressions.html#lambda-literals`](https://kotlinlang.org/spec/expressions.html#lambda-literals)):
+/// a parameter-less lambda takes the expected type's parameters, and no
+/// conversion means no parameter at all, which leaves `it` unresolved. Both
+/// interfaces that convert give `it` a `String`, which the fixture's
+/// `wantsInt(it)` reports.
+#[test]
+fn a_kotlin_lambda_converts_only_against_a_fun_interface() {
+    let source = r#"
+fun interface StringConsumer {
+    fun accept(text: String)
+}
+
+interface Naming {
+    fun name(text: String)
+}
+
+fun wantsInt(value: Int) {}
+
+fun takeConsumer(consumer: StringConsumer) {}
+
+fun takeNaming(naming: Naming) {}
+
+fun takeJava(consumer: java.util.function.Consumer<String>) {}
+
+fun use() {
+    takeConsumer { wantsInt(it) }
+    takeNaming { wantsInt(it) }
+    takeJava { wantsInt(it) }
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    assert_eq!(
+        rendered
+            .matches(
+                "kotlin.argument-mismatch: argument type mismatch: actual type is 'String', but 'Int' was expected."
+            )
+            .count(),
+        2,
+        "the `fun interface` and the classfile `Consumer` both give `it` a `String`: {rendered}"
+    );
+    assert_eq!(
+        rendered
+            .lines()
+            .filter(|line| line.contains("kotlin."))
+            .count(),
+        3,
+        "the non-`fun` interface's lambda has no parameter at all: {rendered}"
+    );
+    assert!(
+        rendered.contains("kotlin.unresolved-reference: unresolved reference 'it'."),
+        "`it` is unbound where no conversion applies: {rendered}"
+    );
+}
+
 // -- Java and classfile members on a Kotlin receiver --------------------------
 
 /// A `when` entry's guard — the `if <expression>` kotlinc writes between the
@@ -803,6 +869,81 @@ fun use(list: javax.swing.JList) {
             "the property and the method both resolve: {rendered}"
         );
     }
+}
+
+// -- a Java caller of a Kotlin declaration ------------------------------------
+
+/// The other direction of the bridge: a **Java** lambda and method reference
+/// against a Kotlin source interface. A Kotlin `interface` *is* an interface in
+/// the classfile, so Java's own SAM rules apply to it exactly as they do to a
+/// Java one — which is what the Kotlin layer's JVM view answers for it
+/// ([`crate::lang::JvmMemberSource::kind`] and `::abstract_methods`).
+///
+/// The oracle is **javac**, not kotlinc: kotlinc reads a `.java` source for
+/// resolution but does not check its body, so the two-file pair is judged by
+/// the Java compiler. For a `Listener` compiled by kotlinc 2.4.20
+/// (`javap -p`: `public abstract void onEvent(java.lang.String);`), javac
+/// reports exactly one error here:
+///
+/// ```text
+/// Use.java:11: error: incompatible types: String cannot be converted to int
+///         call(message -> needsInt(message));
+///                                  ^
+/// ```
+///
+/// which *is* the claim: the lambda's parameter is the Kotlin interface's
+/// `String` — the conversion resolved — and the method reference on the next
+/// line is accepted.
+#[test]
+fn a_java_lambda_converts_against_a_kotlin_interface() {
+    const KOTLIN_INTERFACE: &str = r#"
+package a;
+
+interface Listener {
+    fun onEvent(message: String)
+}
+"#;
+    const JAVA_USE: &str = r#"
+package a;
+
+class Use {
+    static void call(Listener listener) {}
+
+    static void needsInt(int value) {}
+
+    static void print(String text) {}
+
+    static void withLambda() {
+        call(message -> needsInt(message));
+    }
+
+    static void withReference() {
+        call(Use::print);
+    }
+}
+"#;
+    let files: &[(&str, &str)] = &[
+        ("/src/main/java/a/Use.java", JAVA_USE),
+        ("/src/main/kotlin/a/Listener.kt", KOTLIN_INTERFACE),
+    ];
+    let (db, _) = kotlin_fixture(files);
+    let rendered = common::render_body_types(&db, files);
+    assert!(
+        rendered.contains("e0: java.lang.String"),
+        "the lambda's parameter is the Kotlin interface's `String`: {rendered}"
+    );
+    assert!(
+        rendered.contains("e2: a.Listener"),
+        "the lambda converts against the Kotlin interface: {rendered}"
+    );
+    assert_eq!(
+        rendered
+            .lines()
+            .filter(|line| line.contains("diags:"))
+            .count(),
+        1,
+        "only the mismatched call reports; the method reference resolves: {rendered}"
+    );
 }
 
 // -- platform types, mapped classifiers and the resolution gaps --------------

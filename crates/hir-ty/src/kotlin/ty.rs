@@ -88,7 +88,7 @@ pub fn ty_from_type_ref(
 /// [KLS `type-system.html#platform-types`](https://kotlinlang.org/spec/type-system.html#platform-types)
 /// for the `T!` wrapping).
 ///
-/// The conversion is the compiler's, in three steps:
+/// The conversion is the compiler\'s, in three steps:
 ///
 /// * a primitive is the Kotlin classifier it maps onto — `int` is
 ///   `kotlin.Int`, `void` is `kotlin.Unit`
@@ -102,11 +102,50 @@ pub fn ty_from_type_ref(
 ///   `T..T?` ([KLS
 ///   `type-system.html#flexible-types`](https://kotlinlang.org/spec/type-system.html#flexible-types)).
 ///   A *Java source* type is not wrapped: within a mixed source set the
-///   compiler reads the Java source's annotations, and this model carries no
+///   compiler reads the Java source\'s annotations, and this model carries no
 ///   `@Nullable`-equivalent for it — a recorded deviation, and one that only
 ///   under-reports nullability (a Java source type stays usable from Kotlin
 ///   without an unsafe-call warning either way).
 pub fn ty_from_java(db: &dyn TyDatabase, ty: Ty) -> Ty {
+    read_jvm_type(db, ty, JvmReading::Java)
+}
+
+/// The Kotlin type a **Kotlin declaration\'s** JVM-view type denotes — the shape
+/// [`crate::kotlin::jvm_view`] writes for a Kotlin declaration, read back by a
+/// Kotlin caller.
+///
+/// It is [`ty_from_java`], for a shape a Kotlin declaration wrote: the name
+/// mapping is the same, and the platform type is not applied, because the
+/// shape came from the declaration itself rather than from a declaration whose
+/// nullability the compiler does not know
+/// (<https://kotlinlang.org/docs/java-interop.html#null-safety-and-platform-types>).
+///
+/// The JVM view is an *erased* signature, so two things do not survive the
+/// round trip: a `T?` parameter is the shape of a `T` one — the reading is the
+/// non-nullable name, under-reporting nullability only — and the read-only and
+/// mutable collection interfaces are one JVM type, for which the read-only
+/// Kotlin interface is the reading of a Kotlin declaration (where
+/// [`ty_from_java`] takes the mutable one, which a Java *class*\'s supertype
+/// edge means).
+pub fn ty_from_jvm_view(db: &dyn TyDatabase, ty: Ty) -> Ty {
+    read_jvm_type(db, ty, JvmReading::KotlinDeclaration)
+}
+
+/// Which declaration a JVM shape came from — the one difference the Kotlin
+/// reading of it makes ([`ty_from_java`] / [`ty_from_jvm_view`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JvmReading {
+    /// A Java source\'s or a classfile\'s shape: its reference types are
+    /// *platform* types in Kotlin (`T!`).
+    Java,
+    /// A Kotlin declaration\'s JVM view: its reference types are the Kotlin
+    /// types the declaration writes.
+    KotlinDeclaration,
+}
+
+/// The one mapping behind [`ty_from_java`] and [`ty_from_jvm_view`]: the Kotlin
+/// type the JVM shape `ty` denotes, read for the declaration it came from.
+fn read_jvm_type(db: &dyn TyDatabase, ty: Ty, reading: JvmReading) -> Ty {
     match ty.kind(db) {
         TyKind::Primitive(primitive) => {
             let name = match primitive {
@@ -126,43 +165,45 @@ pub fn ty_from_java(db: &dyn TyDatabase, ty: Ty) -> Ty {
         // `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)).
         TyKind::Void => Ty::reference(db, "kotlin.Unit", Vec::new()),
         TyKind::Reference { name, args, local } => {
-            let args: Vec<Ty> = args.iter().map(|arg| ty_from_java(db, *arg)).collect();
-            // A local class keeps its declaration: it is the type's identity
+            let args: Vec<Ty> = args
+                .iter()
+                .map(|arg| read_jvm_type(db, *arg, reading))
+                .collect();
+            // A local class keeps its declaration: it is the type\'s identity
             // ([JLS §6.7]), and a local class has no canonical name to map.
-            let mapped = match local {
-                Some(class) => {
-                    Ty::local_reference(db, *class, mapped_type_name(name), args.clone())
-                }
-                None => Ty::reference(db, mapped_type_name(name), args.clone()),
+            let mapped = |name: &Name| match local {
+                Some(class) => Ty::local_reference(db, *class, name.clone(), args.clone()),
+                None => Ty::reference(db, name.clone(), args.clone()),
+            };
+            let kotlin = mapped(&mapped_type_name(name));
+            let JvmReading::Java = reading else {
+                return kotlin;
             };
             if local.is_none() && !name.as_str().starts_with("kotlin.") {
-                // A classfile type: the compiler knows nothing about its
-                // nullability, so it is a platform type. A *collection
+                // A classfile or Java declaration: the compiler knows nothing
+                // about its nullability, so it is a platform type. A *collection
                 // interface* is the JVM type of two Kotlin classifiers — the
                 // read-only view and the mutable one, which [`MAPPED_TYPES`]
                 // names as two entries — and the platform type a Java value has
                 // is `(Mutable)List<T>!`, usable as either. The mutable half is
-                // what a Java *class*'s supertype edge means (a class that
+                // what a Java *class*\'s supertype edge means (a class that
                 // implements `java.util.List` implements the mutable
                 // interface): it is what makes `val list: MutableList<Component>
                 // = LinkedList()` legal, and it is how kotlinc 2.4.20 reads the
                 // same source.
                 let lower = mapped_mutable_name(name)
-                    .map(|mutable| match local {
-                        Some(class) => Ty::local_reference(db, *class, mutable, args.clone()),
-                        None => Ty::reference(db, mutable, args.clone()),
-                    })
-                    .unwrap_or(mapped);
-                let upper = Ty::nullable(db, mapped);
+                    .map(|mutable| mapped(&mutable))
+                    .unwrap_or(kotlin);
+                let upper = Ty::nullable(db, kotlin);
                 Ty::flexible(db, lower, upper)
             } else {
-                mapped
+                kotlin
             }
         }
-        TyKind::Array(inner) => Ty::array(db, ty_from_java(db, **inner)),
+        TyKind::Array(inner) => Ty::array(db, read_jvm_type(db, **inner, reading)),
         TyKind::TypeVar { .. } => ty,
         // Everything else is either a Kotlin-only form (which a Java type
-        // cannot be) or already Kotlin's.
+        // cannot be) or already Kotlin\'s.
         _ => ty,
     }
 }

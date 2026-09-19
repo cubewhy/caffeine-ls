@@ -497,8 +497,8 @@ impl InferCtx<'_> {
         }
         !matches!(
             (
-                crate::java::subtyping::class_like_and_final(self.db, &self.scope, &from),
-                crate::java::subtyping::class_like_and_final(self.db, &self.scope, &to),
+                crate::jvm::member_set::class_kind(self.db, &self.scope, &from),
+                crate::jvm::member_set::class_kind(self.db, &self.scope, &to),
             ),
             // §5.5.1: a cast between two unrelated classes is rejected only
             // when they are *provably distinct* — both final. A cast between
@@ -508,7 +508,12 @@ impl InferCtx<'_> {
             // `TypeAdapter<CAP#>` where `CAP# <: Object`) compiles; the
             // runtime check may fail. Rejecting any unrelated class-class
             // pair would reject every such unchecked cast.
-            (Some((true, true)), Some((true, true)))
+            //
+            // The classifier is the class's own language's
+            // ([`crate::jvm::member_set::class_kind`]), so a Java cast to or
+            // from a Kotlin class is judged by the shape kotlinc emits for it.
+            (Some((from_kind, true)), Some((to_kind, true)))
+                if !from_kind.is_interface() && !to_kind.is_interface()
         )
     }
 }

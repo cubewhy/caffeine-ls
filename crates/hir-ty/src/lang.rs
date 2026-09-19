@@ -18,7 +18,7 @@ use rustc_hash::FxHashSet;
 use vfs::FileId;
 
 use crate::jvm::db::TyDatabase;
-use crate::jvm::member::{FieldData, MethodData};
+use crate::jvm::member::{FieldData, JvmClassKind, MethodData};
 use crate::jvm::member_set::InvocationContext;
 use crate::ty::Ty;
 
@@ -61,6 +61,19 @@ pub trait JvmMemberSource: Sync {
         let _ = (db, class, args);
         Vec::new()
     }
+
+    /// What the class *is* in a classfile — its [`JvmClassKind`] and whether it
+    /// is `final` — as the JVM-shape rules of this language's declaration form
+    /// say ([JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1)
+    /// `ACC_INTERFACE`/`ACC_ANNOTATION`/`ACC_FINAL`).
+    ///
+    /// The shared member set's functional-interface test and Java's
+    /// provably-distinct-cast rule ([JLS §5.5.1]) both need it, and a class of
+    /// this language must answer for itself: a Kotlin `interface` is an
+    /// interface in the classfile, which no other layer can tell from its
+    /// source. `None` for a declaration this view cannot read — callers stay
+    /// permissive there.
+    fn kind(&self, db: &dyn TyDatabase, class: &hir::Resolved) -> Option<(JvmClassKind, bool)>;
 }
 
 /// The type layer of one language (IntelliJ: the language's `JvmPsiElement`

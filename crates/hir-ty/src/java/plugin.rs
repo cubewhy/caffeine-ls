@@ -6,6 +6,7 @@ use triomphe::Arc;
 
 use base_db::LanguageKind;
 use hir_def::java::item_tree::ItemData;
+use hir_def::jvm::access::JvmAccessFlags;
 use hir_expand::name::Name;
 use rustc_hash::FxHashSet;
 use vfs::FileId;
@@ -18,7 +19,7 @@ use crate::{
         ty::Ty,
     },
     jvm::db::TyDatabase,
-    jvm::member::{FieldData, MethodData},
+    jvm::member::{FieldData, JvmClassKind, MethodData},
     jvm::member_set::InvocationContext,
     lang::{JvmMemberSource, LanguageTypes},
 };
@@ -125,5 +126,58 @@ impl JvmMemberSource for Java {
             ));
         }
         out
+    }
+
+    /// The JVM kind of a Java class, from its classfile flags or its source
+    /// modifiers ([JLS §8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1),
+    /// [§8.1.1.2], [§8.9], [§9.1]).
+    fn kind(&self, db: &dyn TyDatabase, class: &hir::Resolved) -> Option<(JvmClassKind, bool)> {
+        match class {
+            // A file's facade is a final class ([`crate::kotlin`]'s top-level
+            // declarations compile into one).
+            hir::Resolved::Facade { .. } => Some((JvmClassKind::Facade, true)),
+            hir::Resolved::Library(library) => {
+                let record = hir::class_record(db, library)?;
+                let syntax::stub::ClassOrModuleStub::Class(class) = record.as_ref() else {
+                    return None;
+                };
+                // JVM access flags ([JVMS §4.1]): an interface carries
+                // ACC_INTERFACE (an annotation type both it and
+                // ACC_ANNOTATION), an enum ACC_ENUM, a final class ACC_FINAL.
+                // A record is implicitly final ([§8.10]).
+                let flags = JvmAccessFlags::from_bits_retain(class.flags);
+                let kind = if flags.is_interface() {
+                    match flags.is_annotation() {
+                        true => JvmClassKind::Annotation,
+                        false => JvmClassKind::Interface,
+                    }
+                } else if flags.is_enum() {
+                    JvmClassKind::Enum
+                } else {
+                    JvmClassKind::Class
+                };
+                Some((kind, flags.is_final() || class.is_record))
+            }
+            hir::Resolved::Source(source) => {
+                let tree = hir_def::java::plugin::tree(db, source.file);
+                match item_data(&tree, source.item)? {
+                    ItemData::Class(d) => Some((JvmClassKind::Class, d.modifiers.is_final())),
+                    ItemData::Record(_) => Some((JvmClassKind::Class, true)),
+                    // §8.9: an enum without constant bodies is implicitly final,
+                    // but treating every enum as final only ever tightens a cast
+                    // check that single inheritance already makes disjoint.
+                    ItemData::Enum(_) => Some((JvmClassKind::Enum, true)),
+                    ItemData::Interface(_) => Some((JvmClassKind::Interface, false)),
+                    // §9.6: an annotation type *is* an interface, which is why
+                    // it is a functional interface's candidate too.
+                    ItemData::Annotation(_) => Some((JvmClassKind::Annotation, false)),
+                    // A resolved *type reference* names one of the five
+                    // class-like kinds above; anything else here is not a class
+                    // at all, and the interface-like answer is the permissive
+                    // one this classifier has always given.
+                    _ => Some((JvmClassKind::Interface, false)),
+                }
+            }
+        }
     }
 }

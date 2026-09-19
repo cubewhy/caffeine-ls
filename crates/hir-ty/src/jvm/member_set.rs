@@ -24,7 +24,7 @@ use crate::{
     java::subtyping::supertypes_query,
     java::ty::capture_conversion,
     jvm::db::{ContextKey, ScopeId, ScopeKind, TyDatabase},
-    jvm::member::{Access, ClassKey, FieldData, MethodData, MethodTypeParam},
+    jvm::member::{Access, ClassKey, FieldData, JvmClassKind, MethodData, MethodTypeParam},
     ty::{Ty, TyData, TyKind, TypeVarScope},
 };
 
@@ -872,7 +872,7 @@ pub fn single_abstract_method(
     // ([§9.6]) — can be a functional interface. A type this layer cannot
     // classify is not resolved any further either, so the answer is the same
     // `None` either way.
-    if crate::java::subtyping::is_interface_type(db, scope, ty) != Some(true) {
+    if !class_kind(db, scope, ty)?.0.is_interface() {
         return None;
     }
     let mut methods = abstract_methods(db, scope, ty);
@@ -899,6 +899,32 @@ pub fn single_abstract_method(
         Some(method)
     } else {
         None
+    }
+}
+
+/// The JVM kind of the reference type `ty` and whether it is `final` — the
+/// classifier the member set's functional-interface test and Java's
+/// provably-distinct-cast rule ([JLS §5.5.1]) ask of a type.
+///
+/// The answer is the *declaring* language's, through the registry: a Kotlin
+/// `interface` is an interface in the classfile, and only the Kotlin layer can
+/// read that from its declaration
+/// ([`crate::lang::JvmMemberSource::kind`]). A classfile declares no source
+/// language, so the classfile entry answers for it
+/// ([`crate::lang::classfile`]).
+///
+/// `None` when `ty` is not a reference, its name does not resolve, or the
+/// declaration it names is one no layer can classify — the permissive answer
+/// the callers of this helper expect.
+pub fn class_kind(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Option<(JvmClassKind, bool)> {
+    let resolved = crate::java::resolve::reference_class(db, scope, ty)?;
+    match &resolved {
+        hir::Resolved::Library(_) => crate::lang::classfile().member_source().kind(db, &resolved),
+        _ => crate::lang::member_source(db, &resolved)?.kind(db, &resolved),
     }
 }
 
