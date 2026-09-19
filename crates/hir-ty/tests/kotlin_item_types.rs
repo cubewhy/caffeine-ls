@@ -3280,3 +3280,457 @@ fun use() { val good: String = Overloads.pick("x"); val bad: Int = Overloads.pic
         }
     }
 }
+
+#[test]
+fn java_synthetic_properties_require_valid_accessors() {
+    struct Case {
+        name: &'static str,
+        property: &'static str,
+        getter: Option<&'static str>,
+        writable: bool,
+        java: &'static str,
+        shape: ClassSpec<'static>,
+    }
+
+    let bean = |fqn, methods, signatures, access| {
+        common::class_with_methods_access(
+            fqn,
+            Some("java/lang/Object"),
+            &[],
+            methods,
+            signatures,
+            access,
+        )
+    };
+    let cases = vec![
+        Case {
+            name: "TitleBean",
+            property: "title",
+            getter: Some("getTitle"),
+            writable: true,
+            java: "public class TitleBean { public String getTitle() { return null; } public void setTitle(String value) {} }",
+            shape: bean(
+                "p/TitleBean",
+                &[
+                    ("getTitle", "()Ljava/lang/String;"),
+                    ("setTitle", "(Ljava/lang/String;)V"),
+                ],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "LookupBean",
+            property: "lookup",
+            getter: None,
+            writable: false,
+            java: "public class LookupBean { public String getLookup(String key) { return key; } }",
+            shape: bean(
+                "p/LookupBean",
+                &[("getLookup", "(Ljava/lang/String;)Ljava/lang/String;")],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "OnlyBean",
+            property: "only",
+            getter: None,
+            writable: false,
+            java: "public class OnlyBean { public void setOnly(String value) {} }",
+            shape: bean(
+                "p/OnlyBean",
+                &[("setOnly", "(Ljava/lang/String;)V")],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "GenericGetterBean",
+            property: "generic",
+            getter: None,
+            writable: false,
+            java: "public class GenericGetterBean { public <T> T getGeneric() { return null; } }",
+            shape: bean(
+                "p/GenericGetterBean",
+                &[("getGeneric", "()Ljava/lang/Object;")],
+                &["<T:Ljava/lang/Object;>()TT;"],
+                &[],
+            ),
+        },
+        Case {
+            name: "PrivateGetterBean",
+            property: "title",
+            getter: None,
+            writable: false,
+            java: "public class PrivateGetterBean { private String getTitle() { return null; } public void setTitle(String value) {} }",
+            shape: bean(
+                "p/PrivateGetterBean",
+                &[
+                    ("getTitle", "()Ljava/lang/String;"),
+                    ("setTitle", "(Ljava/lang/String;)V"),
+                ],
+                &[],
+                &[0x0002, 0x0001],
+            ),
+        },
+        Case {
+            name: "StaticGetterBean",
+            property: "title",
+            getter: None,
+            writable: false,
+            java: "public class StaticGetterBean { public static String getTitle() { return null; } public void setTitle(String value) {} }",
+            shape: bean(
+                "p/StaticGetterBean",
+                &[
+                    ("getTitle", "()Ljava/lang/String;"),
+                    ("setTitle", "(Ljava/lang/String;)V"),
+                ],
+                &[],
+                &[0x0009, 0x0001],
+            ),
+        },
+        Case {
+            name: "VoidGetterBean",
+            property: "title",
+            getter: None,
+            writable: false,
+            java: "public class VoidGetterBean { public void getTitle() {} }",
+            shape: bean("p/VoidGetterBean", &[("getTitle", "()V")], &[], &[]),
+        },
+        Case {
+            name: "PathBean",
+            property: "path",
+            getter: Some("getPath"),
+            writable: false,
+            java: "public class PathBean { public String getPath() { return null; } }",
+            shape: bean(
+                "p/PathBean",
+                &[("getPath", "()Ljava/lang/String;")],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "PrivateSetterBean",
+            property: "title",
+            getter: Some("getTitle"),
+            writable: false,
+            java: "public class PrivateSetterBean { public String getTitle() { return null; } private void setTitle(String value) {} }",
+            shape: bean(
+                "p/PrivateSetterBean",
+                &[
+                    ("getTitle", "()Ljava/lang/String;"),
+                    ("setTitle", "(Ljava/lang/String;)V"),
+                ],
+                &[],
+                &[0x0001, 0x0002],
+            ),
+        },
+        Case {
+            name: "StaticSetterBean",
+            property: "title",
+            getter: Some("getTitle"),
+            writable: false,
+            java: "public class StaticSetterBean { public String getTitle() { return null; } public static void setTitle(String value) {} }",
+            shape: bean(
+                "p/StaticSetterBean",
+                &[
+                    ("getTitle", "()Ljava/lang/String;"),
+                    ("setTitle", "(Ljava/lang/String;)V"),
+                ],
+                &[],
+                &[0x0001, 0x0009],
+            ),
+        },
+        Case {
+            name: "GenericSetterBean",
+            property: "title",
+            getter: Some("getTitle"),
+            writable: false,
+            java: "public class GenericSetterBean { public String getTitle() { return null; } public <T> void setTitle(String value) {} }",
+            shape: bean(
+                "p/GenericSetterBean",
+                &[
+                    ("getTitle", "()Ljava/lang/String;"),
+                    ("setTitle", "(Ljava/lang/String;)V"),
+                ],
+                &["", "<T:Ljava/lang/Object;>(Ljava/lang/String;)V"],
+                &[],
+            ),
+        },
+        Case {
+            name: "VarargSetterBean",
+            property: "title",
+            getter: Some("getTitle"),
+            writable: false,
+            java: "public class VarargSetterBean { public String getTitle() { return null; } public void setTitle(String... value) {} }",
+            shape: bean(
+                "p/VarargSetterBean",
+                &[
+                    ("getTitle", "()Ljava/lang/String;"),
+                    ("setTitle", "([Ljava/lang/String;)V"),
+                ],
+                &[],
+                &[0x0001, 0x0081],
+            ),
+        },
+        Case {
+            name: "MismatchBean",
+            property: "title",
+            getter: Some("getTitle"),
+            writable: false,
+            java: "public class MismatchBean { public String getTitle() { return null; } public void setTitle(int value) {} }",
+            shape: bean(
+                "p/MismatchBean",
+                &[("getTitle", "()Ljava/lang/String;"), ("setTitle", "(I)V")],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "CovariantBean",
+            property: "value",
+            getter: Some("getValue"),
+            writable: true,
+            java: "public class CovariantBean extends BaseBean { @Override public String getValue() { return null; } }",
+            shape: common::class_with_methods_access(
+                "p/CovariantBean",
+                Some("p/BaseBean"),
+                &[],
+                &[("getValue", "()Ljava/lang/String;")],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "BroadBean",
+            property: "value",
+            getter: Some("getValue"),
+            writable: false,
+            java: "public class BroadBean { public String getValue() { return null; } public void setValue(Object value) {} }",
+            shape: bean(
+                "p/BroadBean",
+                &[
+                    ("getValue", "()Ljava/lang/String;"),
+                    ("setValue", "(Ljava/lang/Object;)V"),
+                ],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "IsBean",
+            property: "isReady",
+            getter: Some("isReady"),
+            writable: true,
+            java: "public class IsBean { public String isReady() { return null; } public void setReady(String value) {} }",
+            shape: bean(
+                "p/IsBean",
+                &[
+                    ("isReady", "()Ljava/lang/String;"),
+                    ("setReady", "(Ljava/lang/String;)V"),
+                ],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "ReturningSetterBean",
+            property: "title",
+            getter: Some("getTitle"),
+            writable: true,
+            java: "public class ReturningSetterBean { public String getTitle() { return null; } public int setTitle(String value) { return 1; } }",
+            shape: bean(
+                "p/ReturningSetterBean",
+                &[
+                    ("getTitle", "()Ljava/lang/String;"),
+                    ("setTitle", "(Ljava/lang/String;)I"),
+                ],
+                &[],
+                &[],
+            ),
+        },
+        Case {
+            name: "GetIsBean",
+            property: "isFoo",
+            getter: Some("getIsFoo"),
+            writable: true,
+            java: "public class GetIsBean { public String getIsFoo() { return null; } public void setIsFoo(String value) {} }",
+            shape: bean(
+                "p/GetIsBean",
+                &[
+                    ("getIsFoo", "()Ljava/lang/String;"),
+                    ("setIsFoo", "(Ljava/lang/String;)V"),
+                ],
+                &[],
+                &[],
+            ),
+        },
+    ];
+    let mut kotlin = String::from("package p\n");
+    for case in &cases {
+        if let Some(getter) = case.getter {
+            kotlin.push_str(&format!(
+                "fun use{}(bean: {}) {{ val read: String = bean.{}; val direct: String = bean.{}(); bean.{} = \"x\" }}\n",
+                case.name, case.name, case.property, getter, case.property,
+            ));
+        } else {
+            kotlin.push_str(&format!(
+                "fun use{}(bean: {}) = bean.{}\n",
+                case.name, case.name, case.property,
+            ));
+        }
+    }
+    let java_files: Vec<_> = cases
+        .iter()
+        .map(|case| {
+            (
+                format!("/src/p/{}.java", case.name),
+                format!("package p; {}", case.java),
+            )
+        })
+        .collect();
+    let base_java = "package p; public class BaseBean { public Object getValue() { return null; } public void setValue(Object value) {} }";
+    for binary in [false, true] {
+        let mut files = vec![("/src/p/Use.kt", kotlin.as_str())];
+        let extra = if binary {
+            let mut shapes: Vec<_> = cases
+                .iter()
+                .map(|case| {
+                    common::class_with_methods_access(
+                        case.shape.fqn,
+                        case.shape.super_class,
+                        case.shape.interfaces,
+                        case.shape.methods,
+                        case.shape.method_sigs,
+                        case.shape.method_access,
+                    )
+                })
+                .collect();
+            shapes.push(bean(
+                "p/BaseBean",
+                &[
+                    ("getValue", "()Ljava/lang/Object;"),
+                    ("setValue", "(Ljava/lang/Object;)V"),
+                ],
+                &[],
+                &[],
+            ));
+            shapes
+        } else {
+            files.extend(
+                java_files
+                    .iter()
+                    .map(|(path, text)| (path.as_str(), text.as_str())),
+            );
+            files.push(("/src/p/BaseBean.java", base_java));
+            vec![]
+        };
+        let (db, file) = kotlin_fixture_with(&files, extra);
+        let tree = hir_def::kotlin::plugin::tree(&db, file).unwrap();
+        let bodies = hir::file_body_tree(&db, file);
+        let string = Ty::reference(&db, "kotlin.String", vec![]);
+        let platform_string = Ty::flexible(&db, string, Ty::nullable(&db, string));
+        for (index, case) in cases.iter().enumerate() {
+            let function_name = format!("use{}", case.name);
+            let item = tree
+                .items
+                .iter()
+                .find(|(_, data)| {
+                    data.name()
+                        .is_some_and(|name| name.as_str() == function_name)
+                })
+                .unwrap()
+                .0;
+            let body = hir_ty::kotlin_body_types(&db, file, hir_expand::ids::ItemId(item));
+            let property_text = format!("bean.{}", case.property);
+            let property_exprs: Vec<_> = body
+                .exprs
+                .keys()
+                .copied()
+                .filter(|expr| {
+                    bodies
+                        .expr_range(*expr)
+                        .is_some_and(|range| kotlin[range] == property_text)
+                })
+                .collect();
+            let context = format!("binary={binary} {}", case.name);
+            let Some(getter) = case.getter else {
+                assert_eq!(property_exprs.len(), 1, "{context}");
+                let expr = property_exprs[0];
+                assert!(
+                    !body.resolved.contains_key(&expr),
+                    "{context}: {:?}",
+                    body.resolved
+                );
+                assert!(body.expr_ty(&db, expr).is_error(&db), "{context}");
+                continue;
+            };
+            assert_eq!(property_exprs.len(), 2, "{context}");
+            let direct_text = format!("bean.{getter}()");
+            let direct = body
+                .resolved
+                .iter()
+                .find(|(expr, _)| {
+                    bodies
+                        .expr_range(**expr)
+                        .is_some_and(|range| kotlin[range] == direct_text)
+                })
+                .map(|(_, target)| target)
+                .expect("the ordinary getter call must remain available");
+            let hir_ty::KotlinResolvedMember::Java(method) = direct else {
+                panic!("{context}: getter call resolved to {direct:?}");
+            };
+            assert_eq!(method.name, getter, "{context}");
+            assert_eq!(
+                method.owner.display_name(&db).to_string(),
+                format!("p.{}", case.name),
+                "{context}"
+            );
+            assert_eq!(
+                method.owner_file,
+                (!binary).then(|| FileId::from_raw(index as u32 + 2)),
+                "{context}"
+            );
+            assert_eq!(method.decl_item.is_some(), !binary, "{context}");
+            for expr in property_exprs {
+                assert_eq!(body.expr_ty(&db, expr), platform_string, "{context}");
+                assert_eq!(
+                    body.resolved.get(&expr),
+                    Some(direct),
+                    "{context}: property navigation must name the getter"
+                );
+            }
+            if case.writable {
+                assert!(
+                    body.diagnostics.is_empty(),
+                    "{context}: {:?}",
+                    body.diagnostics
+                );
+            } else {
+                assert_eq!(
+                    body.diagnostics.len(),
+                    1,
+                    "{context}: {:?}",
+                    body.diagnostics
+                );
+                let hir_ty::KotlinTypeError::ValReassignment {
+                    expr,
+                    name,
+                    range: Some(range),
+                } = &body.diagnostics[0]
+                else {
+                    panic!("{context}: {:?}", body.diagnostics);
+                };
+                assert_eq!(name.as_str(), case.property, "{context}");
+                assert_eq!(Some(*range), bodies.expr_range(*expr), "{context}");
+                assert_eq!(&kotlin[*range], property_text, "{context}");
+                assert!(
+                    kotlin[usize::from(range.end())..].starts_with(" = \"x\""),
+                    "{context}: reassignment must highlight the write, not the read"
+                );
+            }
+        }
+    }
+}

@@ -1174,7 +1174,9 @@ fn overridable(db: &dyn TyDatabase, member: &Member) -> bool {
                 KotlinModality::Sealed => false,
             }
         }
-        MemberTarget::Java(method) => !method.is_final,
+        MemberTarget::Java(method) | MemberTarget::JavaProperty { getter: method, .. } => {
+            !method.is_final
+        }
         MemberTarget::Builtin { .. } | MemberTarget::JavaField(_) => false,
     }
 }
@@ -1214,7 +1216,9 @@ fn member_is_abstract(db: &dyn TyDatabase, member: &Member) -> bool {
             is_abstract(&modifiers)
                 || (container_is_interface(tree, *item) && !has_body(tree, *item))
         }
-        MemberTarget::Java(method) => method.abstract_,
+        MemberTarget::Java(method) | MemberTarget::JavaProperty { getter: method, .. } => {
+            method.abstract_
+        }
         MemberTarget::Builtin { .. } | MemberTarget::JavaField(_) => false,
     }
 }

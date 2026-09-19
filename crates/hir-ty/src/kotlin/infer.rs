@@ -2106,7 +2106,8 @@ impl<'a> InferCtx<'a> {
                 file: *file,
                 item: *item,
             },
-            method::MemberTarget::Java(method) => {
+            method::MemberTarget::Java(method)
+            | method::MemberTarget::JavaProperty { getter: method, .. } => {
                 KotlinResolvedMember::Java(Box::new(method.as_ref().clone()))
             }
             method::MemberTarget::JavaField(field) => {
@@ -3174,8 +3175,9 @@ impl<'a> InferCtx<'a> {
         // ([KLS
         // `declarations.html#read-only-property-declaration`](https://kotlinlang.org/spec/declarations.html#read-only-property-declaration)):
         // the member the write resolves to answers whether it is mutable — a
-        // Kotlin property by its `var`, a Java field by its `final`
-        // (<https://kotlinlang.org/docs/java-interop.html#fields>).
+        // Kotlin property by its `var`, a Java field by its `final`, and a Java
+        // synthetic property by its paired accessible setter.
+        // https://kotlinlang.org/docs/java-interop.html#getters-and-setters
         if !self.property_is_mutable(receiver, &name) {
             self.types
                 .diagnostics
@@ -3229,6 +3231,8 @@ impl<'a> InferCtx<'a> {
                 }
             }
             method::MemberTarget::JavaField(field) => !field.is_final,
+            // https://kotlinlang.org/docs/java-interop.html#getters-and-setters
+            method::MemberTarget::JavaProperty { setter, .. } => setter.is_some(),
             _ => true,
         }
     }

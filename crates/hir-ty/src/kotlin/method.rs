@@ -62,6 +62,11 @@ pub enum MemberTarget {
     /// A Java source method or constructor, or a classfile method — the
     /// instantiated form [`crate::jvm::member_set::member_set`] returns.
     Java(Box<MethodData>),
+    /// One readable Java property and its compatible accessible writer, if any.
+    JavaProperty {
+        getter: Box<MethodData>,
+        setter: Option<Box<MethodData>>,
+    },
     /// A Java source field or a classfile field, or a synthesized property.
     JavaField(Box<FieldData>),
     /// A member the *language* declares on a built-in classifier: the numeric
@@ -130,6 +135,7 @@ impl Member {
                 // carries, not the erased `Object` the classfile writes.
                 _ => suspend_return(db, method).unwrap_or_else(|| ty_from_java(db, method.ret)),
             },
+            MemberTarget::JavaProperty { getter, .. } => ty_from_java(db, getter.ret),
             MemberTarget::JavaField(field) => ty_from_java(db, field.ty),
             // A built-in member's type is the one the language declares for it.
             MemberTarget::Builtin { ret } => *ret,
@@ -141,6 +147,7 @@ impl Member {
         match &self.target {
             MemberTarget::Kotlin { file, .. } => Some(*file),
             MemberTarget::Java(method) => method.owner_file,
+            MemberTarget::JavaProperty { getter, .. } => getter.owner_file,
             MemberTarget::Builtin { .. } => None,
             MemberTarget::JavaField(field) => field.owner_file,
         }
@@ -259,7 +266,9 @@ impl Member {
             },
             // A built-in member is declared by the language and declares no
             // parameters of its own.
-            MemberTarget::Builtin { .. } | MemberTarget::JavaField(_) => Vec::new(),
+            MemberTarget::Builtin { .. }
+            | MemberTarget::JavaField(_)
+            | MemberTarget::JavaProperty { .. } => Vec::new(),
         }
     }
 }
@@ -1539,7 +1548,7 @@ fn component_index(name: &Name) -> Option<usize> {
 /// * the *synthetic property* of a Java getter/setter pair is a Kotlin property
 ///   (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>, which
 ///   KLS does not cover): the `getFoo()`/`setFoo(v)` pair is the property
-///   `foo`, and a `Boolean` `isFoo()` is the property `isFoo` — so `list.size`,
+///   `foo`, and an eligible `isFoo()` is the property `isFoo` — so `list.size`,
 ///   `sb.length` and `x.name = "y"` resolve. A Kotlin declaration never gets
 ///   the treatment: it declares the property itself;
 /// * a Java field is a Kotlin *property* of its own name — Kotlin reads a Java
@@ -1607,34 +1616,44 @@ fn java_members(
             extension: false,
         });
     }
+    // Java synthetic properties require an eligible getter; a setter alone
+    // declares no property. Preserve getter order and choose its first valid
+    // setter, as K2's FirSyntheticPropertiesScope does (kotlinc 2.4.20).
+    // https://kotlinlang.org/docs/java-interop.html#getters-and-setters
     for accessor in property_getters(name) {
-        for method in
-            crate::jvm::member_set::member_set(db, scope, receiver, accessor.as_str(), ctx)
-        {
-            if method.is_static && !statics {
+        for getter in crate::jvm::member_set::member_set(db, scope, receiver, &accessor, ctx) {
+            if !java_property_getter(db, &getter) {
                 continue;
             }
-            // A getter takes no arguments and returns the property's type.
-            let mut member = member_of_method(db, name.clone(), MemberKind::Getter, method);
-            member.params = Vec::new();
-            out.push(member);
-        }
-    }
-    for accessor in property_setters(name) {
-        for method in
-            crate::jvm::member_set::member_set(db, scope, receiver, accessor.as_str(), ctx)
-        {
-            if method.is_static && !statics {
+            // Derive from the actual getter: getIsFoo pairs with setIsFoo,
+            // whereas isFoo pairs with setFoo. Neither `is` return types nor
+            // setter returns are restricted to Boolean/void by K2.
+            let suffix = getter
+                .name
+                .strip_prefix("get")
+                .or_else(|| getter.name.strip_prefix("is"));
+            let Some(suffix) = suffix else {
                 continue;
-            }
-            // A setter's parameter is the property's type, which
-            // [`member_of_method`] converts.
-            out.push(member_of_method(
-                db,
-                name.clone(),
-                MemberKind::Setter,
-                method,
-            ));
+            };
+            let setter_name = format!("set{suffix}");
+            let setter = crate::jvm::member_set::member_set(db, scope, receiver, &setter_name, ctx)
+                .into_iter()
+                .find(|setter| {
+                    java_setter_matches_getter(db, scope, receiver, &getter, setter, ctx)
+                });
+            out.push(Member {
+                target: MemberTarget::JavaProperty {
+                    getter: Box::new(getter),
+                    setter: setter.map(Box::new),
+                },
+                name: name.clone(),
+                kind: MemberKind::Property,
+                params: Vec::new(),
+                param_names: Arc::from(Vec::new()),
+                defaulted: Arc::from(Vec::new()),
+                vararg: false,
+                extension: false,
+            });
         }
     }
     for method in crate::jvm::member_set::member_set(db, scope, receiver, name.as_str(), ctx) {
@@ -1804,11 +1823,115 @@ fn kotlin_function_member(
     }
 }
 
+fn java_property_getter(db: &dyn TyDatabase, getter: &MethodData) -> bool {
+    !getter.is_static
+        && getter.type_params.is_empty()
+        && getter.params.is_empty()
+        && !getter.ret.is_void(db)
+        && !getter.ret.is_error(db)
+}
+
+fn java_property_setter(db: &dyn TyDatabase, setter: &MethodData) -> bool {
+    !setter.is_static
+        && setter.type_params.is_empty()
+        && !setter.varargs
+        && matches!(setter.params.as_slice(), [parameter] if !parameter.is_error(db))
+}
+
+/// K2's FirSyntheticPropertiesScope.setterTypeIsConsistentWithGetterType:
+/// unequal types require a covariant override of an existing writable property,
+/// not merely a broad overload with a compatible argument.
+/// https://kotlinlang.org/docs/java-interop.html#getters-and-setters
+fn java_setter_matches_getter(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    getter: &MethodData,
+    setter: &MethodData,
+    ctx: &InvocationContext,
+) -> bool {
+    if !java_property_setter(db, setter) {
+        return false;
+    }
+    let parameter = setter.params[0];
+    if getter.ret == parameter {
+        return true;
+    }
+    if getter.ret.is_primitive(db)
+        || parameter.is_primitive(db)
+        || !super::subtyping::is_subtype(db, scope, &getter.ret, &parameter)
+    {
+        return false;
+    }
+    let same_declaration = |a: &MethodData, b: &MethodData| {
+        a.owner == b.owner
+            && a.owner_file == b.owner_file
+            && a.decl_item == b.decl_item
+            && a.descriptor == b.descriptor
+            && a.name == b.name
+    };
+    let overrides = |a: &MethodData, b: &MethodData| {
+        if a.name != b.name || a.params != b.params {
+            return false;
+        }
+        if same_declaration(a, b) {
+            return true;
+        }
+        if b.is_final || b.access == crate::jvm::member::Access::Private || a.owner == b.owner {
+            return false;
+        }
+        let mut pending = super::subtyping::supertypes(db, scope, &a.owner.as_ty(db, Vec::new()));
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(ty) = pending.pop() {
+            let ty = ty.flexible_lower(db).strip_nullability(db);
+            if ty.is_error(db) || !seen.insert(ty) {
+                continue;
+            }
+            if reference_fqn(db, &ty).as_ref() == b.owner.as_fqn() {
+                return true;
+            }
+            pending.extend(super::subtyping::supertypes(db, scope, &ty));
+        }
+        false
+    };
+    let mut pending = super::subtyping::supertypes(db, scope, receiver);
+    let mut seen = rustc_hash::FxHashSet::default();
+    while let Some(base) = pending.pop() {
+        let base = base.flexible_lower(db).strip_nullability(db);
+        if base.is_error(db) || !seen.insert(base) {
+            continue;
+        }
+        let jvm_base = super::ty::ty_from_kotlin(db, base);
+        let base_getters =
+            crate::jvm::member_set::member_set(db, scope, &jvm_base, &getter.name, ctx);
+        for base_getter in base_getters {
+            if !java_property_getter(db, &base_getter)
+                || !overrides(getter, &base_getter)
+                || !super::subtyping::is_subtype(db, scope, &getter.ret, &base_getter.ret)
+            {
+                continue;
+            }
+            for base_setter in
+                crate::jvm::member_set::member_set(db, scope, &jvm_base, &setter.name, ctx)
+            {
+                if java_property_setter(db, &base_setter)
+                    && base_getter.ret == base_setter.params[0]
+                    && overrides(setter, &base_setter)
+                {
+                    return true;
+                }
+            }
+        }
+        pending.extend(super::subtyping::supertypes(db, scope, &base));
+    }
+    false
+}
+
 /// The Java getters a Kotlin property name stands for
 /// (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>): the
 /// `get`-prefixed form with the name capitalized, and — for a name that is
-/// itself `is` + an uppercase letter, which is how Kotlin keeps a `Boolean
-/// isFoo()`'s name — the name itself. kotlinc 2.4.20 reads
+/// itself `is` + an uppercase letter, whose name Kotlin retains. The compiler
+/// accepts non-Boolean `is` getters too. kotlinc 2.4.20 reads
 /// `j.isDragEnabled` for an `isDragEnabled()`/`setDragEnabled` pair and
 /// `j.dragEnabled` for a `getDragEnabled()`/`setDragEnabled` one.
 fn property_getters(name: &Name) -> Vec<String> {
@@ -1819,19 +1942,8 @@ fn property_getters(name: &Name) -> Vec<String> {
     out
 }
 
-/// The Java setters a Kotlin property name stands for: `set` followed by the
-/// name capitalized — and for the `is`-named property `isFoo`, `set` followed
-/// by the name without its `is`, which is how Kotlin writes a `setFoo(v)`.
-fn property_setters(name: &Name) -> Vec<String> {
-    let base = match is_prefix_name(name.as_str()) {
-        true => &name.as_str()[2..],
-        false => name.as_str(),
-    };
-    vec![format!("set{}", capitalize(base))]
-}
-
 /// Whether a Kotlin property name is the `is`-prefixed form Kotlin keeps from a
-/// `Boolean isFoo()`: `is` followed by an uppercase letter.
+/// `isFoo()`: `is` followed by an uppercase letter.
 fn is_prefix_name(name: &str) -> bool {
     name.strip_prefix("is")
         .is_some_and(|rest| rest.chars().next().is_some_and(char::is_uppercase))
@@ -2474,6 +2586,7 @@ fn why_not(
     let source_declaration = match &member.target {
         MemberTarget::Kotlin { .. } => true,
         MemberTarget::Java(method) => method.owner_file.is_some(),
+        MemberTarget::JavaProperty { getter, .. } => getter.owner_file.is_some(),
         MemberTarget::JavaField(field) => field.owner_file.is_some(),
         MemberTarget::Builtin { .. } => false,
     };

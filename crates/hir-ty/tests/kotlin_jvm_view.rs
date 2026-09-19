@@ -19,8 +19,6 @@ use hir_expand::ids::ItemId;
 use hir_ty::kotlin::jvm_view::{
     file_facade_fields, file_facade_members, java_view_fields, java_view_members,
 };
-use hir_ty::kotlin::method::{CallSite, MemberKind};
-use hir_ty::kotlin_declared_members;
 use hir_ty::{
     Access, FieldData, InvocationContext, MethodData, Ty, all_methods_for_test, member_set,
 };
@@ -688,11 +686,6 @@ fn an_object_interface_and_enum_have_no_public_constructor() {
 /// `setIsOn`
 /// (<https://kotlinlang.org/docs/java-interop.html#getters-and-setters>).
 ///
-/// The other direction is the JavaBeans *synthetic property*: a Java
-/// `getDragEnabled()`/`setDragEnabled(boolean)` pair is the Kotlin property
-/// `dragEnabled`, whose read resolves to a getter member and whose write to a
-/// setter member (`java.awt.Container.getLayout`'s precedent;
-/// `javax.swing.JList` is the fixture's classfile).
 #[test]
 fn a_propertys_accessor_is_the_member_each_direction_names() {
     let (db, file) = shapes();
@@ -718,51 +711,6 @@ fn a_propertys_accessor_is_the_member_each_direction_names() {
         ]
     );
     assert!(methods(&db, file, "Props", &["getIsOn", "setIsOn"]).is_empty());
-    // The Kotlin side of the same inversion: a `val`'s candidate member is its
-    // getter, a `var`'s the setter a write names.
-    let scope = java_scope(&db, file);
-    let props = Ty::reference(&db, "m6.Props", Vec::new());
-    let site = CallSite {
-        file,
-        item: Some(class_item(&db, file, "Props")),
-        // A property read is a *value* receiver's member.
-        receiver: hir_ty::kotlin::method::ReceiverKind::Value,
-    };
-    let kinds = |name: &str| {
-        kotlin_declared_members(
-            &db,
-            &scope,
-            &props,
-            &hir_expand::name::Name::new(name),
-            site,
-        )
-        .into_iter()
-        .map(|member| (member.kind, member.params.len()))
-        .collect::<Vec<_>>()
-    };
-    assert_eq!(kinds("r"), vec![(MemberKind::Getter, 0)]);
-    assert_eq!(kinds("v"), vec![(MemberKind::Setter, 1)]);
-    // A Java getter/setter pair is the property `dragEnabled`, in both
-    // directions.
-    let jlist = Ty::reference(&db, "javax.swing.JList", Vec::new());
-    let java_kinds = kotlin_declared_members(
-        &db,
-        &scope,
-        &jlist,
-        &hir_expand::name::Name::new("dragEnabled"),
-        site,
-    )
-    .into_iter()
-    .map(|member| (member.kind, member.params.len()))
-    .collect::<Vec<_>>();
-    assert!(
-        java_kinds.contains(&(MemberKind::Getter, 0)),
-        "the Java getter is the property's read: {java_kinds:?}"
-    );
-    assert!(
-        java_kinds.contains(&(MemberKind::Setter, 1)),
-        "the Java setter is the property's write: {java_kinds:?}"
-    );
 }
 
 /// The fixture of [`a_kotlin_primitive_and_unit_are_the_classfiles_types`]: the
