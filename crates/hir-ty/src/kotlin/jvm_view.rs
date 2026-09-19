@@ -19,7 +19,7 @@
 //! | an `override` that names no modality | *open* — neither `abstract` nor `final` |
 //! | `const val x` / `@JvmField val x` | a field `x` — an instance field of a class, a static of an `object`, a static of the enclosing class for a companion's, a static of the facade for a file's |
 //! | `object Util` | a static field `Util.INSTANCE`; its own members stay *instance* members, and its constructor is `private` |
-//! | `companion object` | a static field `Companion` on the enclosing class; its own constructor is `private` |
+//! | `companion object` | a static field of the *enclosing* class, named after the companion (an unnamed one is `Companion`); its own constructor is `private` |
 //! | `@JvmStatic` on a companion member | *also* a static of the enclosing class |
 //! | a top-level `fun f()` / `val x` | a static member of the file's facade `FooKt` |
 //! | `fun T.f()` (an extension) | a member whose **first** parameter is the receiver — a static of the facade when it is top-level |
@@ -139,16 +139,17 @@ pub fn java_view_members(
     // compiler, as its classfile's statics ([`Shapes::push_enum_statics`]).
     shapes.push_enum_statics(source.item, class, name, &mut out);
     // `object Util` reaches its members through `Util.INSTANCE`, and a
-    // companion object through the `Companion` field; the *field* is what
-    // [`java_view_fields`] answers, the members stay instance members.
+    // companion object through its own field on the enclosing class; the
+    // *field* is what [`java_view_fields`] answers, the members stay instance
+    // members.
     out
 }
 
 /// The JVM fields a Kotlin classifier declares under the name `name`: a
-/// `const val`, an `@JvmField` property, an `object`'s `INSTANCE`, a
-/// `companion object`'s `Companion` field, a companion's `const val`/
-/// `@JvmField` (which the *enclosing* class carries) and an `enum class`'s
-/// entries.
+/// `const val`, an `@JvmField` property, an `object`'s `INSTANCE`, the field
+/// holding a `companion object` (named after the companion), a companion's
+/// `const val`/`@JvmField` (which the *enclosing* class carries) and an
+/// `enum class`'s entries.
 pub fn java_view_fields(
     db: &dyn TyDatabase,
     source: hir::SourceClass,
@@ -1299,18 +1300,30 @@ impl<'a> Shapes<'a> {
                     declaring_top_level: Some(self.top_level.clone()),
                 });
             }
-            // A `companion object`: the field `Companion` on the enclosing
-            // class holds it.
+            // A `companion object`: the field the enclosing class carries is
+            // named after the companion
+            // (<https://kotlinlang.org/docs/object-declarations.html#companion-objects>:
+            // "the class name of a companion object … as a static field") —
+            // `class Outer { companion object Factory }` compiles to
+            // `public static final p.Outer$Factory Factory;` (kotlinc 2.4.20) —
+            // and an *unnamed* companion carries the `Companion` the lowering
+            // names it.
             KotlinItemData::Class(class) if class.kind == KotlinClassKind::CompanionObject => {
-                if name != "Companion" {
+                let field_name = class.name.as_str();
+                if name != field_name {
                     return;
                 }
                 out.push(FieldData {
-                    name: name.to_owned(),
+                    name: field_name.to_owned(),
                     owner: self.owner.clone(),
                     owner_file: Some(self.file),
                     decl_item: Some(item),
-                    // The companion object's own class, by its canonical name.
+                    // The companion object's own class, by its canonical name:
+                    // the *source* spelling, which nests with dots
+                    // (`m6.Outer.Factory`) where the binary name `javap -p`
+                    // prints joins the segments with `$` — the same recorded
+                    // deviation `java_name` ([`crate::kotlin::ty`]) carries,
+                    // and the spelling the model keys a source classifier by.
                     ty: Ty::reference(
                         self.db,
                         hir::source_class_fqn(self.db, self.file, item)

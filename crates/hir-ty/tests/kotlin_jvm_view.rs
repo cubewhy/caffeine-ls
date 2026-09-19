@@ -1045,3 +1045,89 @@ enum class Color { RED, GREEN }
         ]
     );
 }
+
+/// A companion's field on the enclosing class is named after the companion.
+/// kotlinc 2.4.20, `javap -p m6.Outer m6.Outer$Factory m6.Plain`:
+///
+/// ```text
+/// public final class m6.Outer {
+///   public static final m6.Outer$Factory Factory;
+///   public static final int K;
+///   public m6.Outer();
+///   static {};
+/// }
+/// public final class m6.Outer$Factory {
+///   private m6.Outer$Factory();
+///   public final int make();
+/// }
+/// public final class m6.Plain {
+///   public static final m6.Plain$Companion Companion;
+///   public static final int J;
+///   public m6.Plain();
+///   static {};
+/// }
+/// ```
+///
+/// "The class name of a companion object … is also the name of the static
+/// field that holds the object, so you can access the companion's members from
+/// Java as `Outer.Factory`"
+/// (<https://kotlinlang.org/docs/object-declarations.html#companion-objects>),
+/// while an *unnamed* companion is the `Companion` the lowering names it. The
+/// companion's own `const val` stays a static of the enclosing class, and the
+/// companion's class carries neither field.
+///
+/// The field's *type* is the companion's canonical name — the source spelling,
+/// which nests with dots — where the binary name `javap -p` prints joins the
+/// segments with `$`: the model keys a source classifier by its canonical name
+/// (`a.Holder.Companion` is what a Java body writes), so that is the spelling a
+/// `Ty` carries (the deviation [`hir_ty::kotlin::ty`]'s `java_name` records for
+/// a nested library classifier).
+#[test]
+fn a_companions_field_is_named_after_the_companion() {
+    const COMPANIONS_KT: &str = r#"
+package m6
+
+class Outer {
+    companion object Factory {
+        fun make(): Int = 1
+        const val K = 2
+    }
+}
+
+class Plain {
+    companion object {
+        const val J = 3
+    }
+}
+"#;
+    let (db, file) = fixture(&[("/src/main/kotlin/m6/Companions.kt", COMPANIONS_KT)]);
+    assert_eq!(
+        fields(&db, file, "Outer", &["Factory"]),
+        vec![
+            // `public static final m6.Outer$Factory Factory;`
+            "public static final m6.Outer.Factory Factory"
+        ]
+    );
+    assert!(
+        fields(&db, file, "Outer", &["Companion"]).is_empty(),
+        "a *named* companion's field is not named `Companion`"
+    );
+    assert_eq!(
+        fields(&db, file, "Plain", &["Companion"]),
+        vec![
+            // `public static final m6.Plain$Companion Companion;`
+            "public static final m6.Plain.Companion Companion"
+        ]
+    );
+    // The companion's `const val` is a static of the *enclosing* class, and
+    // the companion's own class carries no field at all
+    // (`<https://kotlinlang.org/docs/java-interop.html#static-fields>`).
+    assert_eq!(
+        fields(&db, file, "Outer", &["K"]),
+        vec!["public static final int K"]
+    );
+    assert!(
+        fields(&db, file, "Factory", &["K"]).is_empty(),
+        "the companion's class carries no field"
+    );
+}
