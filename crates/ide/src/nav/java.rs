@@ -884,6 +884,65 @@ fn targets(db: &RootDatabase, resolutions: Vec<Resolution>) -> Vec<NavigationTar
         .collect()
 }
 
+/// Navigate a JVM method recorded by another language's inference through the
+/// same declaration and library-materialization path as a Java invocation.
+pub(super) fn recorded_method_navigation(
+    db: &RootDatabase,
+    file: FileId,
+    method: &hir_ty::MethodData,
+) -> (Vec<NavigationTarget>, Vec<LibraryFileRef>) {
+    let reference = if method.name == "<init>" {
+        Reference::Constructor
+    } else {
+        Reference::Member
+    };
+    navigation(db, method_resolution(db, file, method, reference))
+}
+
+/// The field counterpart of [`recorded_method_navigation`].
+pub(super) fn recorded_field_navigation(
+    db: &RootDatabase,
+    file: FileId,
+    field: &hir_ty::FieldData,
+) -> (Vec<NavigationTarget>, Vec<LibraryFileRef>) {
+    navigation(
+        db,
+        declared_resolution(
+            db,
+            file,
+            field.name.clone(),
+            Use::Field,
+            Params::Unknown,
+            field.owner_file.zip(field.decl_item),
+            &field.owner,
+        ),
+    )
+}
+
+fn navigation(
+    db: &RootDatabase,
+    resolutions: Vec<Resolution>,
+) -> (Vec<NavigationTarget>, Vec<LibraryFileRef>) {
+    let mut loaded = Vec::new();
+    let mut pending = Vec::new();
+    for resolution in resolutions {
+        match resolution {
+            Resolution::Pending(file) => pending.push(file),
+            Resolution::LibraryMember {
+                library,
+                decl: hir::LibrarySourceDecl::Decompiled { class, path },
+                ..
+            } => pending.push(LibraryFileRef::Decompile {
+                library,
+                class,
+                path,
+            }),
+            other => loaded.push(other),
+        }
+    }
+    (targets(db, loaded), pending)
+}
+
 /// The resolutions inference recorded for the reference at `offset`, from the
 /// innermost expression there. See [`hir_ty::BodyTypes::resolved`]: an
 /// expression inference never resolved has no entry, and then no *outer*
@@ -968,6 +1027,13 @@ fn reference_at(bodies: &BodyTree, expr: ExprId) -> Reference {
 /// required return type), so being named like the class does not make a
 /// declaration a constructor.
 fn is_constructor_decl(db: &RootDatabase, file: FileId, item: ItemId) -> bool {
+    if let Some(tree) = hir::hir_def::kotlin::plugin::tree(db, file) {
+        return matches!(
+            tree.data(item),
+            hir::hir_def::kotlin::item_tree::KotlinItemData::Constructor(_)
+                | hir::hir_def::kotlin::item_tree::KotlinItemData::Class(_)
+        );
+    }
     matches!(
         hir::hir_def::java::plugin::tree(db, file).data(item),
         ItemData::Method(method) if method.is_constructor()
@@ -1198,6 +1264,9 @@ fn component_member(
     use_kind: Use,
     params: Params<'_>,
 ) -> Option<Resolution> {
+    if !hir::hir_def::java::plugin::declares_file(db, decl_file) {
+        return None;
+    }
     let tree = hir::hir_def::java::plugin::tree(db, decl_file);
     let ItemData::Record(record) = tree.data(owner_item) else {
         return None;
@@ -2075,6 +2144,9 @@ fn member_item(
     use_kind: Use,
     params: Params<'_>,
 ) -> Option<ItemId> {
+    if !hir::hir_def::java::plugin::declares_file(db, file) {
+        return projected_member_item(db, file, owner, name, use_kind, params);
+    }
     let candidates: Vec<ItemId> = tree
         .data(owner)
         .body()
@@ -2108,6 +2180,40 @@ fn member_item(
         Params::Unknown => None,
     };
     selected.or_else(|| (candidates.len() == 1).then(|| candidates[0]))
+}
+
+/// Match a loaded non-Java declaration using its registered JVM projection.
+/// This preserves generated accessors, renamed methods and overload signatures
+/// instead of treating another language's item ids as Java arena indices.
+fn projected_member_item(
+    db: &RootDatabase,
+    file: FileId,
+    owner: ItemId,
+    name: &str,
+    use_kind: Use,
+    params: Params<'_>,
+) -> Option<ItemId> {
+    let class = hir::Resolved::Source(hir::SourceClass { file, item: owner });
+    let source = hir_ty::lang::member_source(db, &class)?;
+    if matches!(use_kind, Use::Field) {
+        return source.fields(db, &class, &[], name).first()?.decl_item;
+    }
+    let methods = source.methods(db, &class, &[], name);
+    if let Params::Recorded { types, .. } = params {
+        if let Some(method) = methods.iter().find(|method| {
+            method.params.len() == types.len()
+                && method
+                    .params
+                    .iter()
+                    .zip(types)
+                    .all(|(declared, expected)| declared.erasure(db) == expected.erasure(db))
+        }) {
+            return method.decl_item;
+        }
+    }
+    let mut items = methods.iter().filter_map(|method| method.decl_item);
+    let first = items.next()?;
+    items.all(|item| item == first).then_some(first)
 }
 
 /// Whether the declaration at `item` takes exactly the parameter types
@@ -2300,12 +2406,10 @@ fn decl_target(
     item: ItemId,
     name: &str,
 ) -> Option<NavigationTarget> {
-    let tree = hir::hir_def::java::plugin::tree(db, decl_file);
-    // The declared *name*, not the whole declaration: see
-    // [`NavigationTarget::range`]. Falls back to the whole range for an item
-    // whose name token cannot be resolved.
-    let range = item_name_range(db, decl_file, &tree, item)
-        .or_else(|| item_range(db, decl_file, &tree, item))?;
+    let language = crate::lang::for_file(db, decl_file)?;
+    let range = language
+        .declaration_name_range(db, decl_file, item)
+        .or_else(|| language.source_symbol_range(db, decl_file, item))?;
     Some(NavigationTarget {
         file: decl_file,
         range,

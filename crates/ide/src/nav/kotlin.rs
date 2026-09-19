@@ -33,15 +33,16 @@
 //! classes — and any other source declaration (a function, a property, a type
 //! alias) through the workspace symbol index.
 //!
-//! The *default* imports (`kotlin.*`, `java.lang.*`, ...) are deliberately not
-//! seeded here: they are the type layer's resolver's business
-//! (`hir_ty::kotlin::resolve`), which lands with the Kotlin type model.
+//! Default imports use the same package list as the type layer, so a type name
+//! inferred through a default import navigates through that import as well.
 
 use rowan::{NodeOrToken, TextRange, TextSize};
 use rustc_hash::FxHashSet;
 use syntax::kotlin::{Lang, SyntaxKind as K};
 
-use hir::hir_def::kotlin::item_tree::{KotlinImportItem, KotlinItemData, KotlinItemTree};
+use hir::hir_def::kotlin::item_tree::{
+    DEFAULT_IMPORTS, KotlinImportItem, KotlinItemData, KotlinItemTree,
+};
 use hir::hir_def::kotlin::ranges;
 use ide_db::base_db::parse;
 use vfs::FileId;
@@ -520,68 +521,49 @@ fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<
                 }]
             }
             hir_ty::KotlinResolvedMember::Kotlin { file, item } => {
-                match declaration_name_range(db, *file, *item) {
+                let Some(target) = Ctx::new(db, *file) else {
+                    return Vec::new();
+                };
+                match target.name_range(*item) {
                     Some(range) => vec![Resolution::Decl {
                         file: *file,
                         range,
-                        name: ctx
+                        name: target
                             .tree
                             .data(*item)
                             .name()
                             .map(|name| name.to_string())
-                            .unwrap_or_default(),
+                            .unwrap_or_else(|| target.tree.data(*item).label().to_owned()),
                     }],
                     None => Vec::new(),
                 }
             }
-            // A Java or classfile member: the declaration the JVM view points
-            // at, in the file that declares it.
+            // Keep the recorded owner and descriptor through the shared JVM
+            // navigation pipeline, including pending source/decompile views.
             hir_ty::KotlinResolvedMember::Java(method) => {
-                java_member_resolution(db, method.owner_file, method.decl_item)
+                member_navigation(super::java::recorded_method_navigation(db, file, method))
             }
             hir_ty::KotlinResolvedMember::JavaField(field) => {
-                java_member_resolution(db, field.owner_file, field.decl_item)
+                member_navigation(super::java::recorded_field_navigation(db, file, field))
             }
         };
     }
     Vec::new()
 }
 
-/// The resolution of a *Java* member's declaration, from the `(file, item)` the
-/// JVM view carries.
-fn java_member_resolution(
-    db: &RootDatabase,
-    file: Option<FileId>,
-    item: Option<hir::hir_def::jvm::ids::ItemId>,
+/// Convert the shared JVM navigation result without losing pending files.
+fn member_navigation(
+    (targets, pending): (Vec<NavigationTarget>, Vec<LibraryFileRef>),
 ) -> Vec<Resolution> {
-    let (Some(file), Some(item)) = (file, item) else {
-        return Vec::new();
-    };
-    if hir::hir_def::kotlin::plugin::tree(db, file).is_some() {
-        return declaration_name_range(db, file, item)
-            .map(|range| {
-                vec![Resolution::Decl {
-                    file,
-                    range,
-                    name: String::new(),
-                }]
-            })
-            .unwrap_or_default();
-    }
-    let tree = hir::hir_def::java::plugin::tree(db, file);
-    let language = hir::file_item_tree(db, file).language();
-    let parse = parse(db, file, language);
-    let source = parse.syntax_node(language);
-    let map = hir::hir_def::db::ast_id_map(db, file, language);
-    hir::hir_def::java::ranges::item_name_range(map, &source, &tree, item)
-        .map(|range| {
-            vec![Resolution::Decl {
-                file,
-                range,
-                name: String::new(),
-            }]
+    targets
+        .into_iter()
+        .map(|target| Resolution::Decl {
+            file: target.file,
+            range: target.range,
+            name: target.name,
         })
-        .unwrap_or_default()
+        .chain(pending.into_iter().map(Resolution::Pending))
+        .collect()
 }
 
 /// The declarations `resolution` names, for a caller that has already filtered
@@ -1136,6 +1118,11 @@ impl Scope {
         for import in self.imports.iter().filter(|import| import.is_asterisk) {
             out.push(format!("{}.{}", import.path, name));
         }
+        out.extend(
+            DEFAULT_IMPORTS
+                .iter()
+                .map(|package| format!("{package}.{name}")),
+        );
         out.dedup();
         out
     }

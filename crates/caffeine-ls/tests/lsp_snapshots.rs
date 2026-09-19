@@ -4535,7 +4535,7 @@ fn library_source_definition_materializes_and_navigates() {
 
     // -- the type reference resolves the same way, and the source is already
     // loaded: a second request answers in a single pass.
-    let (line, character) = position_of(app_source, "com.example.Foo()");
+    let (line, character) = position_of(app_source, "Foo()");
     let type_params = json!({
         "textDocument": { "uri": lsp.uri(app_path) },
         "position": { "line": line, "character": character },
@@ -4567,7 +4567,7 @@ fn library_source_definition_materializes_and_navigates() {
     // The classfile declares it `<init>(int)` ([JVMS §4.6]); the source
     // declares the same constructor under the class's own name, so the answer
     // is that declaration — not the class, and not the implicit `<init>()V`.
-    let (line, character) = position_of(app_source, "com.example.Widget(1)");
+    let (line, character) = position_of(app_source, "Widget(1)");
     let constructor_response = lsp.request(
         "textDocument/definition",
         json!({
@@ -4889,8 +4889,8 @@ fn decompiled_library_definition_materializes_and_navigates() {
     let params = json!({
         "textDocument": { "uri": lsp.uri(APP_PATH) },
         "position": {
-            "line": position_of(APP_SOURCE, "com.example.Foo()").0,
-            "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+            "line": position_of(APP_SOURCE, "Foo()").0,
+            "character": position_of(APP_SOURCE, "Foo()").1,
         },
     });
     let response = lsp.request("textDocument/definition", params.clone());
@@ -4947,6 +4947,87 @@ fn decompiled_library_definition_materializes_and_navigates() {
     );
 }
 
+#[test]
+fn kotlin_library_sources_materialize_and_navigate() {
+    check_kotlin_library_navigation(true);
+}
+
+#[test]
+fn kotlin_library_decompilation_materializes_and_navigates() {
+    check_kotlin_library_navigation(false);
+}
+
+fn check_kotlin_library_navigation(attached_sources: bool) {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let decompiler = Decompiler::new(FOO_SOURCE);
+    let kotlin_source = "package com.example\nclass Foo {\n    fun greet(count: Long) {}\n    fun greet(count: Int) {}\n}\n";
+    let caller = "package app\nimport com.example.Foo\nfun use(foo: Foo) { foo.greet(1) }\n";
+    let java_caller = "package app; class App { void use(com.example.Foo foo) { foo.greet(1); } }";
+    let caller_path = "/src/main/java/app/Use.kt";
+    let mut config = decompiler.config();
+    config["library_uri_scheme"] = json!("caffeine-ls");
+    let lsp = create_lsp_with_config(config, |root| {
+        decompiler.setup_workspace(root, java_caller);
+        std::fs::write(root.join(caller_path.trim_start_matches('/')), caller).unwrap();
+        if attached_sources {
+            lsp_test::classfile::build_jar(
+                &root.join("lib/foo-sources.jar"),
+                &[("sources/Declarations.kt", kotlin_source.as_bytes().to_vec())],
+            )
+            .unwrap();
+        }
+    });
+    lsp.open_document(caller_path);
+    lsp.open_document(APP_PATH);
+    lsp.wait_until_workspace_is_loaded();
+
+    // Ask for the member first: it must defer before any class request has
+    // caused the declaring view to be loaded.
+    let (line, character) = position_of(caller, "greet(1)");
+    let params = json!({
+        "textDocument": { "uri": lsp.uri(caller_path) },
+        "position": { "line": line, "character": character },
+    });
+    let response = lsp.request("textDocument/definition", params.clone());
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "{response:?}");
+    let uri = locations[0]["uri"].as_str().unwrap();
+    let (view, source, declaration) = if attached_sources {
+        (
+            "/source/sources/Declarations.kt",
+            kotlin_source,
+            "greet(count: Int)",
+        )
+    } else {
+        (
+            "/decompiled/cfr/com/example/Foo.java",
+            FOO_SOURCE,
+            "void greet(int count)",
+        )
+    };
+    assert!(
+        uri.starts_with("caffeine-ls://") && uri.ends_with(view),
+        "{uri}"
+    );
+    assert_definition_name(&locations[0]["range"], source, declaration, "greet");
+    let content = lsp.request("caffeine_ls/libraryFileContent", json!({ "uri": uri }));
+    assert_eq!(content["content"].as_str(), Some(source));
+    assert_eq!(lsp.request("textDocument/definition", params), response);
+    assert_eq!(decompiler.jvm_runs(), usize::from(!attached_sources));
+
+    // Java references must select the Kotlin declaration too, not interpret
+    // its item id as an index into an empty Java declaration tree.
+    let (line, character) = position_of(java_caller, "greet(1)");
+    let java_response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(APP_PATH) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    assert_eq!(java_response, response);
+}
+
 /// The decompiler runs on the *bootstrap* JDK when the client configures one,
 /// independently of the JDK the project compiles against: the fixture's fake JDK
 /// is reachable only as `bootstrap_java_home` (the project `java_home` does not
@@ -4968,8 +5049,8 @@ fn the_bootstrap_jdk_runs_the_decompiler() {
         json!({
             "textDocument": { "uri": lsp.uri(APP_PATH) },
             "position": {
-                "line": position_of(APP_SOURCE, "com.example.Foo()").0,
-                "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+                "line": position_of(APP_SOURCE, "Foo()").0,
+                "character": position_of(APP_SOURCE, "Foo()").1,
             },
         }),
     );
@@ -5022,8 +5103,8 @@ fn library_view_uri_scheme_is_served_to_the_client() {
         json!({
             "textDocument": { "uri": lsp.uri(APP_PATH) },
             "position": {
-                "line": position_of(APP_SOURCE, "com.example.Foo()").0,
-                "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+                "line": position_of(APP_SOURCE, "Foo()").0,
+                "character": position_of(APP_SOURCE, "Foo()").1,
             },
         }),
     );
@@ -5115,8 +5196,8 @@ fn library_view_document_supports_ide_features() {
         json!({
             "textDocument": { "uri": lsp.uri(APP_PATH) },
             "position": {
-                "line": position_of(APP_SOURCE, "com.example.Foo()").0,
-                "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+                "line": position_of(APP_SOURCE, "Foo()").0,
+                "character": position_of(APP_SOURCE, "Foo()").1,
             },
         }),
     );
@@ -5216,8 +5297,8 @@ fn library_view_document_supports_ide_features() {
         json!({
             "textDocument": { "uri": lsp.uri(APP_PATH) },
             "position": {
-                "line": position_of(APP_SOURCE, "com.example.Foo()").0,
-                "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+                "line": position_of(APP_SOURCE, "Foo()").0,
+                "character": position_of(APP_SOURCE, "Foo()").1,
             },
         }),
     );

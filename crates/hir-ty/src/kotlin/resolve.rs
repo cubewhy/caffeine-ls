@@ -116,10 +116,7 @@ impl<'a> KotlinResolver<'a> {
         tree: &'a KotlinItemTree,
         item: Option<hir_expand::ids::ItemId>,
     ) -> KotlinResolver<'a> {
-        let scope = match hir::source_set_for_file(db, file) {
-            Some(source_set) => hir::ResolutionScope::SourceSet(source_set),
-            None => hir::ResolutionScope::JdkBuiltins,
-        };
+        let scope = crate::scope_for_file(db, file);
         let mut type_params = Vec::new();
         // The item's own parameters, then the enclosing classifiers' — the
         // caller of `type_param` looks innermost-*last*, so the chain is built

@@ -2273,3 +2273,30 @@ fn goto_kotlin_introducing_keywords() {
         )
     );
 }
+
+#[test]
+fn java_navigates_to_kotlin_declarations() {
+    let kotlin = "package lib\nclass Widget {\n    constructor(size: Int) {}\n    val count: Int = 1\n    fun run(value: Int): Int = value\n    fun run(value: Long): Long = value\n}\nfun twice(value: Int): Int = value * 2\n";
+    let java = "package app; import lib.Widget; class App { void use(Widget widget) { new Widget(1); widget.run(1L); widget.getCount(); lib.ApiKt.twice(1); } }";
+    let fixture = test_files(&[("/src/lib/Api.kt", kotlin), ("/src/app/App.java", java)]);
+    for (reference, declaration, name) in [
+        ("Widget;", "class Widget", "Widget"),
+        ("Widget(1)", "constructor(size", "constructor"),
+        ("run(1L)", "run(value: Long)", "run"),
+        ("getCount()", "val count", "count"),
+        ("twice(1)", "fun twice", "twice"),
+    ] {
+        let targets = fixture
+            .analysis()
+            .goto_definition(fixture.file(1), fixture.offset_start(1, reference))
+            .unwrap();
+        let start = kotlin.find(declaration).unwrap() + declaration.find(name).unwrap();
+        assert_eq!(targets.len(), 1, "{reference}: {targets:?}");
+        assert_eq!(targets[0].file, fixture.file(0), "{reference}");
+        assert_eq!(
+            targets[0].range,
+            TextRange::new((start as u32).into(), ((start + name.len()) as u32).into()),
+            "{reference}"
+        );
+    }
+}

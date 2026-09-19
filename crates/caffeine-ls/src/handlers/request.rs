@@ -514,8 +514,8 @@ pub struct LibraryFileContentParams {
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct LibraryFileContentResult {
-    /// The file's text. A library view is always Java source — materialized
-    /// from an archive or produced by a decompiler.
+    /// The file's text: attached sources retain their language, while
+    /// decompiled JVM views are Java.
     pub content: String,
 }
 

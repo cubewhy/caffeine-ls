@@ -4,8 +4,8 @@
 //! a JDK `src.zip` holds ~25k compilation units (~250 MB of text), so keeping
 //! them resident — or even on disk — is the cost this design refuses to pay.
 //! Each library's archive is indexed once by the analysis layer (entry names
-//! only), and an individual file is read out of the archive, written under
-//! `<cache_dir>/sources/v1/<library-id-hex>/`, and loaded into the
+//! for Java, declared classifiers for Kotlin), and an individual file is written
+//! under `<cache_dir>/sources/v1/<library-id-hex>/` and loaded into the
 //! VFS/database **only when a request resolves into it**.
 //!
 //! This module owns the cache side of that protocol: which archive belongs to

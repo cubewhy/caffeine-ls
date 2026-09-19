@@ -57,13 +57,10 @@ export function activate(context: ExtensionContext) {
     documentSelector: [
       { scheme: "file", language: "java" },
       { scheme: "file", language: "kotlin" },
-      // A library class that ships no sources opens a read-only Java view the
-      // server serves over its own scheme; the *same* server answers for it, so
-      // navigation, hover, symbols and diagnostics work inside the view exactly
-      // as in a workspace file (a view is third-party code the server reports no
-      // diagnostics for, so its Problems stay empty rather than collecting
-      // flags about code nobody can fix).
+      // Attached sources retain their language; decompiled views are Java.
+      // Both are read-only library documents served by this language server.
       { scheme: LIBRARY_SCHEME, language: "java" },
+      { scheme: LIBRARY_SCHEME, language: "kotlin" },
     ],
     initializationOptions: initialConfig,
     synchronize: {
