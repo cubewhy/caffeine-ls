@@ -4,8 +4,10 @@ use crate::{
     ClasspathEntry, JavaLanguageLevel, Library, ProjectData, ProjectId, SdkData, SdkId,
     SourceSetData, SourceSetKind, SyncError, SyncProgress, WorkspaceGraph,
 };
+use anyhow::Context;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
+use std::collections::hash_map::Entry;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -122,7 +124,7 @@ pub fn import_gradle_workspace(
     }
 }
 
-pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
+pub fn build_graph_from_json(workspace: GradleWorkspace) -> anyhow::Result<WorkspaceGraph> {
     let mut graph = WorkspaceGraph::default();
 
     let mut path_to_project_id = FxHashMap::default();
@@ -231,69 +233,78 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
         }
 
         // Shared closure mappings that maintain original list sequence
-        let mut map_entries = |raw_entries: Vec<GradleClasspathEntry>| -> Vec<ClasspathEntry> {
-            let mut entries = Vec::new();
+        let mut map_entries =
+            |raw_entries: Vec<GradleClasspathEntry>| -> anyhow::Result<Vec<ClasspathEntry>> {
+                let mut entries = Vec::new();
 
-            if let Some(sdk_id) = target_sdk {
-                entries.push(ClasspathEntry::Sdk(sdk_id));
-            }
+                if let Some(sdk_id) = target_sdk {
+                    entries.push(ClasspathEntry::Sdk(sdk_id));
+                }
 
-            for raw_entry in raw_entries {
-                match raw_entry {
-                    GradleClasspathEntry::Project { path, source_set } => {
-                        if let Some(&target_id) = path_to_project_id.get(&path) {
-                            let set_kind = match source_set.as_str() {
-                                "main" => SourceSetKind::Main,
-                                "test" => SourceSetKind::Test,
-                                custom => SourceSetKind::Custom(SmolStr::from(custom)),
-                            };
-                            entries.push(ClasspathEntry::Internal {
-                                project_id: target_id,
-                                source_set: set_kind,
-                            });
-                        }
-                    }
-                    GradleClasspathEntry::Jar {
-                        path,
-                        origin,
-                        sources,
-                        ..
-                    } => {
-                        if path.extension().is_some_and(|ext| ext == "jar") {
-                            let lib_id =
-                                *jar_to_library_id.entry(path.clone()).or_insert_with(|| {
-                                    crate::LibraryId::from_file_path(&path)
-                                        .expect("failed to hash jar path")
+                for raw_entry in raw_entries {
+                    match raw_entry {
+                        GradleClasspathEntry::Project { path, source_set } => {
+                            if let Some(&target_id) = path_to_project_id.get(&path) {
+                                let set_kind = match source_set.as_str() {
+                                    "main" => SourceSetKind::Main,
+                                    "test" => SourceSetKind::Test,
+                                    custom => SourceSetKind::Custom(SmolStr::from(custom)),
+                                };
+                                entries.push(ClasspathEntry::Internal {
+                                    project_id: target_id,
+                                    source_set: set_kind,
                                 });
-
-                            // A stale or absent sources path is dropped rather
-                            // than registered.
-                            if let Some(sources) = sources
-                                && sources.is_file()
-                            {
-                                graph
-                                    .library_sources
-                                    .insert(lib_id, AbsPathBuf::assert_utf8(sources));
                             }
+                        }
+                        GradleClasspathEntry::Jar {
+                            path,
+                            origin,
+                            sources,
+                            ..
+                        } => {
+                            if path.extension().is_some_and(|ext| ext == "jar") {
+                                let lib_id = match jar_to_library_id.entry(path.clone()) {
+                                    Entry::Occupied(entry) => *entry.get(),
+                                    Entry::Vacant(entry) => {
+                                        let id = crate::LibraryId::from_file_path(&path)
+                                        .with_context(|| {
+                                            format!(
+                                                "Failed to read Gradle classpath JAR '{}' for project '{}'",
+                                                path.display(), project.path
+                                            )
+                                        })?;
+                                        *entry.insert(id)
+                                    }
+                                };
 
-                            let abs_jar_path = AbsPathBuf::assert_utf8(path);
-                            let library = if origin == "coordinate" {
-                                Library::readonly(lib_id, abs_jar_path)
-                            } else if abs_jar_path.starts_with(&abs_workspace_root) {
-                                Library::editable(lib_id, abs_jar_path)
-                            } else {
-                                Library::readonly(lib_id, abs_jar_path)
-                            };
-                            graph.library_paths.insert(lib_id, library);
-                            entries.push(ClasspathEntry::External(lib_id));
+                                // A stale or absent sources path is dropped rather
+                                // than registered.
+                                if let Some(sources) = sources
+                                    && sources.is_file()
+                                {
+                                    graph
+                                        .library_sources
+                                        .insert(lib_id, AbsPathBuf::assert_utf8(sources));
+                                }
+
+                                let abs_jar_path = AbsPathBuf::assert_utf8(path);
+                                let library = if origin == "coordinate" {
+                                    Library::readonly(lib_id, abs_jar_path)
+                                } else if abs_jar_path.starts_with(&abs_workspace_root) {
+                                    Library::editable(lib_id, abs_jar_path)
+                                } else {
+                                    Library::readonly(lib_id, abs_jar_path)
+                                };
+                                graph.library_paths.insert(lib_id, library);
+                                entries.push(ClasspathEntry::External(lib_id));
+                            }
                         }
                     }
                 }
-            }
-            entries
-        };
+                Ok(entries)
+            };
 
-        let main_compile_classpath = map_entries(project.compile_classpath);
+        let main_compile_classpath = map_entries(project.compile_classpath)?;
 
         // A Gradle project's Kotlin build scripts — `build.gradle.kts` and, in
         // the root project, `settings.gradle.kts` — live in the *project
@@ -347,7 +358,7 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
             project_id,
             source_set: SourceSetKind::Main,
         });
-        test_compile_classpath.extend(map_entries(project.test_classpath));
+        test_compile_classpath.extend(map_entries(project.test_classpath)?);
 
         let main_source_set = SourceSetData {
             kind: SourceSetKind::Main,
@@ -385,5 +396,5 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
         graph.projects.insert(project_id, Arc::new(project_data));
     }
 
-    graph
+    Ok(graph)
 }

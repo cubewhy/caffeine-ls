@@ -157,6 +157,20 @@ def sourceDirsOf(def sourceSet, def project) {
 }
 
 gradle.projectsEvaluated {
+    // Build only the producers declared by local file dependencies. Share the
+    // barrier across projects so parallel consumers cannot export too early.
+    def fileDependencyBuildDependencies = []
+    rootProject.allprojects.each { project ->
+        ['compileClasspath', 'testCompileClasspath', 'compile', 'testCompile'].each { configName ->
+            def config = project.configurations.findByName(configName)
+            if (config != null && (!config.hasProperty('canBeResolved') || config.canBeResolved)) {
+                config.allDependencies.withType(org.gradle.api.artifacts.FileCollectionDependency).each { dependency ->
+                    fileDependencyBuildDependencies << dependency.files.buildDependencies
+                }
+            }
+        }
+    }
+
     // Each project exports its own model from a task registered in that
     // project, so configuration resolution happens at execution time AND in
     // the declaring project. Gradle 9 forbids both configuration-time
@@ -166,6 +180,7 @@ gradle.projectsEvaluated {
     rootProject.allprojects.each { project ->
         project.tasks.register('exportProjectWorkspaceModel') {
             group = 'caffeine-ls'
+            dependsOn(fileDependencyBuildDependencies)
             def outputFile = new File(project.buildDir, 'caffeine-ls/workspace-model.json')
             doLast {
                 debugLog(">>> Analyzing project: ${project.path}")

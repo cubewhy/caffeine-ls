@@ -43,9 +43,9 @@ struct ClientState {
     /// Tokens whose `$/progress` reported an `end` event. The VFS scan token
     /// (`scan-…`) ending means every source file is loaded into the database.
     ended_tokens: Vec<String>,
-    /// Messages the server sent via `window/showMessage` with severity
-    /// `Error` (e.g. "No JDK found", failed build-system syncs). These mean
-    /// the load pipeline broke and must fail the headless run.
+    /// Error messages from `window/showMessage` or `window/showMessageRequest`
+    /// (e.g. "No JDK found", failed build-system syncs). These mean the load
+    /// pipeline broke and must fail the headless run.
     error_messages: Vec<String>,
     /// Every `$/progress` report/begin/end the server emitted, for the live
     /// status line drained by [`HeadlessServer::wait_workspace_ready`].
@@ -342,7 +342,7 @@ fn read_loop(
                 }
             }
             Message::Request(req) => {
-                let response = answer_server_request(&req, select_build_system.as_deref());
+                let response = answer_server_request(&req, select_build_system.as_deref(), &state);
                 sender.send(Message::Response(response)).ok();
             }
             Message::Notification(notif) => handle_notification(&notif, &state),
@@ -354,10 +354,14 @@ fn read_loop(
 ///
 /// - `window/workDoneProgress/create`: acknowledged so `$/progress`
 ///   notifications flow (the load-phase readiness signal depends on them).
-/// - `window/showMessageRequest`: picks the pre-configured build system (or
-///   cancels) so an unexpected selection dialog never stalls a headless run.
+/// - `window/showMessageRequest`: records errors and picks the pre-configured
+///   build system (or cancels) so dialogs never stall a headless run.
 /// - anything else: rejected as unsupported.
-fn answer_server_request(req: &Request, select_build_system: Option<&str>) -> Response {
+fn answer_server_request(
+    req: &Request,
+    select_build_system: Option<&str>,
+    state: &Mutex<ClientState>,
+) -> Response {
     match req.method.as_str() {
         "window/workDoneProgress/create" => {
             if serde_json::from_value::<WorkDoneProgressCreateParams>(req.params.clone()).is_err() {
@@ -370,11 +374,15 @@ fn answer_server_request(req: &Request, select_build_system: Option<&str>) -> Re
             Response::new_ok(req.id.clone(), serde_json::Value::Null)
         }
         "window/showMessageRequest" => {
-            let actions =
+            let Ok(params) =
                 serde_json::from_value::<lsp_types::ShowMessageRequestParams>(req.params.clone())
-                    .ok()
-                    .and_then(|params| params.actions)
-                    .unwrap_or_default();
+            else {
+                return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+            };
+            if params.kind == MessageType::Error {
+                state.lock().error_messages.push(params.message);
+            }
+            let actions = params.actions.unwrap_or_default();
 
             let chosen = match select_build_system {
                 // The configured system is on offer: pick it.

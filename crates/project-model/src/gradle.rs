@@ -61,9 +61,13 @@ impl BuildSystem for GradleBuildSystem {
             on_output,
             on_progress,
         )?;
-        let graph = build_graph_from_json(gradle_json);
-
-        Ok(graph)
+        build_graph_from_json(gradle_json).map_err(|err| {
+            crate::SyncError {
+                message: format!("Failed to construct Gradle workspace graph: {err:#}"),
+                tail: String::new(),
+            }
+            .into()
+        })
     }
 
     fn system_type(&self) -> BuildSystemType {
