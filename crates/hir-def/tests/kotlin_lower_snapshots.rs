@@ -1119,3 +1119,26 @@ fun prefixes(): Int {
 }
 "#,
 }
+
+// -- a `when` entry's guard ---------------------------------------------------
+//
+// The guard — the `if <expression>` between the conditions and the arrow — is
+// kotlinc's production, not KLS 1.9's (`whenEntry` has no guard), so the
+// fixture's reference is kotlinc 2.4.20, which compiles it clean:
+// `/home/cubewhy/.local/bin/kotlinc` accepts `is Cat if cat.hungry -> …`,
+// `1 if flag -> …` and `else if flag -> …`. The guard's expression is lowered
+// to its own id, rendered between the conditions and the body (`if eN`).
+
+body_snapshot_lang! {
+    kotlin_body_when_guard,
+    LanguageKind::Kotlin,
+    r#"
+class Cat(val hungry: Boolean)
+
+fun feed(x: Any, flag: Boolean): String = when (x) {
+    is Cat if x.hungry -> "hungry"
+    is Cat if flag -> "cat"
+    else -> "other"
+}
+"#,
+}

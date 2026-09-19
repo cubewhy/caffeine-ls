@@ -733,13 +733,19 @@ pub enum JumpKind {
 
 /// One entry of a Kotlin `when` expression ([KLS
 /// `expressions.html#when-expressions`](https://kotlinlang.org/spec/expressions.html#when-expressions)):
-/// the conditions it matches (`None` conditions are the `else` arm) and the
-/// expression it evaluates.
+/// the conditions it matches (empty conditions are the `else` arm), its guard,
+/// and the expression it evaluates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhenArm {
     /// The conditions of the entry, in source order. Empty for the `else`
     /// arm, which is the only arm without conditions.
     pub conditions: Vec<WhenCondition>,
+    /// The entry's guard, the `if <expression>` kotlinc writes between the
+    /// conditions and the arrow
+    /// (<https://kotlinlang.org/docs/control-flow.html#when-expressions-and-statements>).
+    /// A guarded entry matches only where the guard holds, so it never
+    /// exhausts the subject. `None` for an unguarded entry.
+    pub guard: Option<ExprId>,
     pub body: ExprId,
 }
 

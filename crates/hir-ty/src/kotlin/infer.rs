@@ -1322,8 +1322,12 @@ impl<'a> InferCtx<'a> {
         let mut has_else = false;
         for arm in arms {
             // An arm with no conditions is the `else`
-            // ([`hir_expand::body::WhenArm`]).
-            if arm.conditions.is_empty() {
+            // ([`hir_expand::body::WhenArm`]) — unless it carries a guard: a
+            // guarded entry is chosen only where the guard holds, so it does
+            // not exhaust the subject either (kotlinc 2.4.20: `when (a) { is B
+            // if true -> 1 }` over a sealed `A` is `'when' expression must be
+            // exhaustive`).
+            if arm.conditions.is_empty() && arm.guard.is_none() {
                 has_else = true;
             }
             let narrowed: Vec<(LocalId, Ty)> = self
@@ -1379,6 +1383,22 @@ impl<'a> InferCtx<'a> {
             // The narrowing belongs to the arm: it is undone before the next
             // one, which tests something else ([KLS
             // `type-inference.html#smart-casts`](https://kotlinlang.org/spec/type-inference.html#smart-casts)).
+            //
+            // The guard sees that narrowing too — `is Cat if cat.isHungry` reads
+            // `cat` as the `Cat` — and must be a `Boolean`
+            // (<https://kotlinlang.org/docs/control-flow.html#when-expressions-and-statements>).
+            if let Some(guard) = arm.guard {
+                let guard_ty = self.narrowed_branch(&narrowed, guard);
+                if !self.is_boolean(&guard_ty) {
+                    let range = self.bodies.expr_range(guard);
+                    self.types
+                        .diagnostics
+                        .push(KotlinTypeError::NonBooleanWhenCondition {
+                            range,
+                            actual: Some(guard_ty),
+                        });
+                }
+            }
             let body_ty = self.narrowed_branch(&narrowed, arm.body);
             result = Some(match result {
                 Some(previous) => super::subtyping::lub(self.db, &self.scope, &previous, &body_ty),

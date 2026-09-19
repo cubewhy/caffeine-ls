@@ -226,6 +226,7 @@ pub enum SyntaxKind {
     WHEN_EXPRESSION,
     WHEN_SUBJECT,
     WHEN_ENTRY,
+    WHEN_GUARD,
     RANGE_TEST,
     TYPE_TEST,
     TRY_EXPRESSION,

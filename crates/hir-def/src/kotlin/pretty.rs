@@ -888,6 +888,10 @@ fn expr_children(expr: &ExprData) -> String {
                         WhenCondition::TypeTest { expr, .. } => expr.to_string(),
                         WhenCondition::Containment { element, .. } => element.to_string(),
                     })
+                    // The guard stands between the conditions and the body and
+                    // is marked as such — the entry's ids are in source order,
+                    // so `if <id>` is what tells the guard from a condition.
+                    .chain(arm.guard.iter().map(|guard| format!("if {guard}")))
                     .chain(std::iter::once(arm.body.to_string()))
             }))
             .collect(),

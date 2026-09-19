@@ -595,6 +595,51 @@ fun statement(x: Int) {
 
 // -- Java and classfile members on a Kotlin receiver --------------------------
 
+/// A `when` entry's guard — the `if <expression>` kotlinc writes between the
+/// conditions and the arrow
+/// (<https://kotlinlang.org/docs/control-flow.html#when-expressions-and-statements>;
+/// KLS 1.9's `whenEntry` has no guard, so the compiler is the reference) — is a
+/// `Boolean` inferred in the entry's *narrowed* scope, and it does not make the
+/// entry cover its condition.
+///
+/// kotlinc 2.4.20 reports exactly the two findings below for this fixture: the
+/// two guarded entries do not exhaust an `Any` subject, and the second guard is
+/// `Cat` — not `Any`, and not unresolved — which is what shows the guard read
+/// `x` through its own entry's `is Cat`. The last function's unguarded `else`
+/// makes its `when` exhaustive, so it reports nothing.
+#[test]
+fn a_when_guard_is_boolean_and_sees_the_narrowing() {
+    let source = r#"
+class Cat(val hungry: Boolean)
+
+fun feed(x: Any): String = when (x) {
+    is Cat if x.hungry -> "hungry"
+    is Cat if x -> "cat"
+}
+
+fun complete(x: Any): String = when (x) {
+    is Cat if x.hungry -> "hungry"
+    else -> "other"
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    for expected in [
+        "kotlin.non-exhaustive-when: 'when' expression must be exhaustive. Add an 'else' branch.",
+        "kotlin.non-boolean-when-condition: condition type mismatch: inferred type is 'Cat' but 'Boolean' was expected.",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "expected {expected:?} in:\n{rendered}"
+        );
+    }
+    assert_eq!(
+        rendered.matches("kotlin.").count(),
+        2,
+        "`complete` reports nothing and every guard reads its narrowing: {rendered}"
+    );
+}
+
 /// The member bridge: what a call, a read or a write on a Java or classfile
 /// receiver resolves to.
 ///

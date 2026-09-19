@@ -1,0 +1,39 @@
+---
+source: crates/hir-def/tests/kotlin_lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Cat(val hungry: Boolean)
+
+fun feed(x: Any, flag: Boolean): String = when (x) {
+    is Cat if x.hungry -> "hungry"
+    is Cat if flag -> "cat"
+    else -> "other"
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)
+class Cat @1..33
+  primary constructor(hungry: Boolean) @10..31
+  val hungry: Boolean @11..30
+fun feed(x: Any, flag: Boolean): String @33..170
+
+BODIES:
+fun feed body b0:
+  param l1: x: Any
+  param l2: flag: Boolean
+  s0: expr e7
+  local l0: hungry: Boolean
+  local l1: x: Any
+  local l2: flag: Boolean
+  expr e0: var x 
+  expr e1: var x 
+  expr e2: field hungry [e1]
+  expr e3: literal Str("hungry") 
+  expr e4: var flag 
+  expr e5: literal Str("cat") 
+  expr e6: literal Str("other") 
+  expr e7: when (3 arms) [e0, e0, if e2, e3, e0, if e4, e5, e6]

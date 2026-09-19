@@ -911,6 +911,7 @@ fn when_entry(p: &mut Parser) {
     if p.at(ELSE_KW) {
         p.bump();
         eat_nl(p);
+        when_guard(p);
         p.expect(ARROW);
         eat_nl(p);
         crate::parser::grammar::statements::control_structure_body(p);
@@ -928,6 +929,7 @@ fn when_entry(p: &mut Parser) {
             when_condition(p);
         }
         eat_nl(p);
+        when_guard(p);
         p.expect(ARROW);
         eat_nl(p);
         crate::parser::grammar::statements::control_structure_body(p);
@@ -938,6 +940,28 @@ fn when_entry(p: &mut Parser) {
     }
 
     m.complete(p, WHEN_ENTRY);
+}
+
+/// The guard of a `when` entry: `if expression` between the entry's conditions
+/// and its arrow.
+///
+/// The production is kotlinc 2.4.20's, not KLS 1.9's — the specification's
+/// `whenEntry` has no guard
+/// (<https://kotlinlang.org/docs/control-flow.html#when-expressions-and-statements>
+/// documents the form) — so the reference for this rule is the compiler: it
+/// accepts `is Cat if cat.isHungry -> …`, `1 if flag -> …` and
+/// `else if flag -> …`, and a guarded entry is not exhaustive
+/// (`when (a) { is B if true -> 1 }` over a sealed `A` is
+/// `'when' expression must be exhaustive`).
+fn when_guard(p: &mut Parser) {
+    if !p.at(IF_KW) {
+        return;
+    }
+    let m = p.start();
+    p.bump();
+    eat_nl(p);
+    expression(p);
+    m.complete(p, WHEN_GUARD);
 }
 
 /// `whenCondition`: expression | rangeTest | typeTest

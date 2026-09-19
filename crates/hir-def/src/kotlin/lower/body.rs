@@ -1751,12 +1751,18 @@ fn when_subject(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) 
 }
 
 /// One `when` entry ([spec: grammar-rule-whenEntry]): its conditions — the
-/// expressions before the `->` — and its body, the `controlStructureBody`
-/// after it.
+/// expressions before the `->` — its guard, and its body, the
+/// `controlStructureBody` after the arrow.
 ///
 /// An `in`/`!in` condition ([spec: grammar-rule-whenCondition] `rangeTest`) and
 /// an `is`/`!is` one (`typeTest`) are tested against the `when` *subject*,
 /// which the entry does not write, so the subject is what they carry.
+///
+/// The guard (`is Cat if cat.isHungry -> …`) is kotlinc's own production, not
+/// KLS 1.9's: it is the `if <expression>` between the conditions and the arrow
+/// (<https://kotlinlang.org/docs/control-flow.html#when-expressions-and-statements>),
+/// and it is lowered to [`WhenArm::guard`] so the type layer can infer it in
+/// the arm's narrowed scope.
 fn when_arm(
     ctx: &mut LowerCtx<'_>,
     owner: ItemId,
@@ -1764,9 +1770,13 @@ fn when_arm(
     subject: Option<ExprId>,
 ) -> WhenArm {
     let mut conditions = Vec::new();
+    let mut guard = None;
     let mut body = None;
     for child in node.children() {
         match child.kind() {
+            K::WHEN_GUARD => {
+                guard = child_expression(&child).map(|guard| expr(ctx, owner, &guard));
+            }
             K::RANGE_TEST => {
                 let negated = child
                     .children_with_tokens()
@@ -1822,6 +1832,7 @@ fn when_arm(
     // entry with no written body (an erroneous tree) carries a missing one.
     WhenArm {
         conditions,
+        guard,
         body: body.unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range())),
     }
 }
