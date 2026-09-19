@@ -748,6 +748,16 @@ class B {
     fun giveArr(): Array<Int> = arrayOf()
 
     fun giveUnitArr(): Array<Unit> = arrayOf()
+
+    val u2: Unit? = null
+
+    fun takeUnit2(x: Unit?) {}
+
+    fun maybeUnit(): Unit? = null
+
+    fun takeUnitArr2(a: Array<Unit?>) {}
+
+    fun giveUnitArr2(): Array<Unit?> = arrayOf()
 }
 
 val u: List<Unit> = listOf()
@@ -782,6 +792,11 @@ val arr: Array<Int> = arrayOf()
 ///   public final void takeArr(java.lang.String[]);
 ///   public final java.lang.Integer[] giveArr();
 ///   public final kotlin.Unit[] giveUnitArr();
+///   public final kotlin.Unit getU2();
+///   public final void takeUnit2(kotlin.Unit);
+///   public final kotlin.Unit maybeUnit();
+///   public final void takeUnitArr2(kotlin.Unit[]);
+///   public final kotlin.Unit[] giveUnitArr2();
 /// }
 /// public final class m6.BKt {
 ///   private static final java.util.List<kotlin.Unit> u;
@@ -810,6 +825,10 @@ val arr: Array<Int> = arrayOf()
 /// `takeUnit`, `giveUnitArr`'s component, the facade's `List<Unit>`); and
 /// Kotlin's `Array<T>` is the JVM array `T[]` (`takeArr`'s
 /// `java.lang.String[]`, `giveArr`'s `java.lang.Integer[]`).
+///
+/// A *nullable* `Unit` is the class even where a bare one is `void`
+/// (`maybeUnit()`, `takeUnit2`, `getU2`, the `Array<Unit?>`): the wrapper is
+/// what carries the null, and `void` cannot.
 #[test]
 fn a_kotlin_primitive_and_unit_are_the_classfiles_types() {
     let (db, file) = fixture(&[("/src/main/kotlin/m6/B.kt", POSITIONS_KT)]);
@@ -830,6 +849,11 @@ fn a_kotlin_primitive_and_unit_are_the_classfiles_types() {
                 "takeArr",
                 "giveArr",
                 "giveUnitArr",
+                "getU2",
+                "takeUnit2",
+                "maybeUnit",
+                "takeUnitArr2",
+                "giveUnitArr2",
             ]
         ),
         vec![
@@ -856,6 +880,18 @@ fn a_kotlin_primitive_and_unit_are_the_classfiles_types() {
             "public final java.lang.Integer[] giveArr()",
             // `public final kotlin.Unit[] giveUnitArr();`
             "public final kotlin.Unit[] giveUnitArr()",
+            // `public final kotlin.Unit getU2();` — a nullable property is the
+            // class in *every* position.
+            "public final kotlin.Unit getU2()",
+            // `public final void takeUnit2(kotlin.Unit);`
+            "public final void takeUnit2(kotlin.Unit)",
+            // `public final kotlin.Unit maybeUnit();` — a nullable `Unit`
+            // return is not `void`.
+            "public final kotlin.Unit maybeUnit()",
+            // `public final void takeUnitArr2(kotlin.Unit[]);`
+            "public final void takeUnitArr2(kotlin.Unit[])",
+            // `public final kotlin.Unit[] giveUnitArr2();`
+            "public final kotlin.Unit[] giveUnitArr2()",
         ]
     );
     // The facade's top-level properties: a `List`'s argument carries the box,

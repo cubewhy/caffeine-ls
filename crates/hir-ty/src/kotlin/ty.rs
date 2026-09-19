@@ -242,12 +242,14 @@ enum JvmPosition {
 ///   field — stays the primitive the signature unboxes: `List<Int>` is
 ///   `java.util.List<java.lang.Integer>`, `Array<Int>` is
 ///   `java.lang.Integer[]`, and `fun f(a: Int): Int` is `int f(int)`;
-/// * `kotlin.Unit` is `void` in a **function's return type** only; everywhere
-///   else — a property's own type, a parameter, a type argument, an array
-///   element — it is the `kotlin.Unit` class: `fun g(): Unit` is `void g()`
-///   while `val u: Unit` is `kotlin.Unit getU()`, `fun takeUnit(x: Unit)` is
-///   `void takeUnit(kotlin.Unit)`, `Array<Unit>` is `kotlin.Unit[]` and
-///   `List<Unit>` is `List<kotlin.Unit>`;
+/// * `kotlin.Unit` is `void` in a **function's return type** only, and only
+///   when it is written *bare*; everywhere else — a property's own type, a
+///   parameter, a type argument, an array element, and a *nullable* return —
+///   it is the `kotlin.Unit` class: `fun g(): Unit` is `void g()` while
+///   `val u: Unit` is `kotlin.Unit getU()`, `fun takeUnit(x: Unit)` is
+///   `void takeUnit(kotlin.Unit)`, `Array<Unit>` is `kotlin.Unit[]`,
+///   `List<Unit>` is `List<kotlin.Unit>` and `fun r(): Unit?` is
+///   `kotlin.Unit r()`;
 /// * Kotlin's `Array<T>` *is* the JVM array `T[]`, whatever `T` is —
 ///   `Array<String>` is `java.lang.String[]`, `Array<Unit>`
 ///   `kotlin.Unit[]` — which is how the builtins layer already reads a
@@ -327,10 +329,19 @@ fn ty_from_kotlin_in(db: &dyn TyDatabase, ty: Ty, position: JvmPosition) -> Ty {
             // wrapper is a nullability form rather than a written primitive, so
             // both spellings (`Int?` and the flexible type's `T & Any` upper
             // half) take it.
-            if let TyKind::Reference { name, .. } = inner.kind(db)
-                && let Some((_, boxed)) = primitive_of_mapped(name)
-            {
-                return Ty::reference(db, boxed, Vec::new());
+            if let TyKind::Reference { name, .. } = inner.kind(db) {
+                if let Some((_, boxed)) = primitive_of_mapped(name) {
+                    return Ty::reference(db, boxed, Vec::new());
+                }
+                // A *nullable* `Unit` is the `kotlin.Unit` class even in a
+                // return position, where the bare `Unit` is `void`: the wrapper
+                // is what the value carries a null in, and `void` cannot
+                // (kotlinc 2.4.20 compiles `fun ret(): Unit?` to
+                // `public final kotlin.Unit ret();` while `fun g(): Unit` is
+                // `public final void g();`).
+                if name.as_str() == "kotlin.Unit" {
+                    return Ty::reference(db, "kotlin.Unit", Vec::new());
+                }
             }
             ty_from_kotlin_in(db, *inner, position)
         }
