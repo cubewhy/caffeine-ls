@@ -1,6 +1,6 @@
 # Adding a language
 
-Every layer of the workspace answers per *file kind*, and each layer owns one
+Every layer of the workspace answers per _file kind_, and each layer owns one
 registry: a language is an identity plus one registration per layer, and a
 feature dispatches through the registration instead of through a language name.
 Nothing below `caffeine-ls` (the LSP handlers, the CLI, the extension
@@ -20,7 +20,7 @@ classfiles) living in a shared layer that every JVM language plugs into.
 
 2. **`crates/syntax/src/lang/<lang>.rs`** — one `impl LanguageSyntax`
    ([`crates/syntax/src/lang.rs`](../crates/syntax/src/lang.rs)): the kinds it
-   answers for, the file extensions it owns *with the kind each names*
+   answers for, the file extensions it owns _with the kind each names_
    (most specific first), its LSP `languageId`, the name snapshots spell it
    with, and how it parses. Register it in the table.
 
@@ -37,12 +37,12 @@ classfiles) living in a shared layer that every JVM language plugs into.
 4. **`crates/hir-ty/src/<lang>/`** — the type layer, plus
    `crates/hir-ty/src/<lang>/plugin.rs` with
    ([`crates/hir-ty/src/lang.rs`](../crates/hir-ty/src/lang.rs)):
-   * `impl JvmMemberSource` — the JVM-visible members a class of this language
+   - `impl JvmMemberSource` — the JVM-visible members a class of this language
      declares: the methods and fields named `name`, and the abstract members a
      functional-interface test sees. This is what every other language reaches
      a class of yours through, so it must answer in classfile shapes (what a
      compiler would emit), not in source shapes.
-   * `impl LanguageTypes` — `ty_from_jvm` and `ty_to_jvm`, the two directions
+   - `impl LanguageTypes` — `ty_from_jvm` and `ty_to_jvm`, the two directions
      of the codec between your types and the JVM's (`ty_from_jvm` is where
      platform types, if your language has them, are introduced), plus your
      supertypes, your call sites' access context, and the file dependency
@@ -88,11 +88,11 @@ server reads `syntax::lang::file_extensions`), no diagnostics code.
    `is_kotlin`, `java::…` in a shared file. A shared module reaches a language
    through a registry, keyed by the target's kind or by the target's file.
 3. A language reaches another language only through a registry: a cross-language
-   lookup asks the *target's* layer (`for_file(db, target_file)`), and a cast to
+   lookup asks the _target's_ layer (`for_file(db, target_file)`), and a cast to
    a concrete declaration model is legal only inside that model's own module.
-4. A shared *data* enum may still carry one variant per language
+4. A shared _data_ enum may still carry one variant per language
    (`DiagnosticCode::{Java, Kotlin}`, `SourceSymbolKind`, the body IR's
-   `ExprData`). What the rule forbids is per-language *dispatch* in shared code,
+   `ExprData`). What the rule forbids is per-language _dispatch_ in shared code,
    not per-language data.
 5. The JVM-shaped model belongs to the JVM layer: a language's declaration and
    type layers plug into `hir-def::jvm` / `hir-ty::jvm` (the member vocabulary,
@@ -101,5 +101,5 @@ server reads `syntax::lang::file_extensions`), no diagnostics code.
 
 `crates/ide/tests/language_registration.rs` asserts the registries agree on
 every kind, so a half-added language — registered in one layer and forgotten in
-another, which would answer *nothing* rather than failing — fails the test with
+another, which would answer _nothing_ rather than failing — fails the test with
 the layer and the kind.
