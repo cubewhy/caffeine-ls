@@ -1191,3 +1191,255 @@ class Use {
         assert_eq!(actual, ret, "{call}");
     }
 }
+
+#[test]
+fn java_respects_kotlin_accessor_visibility() {
+    use salsa::Setter;
+
+    let kotlin = r#"package p
+open class Access {
+    lateinit var ready: String
+    var hidden: String = ""
+        private set
+    var custom: String = ""
+        private set(value) { field = value }
+    var guarded: String = ""
+        protected set
+    var local: String = ""
+        internal set
+}
+object Obj { lateinit var ready: String }
+class Holder { companion object { lateinit var ready: String } }
+"#;
+    let subclass = r#"package q;
+import p.Access;
+import p.Obj;
+import p.Holder;
+class Sub extends Access {
+    void good(Access a) {
+        a.ready = "ready";
+        String ready = a.ready;
+        a.setReady(ready);
+        String fromGetter = a.getReady();
+        String hidden = a.getHidden();
+        String custom = a.getCustom();
+        a.setLocal$m("module");
+        String local = a.getLocal();
+        Obj.ready = "object";
+        String object = Obj.ready;
+        Holder.ready = "companion";
+        String companion = Holder.ready;
+        this.setGuarded("protected");
+    }
+    void missing(Access a) { a.setHidden("x"); }
+    void privateSetter(Access a) { a.setCustom("x"); }
+    void protectedReceiver(Access a) { a.setGuarded("x"); }
+    void unmangled(Access a) { a.setLocal("x"); }
+    void companionOwner() { Holder.Companion.ready = "x"; }
+}"#;
+    let outside = r#"package q;
+import p.Access;
+class Outside {
+    void protectedSetter(Access a) { a.setGuarded("x"); }
+}"#;
+    let (mut db, source_set) = interop_fixture(&[
+        ("/src/main/kotlin/p/Access.kt", kotlin),
+        ("/src/main/java/q/Sub.java", subclass),
+        ("/src/main/java/q/Outside.java", outside),
+    ]);
+    // Configure only this compilation, leaving the shared fixture's defaults intact.
+    let graph = hir::project_graph(&db).unwrap();
+    let mut module_names = graph.module_names(&db).clone();
+    module_names.insert(source_set, hir_expand::name::Name::new("m"));
+    graph.set_module_names(&mut db).to(module_names);
+
+    let string = Ty::reference(&db, "java.lang.String", vec![]);
+    for (file, java) in [
+        (FileId::from_raw(2), subclass),
+        (FileId::from_raw(3), outside),
+    ] {
+        let declarations = hir_ty::class_diagnostics(&db, file);
+        assert!(declarations.is_empty(), "{declarations:?}");
+        let tree = hir_def::java::plugin::tree(&db, file);
+        let bodies = hir::file_body_tree(&db, file);
+        for (item, data) in common::all_items(&tree) {
+            let hir_def::java::item_tree::ItemData::Method(method) = data else {
+                continue;
+            };
+            let types = hir_ty::body_types(&db, file, item).unwrap();
+            if method.name.as_str() == "good" {
+                assert!(types.diagnostics.is_empty(), "{:?}", types.diagnostics);
+                for (expression, owner, is_static) in [
+                    ("a.ready", "p.Access", false),
+                    ("Obj.ready", "p.Obj", true),
+                    ("Holder.ready", "p.Holder", true),
+                ] {
+                    let selected = types
+                        .resolved
+                        .iter()
+                        .find_map(|(expr, selected)| {
+                            let range = bodies.expr_range(*expr)?;
+                            (&java[range] == expression).then_some(selected)
+                        })
+                        .expect(expression);
+                    let hir_ty::ResolvedMember::Field(field) = selected else {
+                        panic!("{expression}: {selected:?}");
+                    };
+                    assert_eq!(
+                        field.owner.as_ty(&db, vec![]),
+                        Ty::reference(&db, owner, vec![])
+                    );
+                    assert_eq!(field.ty, string, "{expression}");
+                    assert_eq!(field.is_static, is_static, "{expression}");
+                    assert!(!field.is_final, "{expression}");
+                }
+                for (expression, name) in [
+                    ("a.setReady(ready)", "setReady"),
+                    ("a.getReady()", "getReady"),
+                    ("a.getHidden()", "getHidden"),
+                    ("a.getCustom()", "getCustom"),
+                    ("a.setLocal$m(\"module\")", "setLocal$m"),
+                    ("a.getLocal()", "getLocal"),
+                    ("this.setGuarded(\"protected\")", "setGuarded"),
+                ] {
+                    let selected = types
+                        .resolved
+                        .iter()
+                        .find_map(|(expr, selected)| {
+                            let range = bodies.expr_range(*expr)?;
+                            (&java[range] == expression).then_some(selected)
+                        })
+                        .expect(expression);
+                    assert!(
+                        matches!(selected, hir_ty::ResolvedMember::Method(method)
+                        if method.name == name),
+                        "{expression}: {selected:?}"
+                    );
+                }
+                continue;
+            }
+
+            assert_eq!(
+                types.diagnostics.len(),
+                1,
+                "{}: {:?}",
+                method.name,
+                types.diagnostics
+            );
+            let diagnostic = &types.diagnostics[0];
+            let (expression, name) = match method.name.as_str() {
+                "missing" | "unmangled" => {
+                    let (expression, name) = if method.name.as_str() == "missing" {
+                        ("a.setHidden(\"x\")", "setHidden")
+                    } else {
+                        ("a.setLocal(\"x\")", "setLocal")
+                    };
+                    assert!(
+                        matches!(diagnostic, hir_ty::TypeError::NoSuchMethod { name: actual, .. }
+                        if actual.as_str() == name),
+                        "{diagnostic:?}"
+                    );
+                    assert!(
+                        !types.resolved.iter().any(|(expr, _)| {
+                            bodies
+                                .expr_range(*expr)
+                                .is_some_and(|range| &java[range] == expression)
+                        }),
+                        "an omitted method must not resolve: {expression}"
+                    );
+                    (expression, name)
+                }
+                "privateSetter" | "protectedReceiver" | "protectedSetter" => {
+                    let (expression, name, access) = if method.name.as_str() == "privateSetter" {
+                        ("a.setCustom(\"x\")", "setCustom", "private")
+                    } else {
+                        ("a.setGuarded(\"x\")", "setGuarded", "protected")
+                    };
+                    assert!(
+                        matches!(diagnostic, hir_ty::TypeError::IllegalAccess {
+                        kind: hir_ty::java::diagnostics::IllegalAccessKind::Method,
+                        name: actual, access: actual_access, ..
+                    } if actual.as_str() == name && *actual_access == access),
+                        "{diagnostic:?}"
+                    );
+                    (expression, name)
+                }
+                "companionOwner" => {
+                    assert!(
+                        matches!(diagnostic, hir_ty::TypeError::NoSuchField { name, .. }
+                        if name.as_str() == "ready"),
+                        "{diagnostic:?}"
+                    );
+                    ("Holder.Companion.ready", "ready")
+                }
+                name => panic!("unexpected method {name}"),
+            };
+            let range = diagnostic.range(&bodies).unwrap();
+            assert_eq!(&java[range], name);
+            let start = java.find(expression).unwrap() + expression.find(name).unwrap();
+            assert_eq!(usize::from(range.start()), start);
+        }
+    }
+}
+
+#[test]
+fn java_cannot_override_final_kotlin_members() {
+    let kotlin = r#"package p
+open class Base { open fun f(): Int = 1 }
+open class OpenMid : Base() { override fun f(): Int = 2 }
+open class FinalMid : Base() { final override fun f(): Int = 2 }
+"#;
+    let open_child = r#"package q;
+class OpenChild extends p.OpenMid {
+    public int f() { return 3; }
+}"#;
+    let final_child = r#"package q;
+class FinalChild extends p.FinalMid {
+    public int f() { return 3; }
+}"#;
+    let (db, _) = interop_fixture(&[
+        ("/src/main/kotlin/p/Overrides.kt", kotlin),
+        ("/src/main/java/q/OpenChild.java", open_child),
+        ("/src/main/java/q/FinalChild.java", final_child),
+    ]);
+    let open_file = FileId::from_raw(2);
+    let declarations = hir_ty::class_diagnostics(&db, open_file);
+    assert!(declarations.is_empty(), "{declarations:?}");
+
+    let final_file = FileId::from_raw(3);
+    let declarations = hir_ty::class_diagnostics(&db, final_file);
+    assert_eq!(declarations.len(), 1, "{declarations:?}");
+    assert!(
+        matches!(&declarations[0], hir_ty::DeclDiagnostic::CannotOverrideFinalMethod {
+        method, super_owner,
+    } if method.as_str() == "f" && super_owner.as_str() == "p.FinalMid"),
+        "{declarations:?}"
+    );
+
+    // Hierarchy findings are keyed by method name; the diagnostic consumer
+    // resolves that key to the offending Java declaration's source range.
+    let diagnostics = ide_diagnostics::declaration_diagnostics(&db, final_file);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(
+        diagnostics[0].code,
+        Some(syntax::DiagnosticCode::Java(
+            syntax::JavaDiagnosticCode::CannotOverrideFinalMethod,
+        ))
+    );
+    let range = diagnostics[0].range.range;
+    assert_eq!(&final_child[range], "public int f() { return 3; }");
+    assert_eq!(
+        usize::from(range.start()),
+        final_child.find("public int f()").unwrap()
+    );
+    assert!(ide_diagnostics::declaration_diagnostics(&db, open_file).is_empty());
+
+    for file in [open_file, final_file] {
+        let tree = hir_def::java::plugin::tree(&db, file);
+        for (item, _) in common::all_items(&tree) {
+            if let Some(types) = hir_ty::body_types(&db, file, item) {
+                assert!(types.diagnostics.is_empty(), "{:?}", types.diagnostics);
+            }
+        }
+    }
+}

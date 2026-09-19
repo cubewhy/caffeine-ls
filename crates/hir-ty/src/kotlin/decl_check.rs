@@ -1145,14 +1145,9 @@ fn is_abstract(modifiers: &KotlinModifiers) -> bool {
     matches!(modifiers.modality, KotlinModality::Abstract)
 }
 
-/// Whether a supertype member may be overridden. A Kotlin source member with no
-/// written modality takes its container's — an interface member is `open`, a
-/// class member `final` (<https://kotlinlang.org/docs/interfaces.html>) — and a
-/// classfile member answers its own `ACC_FINAL`.
-///
-/// The model does not record whether a modality was *written*, so a `final`
-/// spelled out on an interface member is read as `open`: permissive, never a
-/// false `is final and cannot be overridden`.
+/// Whether a supertype member may be overridden. The shared effective modality
+/// preserves explicit finality and the implicit openness of an override.
+/// https://kotlinlang.org/spec/inheritance.html#overriding
 fn overridable(db: &dyn TyDatabase, member: &Member) -> bool {
     match &member.target {
         MemberTarget::Kotlin { file, item } => {
@@ -1168,11 +1163,13 @@ fn overridable(db: &dyn TyDatabase, member: &Member) -> bool {
                 KotlinItemData::Property(property) => property.modifiers,
                 _ => return false,
             };
-            match modifiers.modality {
-                KotlinModality::Open | KotlinModality::Abstract => true,
-                KotlinModality::Final => container_is_interface(tree, *item),
-                KotlinModality::Sealed => false,
-            }
+            matches!(
+                modifiers.effective_member_modality(
+                    container_is_interface(tree, *item),
+                    has_body(tree, *item)
+                ),
+                KotlinModality::Open | KotlinModality::Abstract
+            )
         }
         MemberTarget::Java(method) | MemberTarget::JavaProperty { getter: method, .. } => {
             !method.is_final
@@ -1210,11 +1207,10 @@ fn member_is_abstract(db: &dyn TyDatabase, member: &Member) -> bool {
                 KotlinItemData::Property(property) => property.modifiers,
                 _ => return false,
             };
-            // A member an *interface* declares without a body is abstract by
-            // declaration ([KLS
-            // `declarations.html#interface-declaration`](https://kotlinlang.org/spec/declarations.html#interface-declaration)).
-            is_abstract(&modifiers)
-                || (container_is_interface(tree, *item) && !has_body(tree, *item))
+            modifiers.effective_member_modality(
+                container_is_interface(tree, *item),
+                has_body(tree, *item),
+            ) == KotlinModality::Abstract
         }
         MemberTarget::Java(method) | MemberTarget::JavaProperty { getter: method, .. } => {
             method.abstract_

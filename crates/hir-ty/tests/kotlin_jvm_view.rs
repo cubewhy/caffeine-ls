@@ -1313,3 +1313,240 @@ internal fun topI(): Int = 10
         vec!["public static final int topI()"]
     );
 }
+
+/// kotlinc 2.4.20, `-module-name m`, followed by `javap -p`:
+/// `getHidden`/`getAnnotated` are public final, with no setter even under
+/// `renamedHidden`; `setCustom` is private final, `setGuarded` protected final,
+/// and `setLocal$m` public final. Custom private accessors remain private final.
+/// The lateinit fields are non-final and inherit the setter's access; object,
+/// enclosing-class companion and file fields are static. Companion accessors
+/// remain instance methods of `Holder$Factory`, not methods of `Holder`.
+#[test]
+fn accessor_visibility_and_lateinit_fields_match_kotlinc() {
+    let (db, file) = fixture(&[(
+        "/src/main/kotlin/m6/Visibility.kt",
+        r#"package m6
+open class Access {
+    var hidden: String = ""
+        private set
+    @set:JvmName("renamedHidden")
+    var annotated: String = ""
+        private set
+    var custom: String = ""
+        private set(value) { field = value }
+    var guarded: String = ""
+        protected set
+    var local: String = ""
+        internal set
+    internal var inherited: String = ""
+    @get:JvmName("renamedPrivate")
+    private val plainPrivate: String = ""
+    private var customPrivate: String = ""
+        get() = field
+        set(value) { field = value }
+    lateinit var ready: String
+    lateinit var protectedReady: String
+        protected set
+    lateinit var internalReady: String
+        internal set
+    private lateinit var privateReady: String
+    @JvmField var exposed: String = ""
+}
+object Obj { lateinit var ready: String }
+class Holder {
+    companion object Factory { lateinit var ready: String }
+}
+lateinit var topReady: String
+"#,
+    )]);
+    assert_eq!(
+        methods(
+            &db,
+            file,
+            "Access",
+            &[
+                "getHidden",
+                "getAnnotated",
+                "getCustom",
+                "setCustom",
+                "getGuarded",
+                "setGuarded",
+                "getLocal",
+                "setLocal$m",
+                "getInherited$m",
+                "setInherited$m",
+                "getCustomPrivate",
+                "setCustomPrivate",
+            ],
+        ),
+        vec![
+            "public final java.lang.String getHidden()",
+            "public final java.lang.String getAnnotated()",
+            "public final java.lang.String getCustom()",
+            "private final void setCustom(java.lang.String)",
+            "public final java.lang.String getGuarded()",
+            "protected final void setGuarded(java.lang.String)",
+            "public final java.lang.String getLocal()",
+            "public final void setLocal$m(java.lang.String)",
+            "public final java.lang.String getInherited$m()",
+            "public final void setInherited$m(java.lang.String)",
+            "private final java.lang.String getCustomPrivate()",
+            "private final void setCustomPrivate(java.lang.String)",
+        ],
+    );
+    assert!(
+        methods(
+            &db,
+            file,
+            "Access",
+            &[
+                "setHidden",
+                "setAnnotated",
+                "renamedHidden",
+                "renamedHidden$m",
+                "getPlainPrivate",
+                "renamedPrivate",
+                "getLocal$m",
+                "setLocal",
+                "getInherited",
+                "setInherited",
+                "getPrivateReady",
+                "setPrivateReady",
+                "getExposed",
+                "setExposed",
+            ],
+        )
+        .is_empty(),
+        "omitted accessors, unmangled internal names and @JvmField accessors are unavailable",
+    );
+    assert_eq!(
+        methods(
+            &db,
+            file,
+            "Access",
+            &[
+                "getReady",
+                "setReady",
+                "getProtectedReady",
+                "setProtectedReady",
+                "getInternalReady",
+                "setInternalReady$m",
+            ],
+        ),
+        vec![
+            "public final java.lang.String getReady()",
+            "public final void setReady(java.lang.String)",
+            "public final java.lang.String getProtectedReady()",
+            "protected final void setProtectedReady(java.lang.String)",
+            "public final java.lang.String getInternalReady()",
+            "public final void setInternalReady$m(java.lang.String)",
+        ],
+    );
+    assert!(
+        methods(
+            &db,
+            file,
+            "Access",
+            &["getInternalReady$m", "setInternalReady"]
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        fields(
+            &db,
+            file,
+            "Access",
+            &[
+                "ready",
+                "protectedReady",
+                "internalReady",
+                "privateReady",
+                "exposed"
+            ],
+        ),
+        vec![
+            "public java.lang.String ready",
+            "protected java.lang.String protectedReady",
+            "public java.lang.String internalReady",
+            "private java.lang.String privateReady",
+            "public java.lang.String exposed",
+        ],
+    );
+    assert!(fields(&db, file, "Access", &["internalReady$m"]).is_empty());
+    for class in ["Obj", "Holder"] {
+        assert_eq!(
+            fields(&db, file, class, &["ready"]),
+            vec!["public static java.lang.String ready"],
+            "{class} owns the static field",
+        );
+    }
+    assert!(fields(&db, file, "Factory", &["ready"]).is_empty());
+    for class in ["Obj", "Factory"] {
+        assert_eq!(
+            methods(&db, file, class, &["getReady", "setReady"]),
+            vec![
+                "public final java.lang.String getReady()",
+                "public final void setReady(java.lang.String)",
+            ],
+            "{class} owns instance accessors",
+        );
+    }
+    assert!(methods(&db, file, "Holder", &["getReady", "setReady"]).is_empty());
+    assert_eq!(
+        facade_fields(&db, file, &["topReady"]),
+        vec!["public static java.lang.String topReady"],
+    );
+    assert_eq!(
+        facade_methods(&db, file, &["getTopReady", "setTopReady"]),
+        vec![
+            "public static final java.lang.String getTopReady()",
+            "public static final void setTopReady(java.lang.String)",
+        ],
+    );
+}
+
+/// kotlinc 2.4.20 + `javap -p`: `Base` and `OpenMid` emit `public int f()`
+/// and `public int getValue()`, while `FinalMid` emits both as `public final`.
+/// An explicit `open` interface declaration without a body still emits
+/// `public abstract int f()`; the body-bearing control emits `public default`.
+#[test]
+fn explicit_final_overrides_remain_final() {
+    let (db, file) = fixture(&[(
+        "/src/main/kotlin/m6/Modality.kt",
+        r#"package m6
+open class Base {
+    open fun f(): Int = 1
+    open val value: Int get() = 1
+}
+open class OpenMid : Base() {
+    override fun f(): Int = 2
+    override val value: Int get() = 2
+}
+open class FinalMid : Base() {
+    final override fun f(): Int = 2
+    final override val value: Int get() = 2
+}
+interface NoBody { open fun f(): Int }
+interface WithBody { fun f(): Int = 1 }
+"#,
+    )]);
+    for class in ["Base", "OpenMid"] {
+        assert_eq!(
+            methods(&db, file, class, &["f", "getValue"]),
+            vec!["public int f()", "public int getValue()"],
+            "{class} permits Java overrides of the function and property getter",
+        );
+    }
+    assert_eq!(
+        methods(&db, file, "FinalMid", &["f", "getValue"]),
+        vec!["public final int f()", "public final int getValue()"],
+    );
+    assert_eq!(
+        methods(&db, file, "NoBody", &["f"]),
+        vec!["public abstract int f()"],
+    );
+    assert_eq!(
+        methods(&db, file, "WithBody", &["f"]),
+        vec!["public default int f()"],
+    );
+}

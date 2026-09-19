@@ -174,6 +174,9 @@ bitflags! {
         /// ([KLS `declarations.html#interface-declaration`](https://kotlinlang.org/spec/declarations.html#interface-declaration)),
         /// which appears as a `FUN_KW` token rather than a modifier keyword.
         const FUN_INTERFACE = 1 << 20;
+        /// Presence bits, not additional keyword names for display.
+        const EXPLICIT_MODALITY = 1 << 21;
+        const EXPLICIT_VISIBILITY = 1 << 22;
     }
 }
 
@@ -204,6 +207,15 @@ impl KotlinModifiers {
     /// a delegated property, or `companion`, which is a declaration keyword of
     /// its own).
     pub fn push_keyword(&mut self, keyword: &str) -> bool {
+        match keyword {
+            "public" | "protected" | "private" | "internal" => {
+                self.flags.insert(KotlinModifierFlags::EXPLICIT_VISIBILITY)
+            }
+            "final" | "open" | "abstract" | "sealed" => {
+                self.flags.insert(KotlinModifierFlags::EXPLICIT_MODALITY)
+            }
+            _ => {}
+        }
         match keyword {
             "public" => self.visibility = KotlinVisibility::Public,
             "protected" => self.visibility = KotlinVisibility::Protected,
@@ -238,16 +250,30 @@ impl KotlinModifiers {
         true
     }
 
+    /// Member modality differs from classifier defaults: an override stays
+    /// open unless it explicitly closes inheritance; a bodyless interface
+    /// member is abstract even when it writes `open`.
+    /// https://kotlinlang.org/spec/inheritance.html#overriding
+    pub fn effective_member_modality(self, in_interface: bool, has_body: bool) -> KotlinModality {
+        if in_interface && !has_body {
+            KotlinModality::Abstract
+        } else if self.flags.contains(KotlinModifierFlags::EXPLICIT_MODALITY) {
+            self.modality
+        } else if in_interface || self.flags.contains(KotlinModifierFlags::OVERRIDE) {
+            KotlinModality::Open
+        } else {
+            KotlinModality::Final
+        }
+    }
+
     /// The recognized modifier names, in display order (stable across the
     /// snapshots rendered by `hir-def`'s pretty printer).
     ///
     /// Only the modifiers the declaration *departs* from the defaults with are
     /// listed: the implicit [`KotlinVisibility::Public`] and
     /// [`KotlinModality::Final`] of a declaration that names neither are
-    /// omitted rather than spelled out, so a snapshot shows at a glance what
-    /// the source wrote (an explicitly written `public`/`final` is
-    /// indistinguishable from the default here, and renders the same either
-    /// way).
+    /// omitted rather than spelled out. Explicit `public`/`final` retain their
+    /// presence bits for semantics, but deliberately render like the defaults.
     pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
         let flag = |flag: KotlinModifierFlags, name: &'static str| {
             self.flags.contains(flag).then_some(name)

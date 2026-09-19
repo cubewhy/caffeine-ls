@@ -661,35 +661,38 @@ impl<'a> Shapes<'a> {
     ///   declaration that names none is `final` in a `class`, an `open class`
     ///   and an `abstract class` alike (`public final int f();` in all three,
     ///   kotlinc 2.4.20).
-    ///
-    /// A deviation, recorded rather than modelled: `final override fun f()` is
-    /// an `override` that *does* name a modality and carries `ACC_FINAL`, but
-    /// [`KotlinModifiers`] keeps one modality tag and no flag for the written
-    /// keyword, so an explicitly written `final` is indistinguishable from the
-    /// default and only the `override` default is applied. The classifier's
-    /// modifiers have the same shape ([`KotlinModifiers::names`] documents it).
     fn member_flags(&self, modifiers: KotlinModifiers, has_body: bool) -> (bool, bool) {
-        if self.is_interface() {
-            // A member with a body is the classfile's `default` method; one
-            // without is the interface's abstract obligation.
-            return match has_body {
-                true => (false, false),
-                false => (true, false),
-            };
-        }
-        match modifiers.modality {
+        match modifiers.effective_member_modality(self.is_interface(), has_body) {
             KotlinModality::Abstract => (true, false),
             KotlinModality::Open => (false, false),
-            // An `override` names no modality and is open by default; a
-            // `sealed` class's members are `final` by default, exactly as a
-            // `class`'s are.
-            KotlinModality::Final | KotlinModality::Sealed
-                if modifiers.flags.contains(KotlinModifierFlags::OVERRIDE) =>
-            {
-                (false, false)
-            }
-            KotlinModality::Final | KotlinModality::Sealed => (false, true),
+            KotlinModality::Final => (false, true),
+            // Invalid member `sealed`: retain the previous recovery.
+            KotlinModality::Sealed => (
+                false,
+                !modifiers.flags.contains(KotlinModifierFlags::OVERRIDE),
+            ),
         }
+    }
+
+    /// Accessors inherit the property visibility unless they explicitly restrict it.
+    /// https://kotlinlang.org/docs/visibility-modifiers.html#class-members
+    fn accessor_visibility(&self, property: &PropertyData, is_setter: bool) -> KotlinVisibility {
+        property
+            .accessors
+            .iter()
+            .find_map(|&accessor| match self.tree.data(accessor) {
+                KotlinItemData::Accessor(data)
+                    if data.is_setter == is_setter
+                        && data
+                            .modifiers
+                            .flags
+                            .contains(KotlinModifierFlags::EXPLICIT_VISIBILITY) =>
+                {
+                    Some(data.modifiers.visibility)
+                }
+                _ => None,
+            })
+            .unwrap_or(property.modifiers.visibility)
     }
 
     /// The JVM name of the property's *reader* in this classifier.
@@ -717,7 +720,11 @@ impl<'a> Shapes<'a> {
             true => property.name.to_string(),
             false => property_getter_name(self.db, resolver, property)?,
         };
-        Some(self.declared_member_name(&name, property.modifiers.visibility, renamed.is_some()))
+        Some(self.declared_member_name(
+            &name,
+            self.accessor_visibility(property, false),
+            renamed.is_some(),
+        ))
     }
 
     /// The JVM name of the property's *writer* in this classifier — the
@@ -730,7 +737,11 @@ impl<'a> Shapes<'a> {
     ) -> Option<String> {
         let renamed = targeted_name(self.db, resolver, &property.annotations, "set");
         let name = property_setter_name(self.db, resolver, property)?;
-        Some(self.declared_member_name(&name, property.modifiers.visibility, renamed.is_some()))
+        Some(self.declared_member_name(
+            &name,
+            self.accessor_visibility(property, true),
+            renamed.is_some(),
+        ))
     }
 
     /// Whether the property declares an accessor of `is_setter`'s direction
@@ -1084,6 +1095,14 @@ impl<'a> Shapes<'a> {
         is_static: bool,
         out: &mut Vec<MethodData>,
     ) {
+        let visibility = self.accessor_visibility(property, is_setter);
+        // kotlinc omits private default accessors, even with an accessor JvmName.
+        // https://kotlinlang.org/docs/visibility-modifiers.html#class-members
+        if visibility == KotlinVisibility::Private
+            && !self.declares_accessor_body(property, is_setter)
+        {
+            return;
+        }
         let ty = self.property_ty(item);
         // The accessor's body decides its abstractness where the property's
         // modality does not: a `val`/`var` member of an `interface` is
@@ -1121,7 +1140,7 @@ impl<'a> Shapes<'a> {
             is_static,
             abstract_,
             is_final,
-            access: access(property.modifiers.visibility),
+            access: access(visibility),
             declaring_package: self.package.clone(),
             declaring_top_level: Some(self.top_level.clone()),
             declaring_interface: self.is_interface(),
@@ -1349,7 +1368,15 @@ impl<'a> Shapes<'a> {
                     .contains(KotlinModifierFlags::CONST);
                 let jvm_field =
                     has_annotation(resolver, &property.annotations, JvmAnnotation::Field);
-                if !constant && !jvm_field {
+                // A lateinit backing field is exposed with the setter's access,
+                // on the class/object/facade or the companion's enclosing class.
+                // https://kotlinlang.org/docs/java-to-kotlin-interop.html#instance-fields
+                // https://kotlinlang.org/docs/java-to-kotlin-interop.html#static-fields
+                let lateinit = property
+                    .modifiers
+                    .flags
+                    .contains(KotlinModifierFlags::LATEINIT);
+                if !constant && !jvm_field && !lateinit {
                     return;
                 }
                 // The field carries the *property's* own name: `@JvmName`
@@ -1384,8 +1411,12 @@ impl<'a> Shapes<'a> {
                         || force_static
                         || self.class.is_none()
                         || self.kind() == Some(KotlinClassKind::Object),
-                    access: access(property.modifiers.visibility),
-                    is_final: constant || !property.is_var,
+                    access: access(if lateinit {
+                        self.accessor_visibility(property, true)
+                    } else {
+                        property.modifiers.visibility
+                    }),
+                    is_final: !lateinit && (constant || !property.is_var),
                     declaring_package: self.package.clone(),
                     declaring_top_level: Some(self.top_level.clone()),
                 });

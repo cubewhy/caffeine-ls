@@ -202,6 +202,27 @@ fn ty_of(db: &TestDatabase, file: FileId, name: &str) -> Ty {
 }
 
 #[test]
+fn kotlin_override_modality_matches_compiler() {
+    for explicit_final in [false, true] {
+        let modifier = if explicit_final { "final " } else { "" };
+        let source = format!(
+            "open class B {{ open fun f(): Int = 1 }}\nopen class M : B() {{ {modifier}override fun f(): Int = 2 }}\nclass D : M() {{ override fun f(): Int = 3 }}\ninterface I {{ open fun f(): Int; fun g(): Int = 1 }}\nclass Implementation : I {{ override fun f(): Int = 4 }}"
+        );
+        let (db, file) = kotlin_fixture(&[("/src/Override.kt", &source)]);
+        let diagnostics = hir_ty::kotlin_class_diagnostics(&db, file);
+        if explicit_final {
+            assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+            assert!(
+                matches!(&diagnostics[0], hir_ty::kotlin::decl_check::DeclDiagnostic::FinalMemberOverridden { name, supertype, range: Some(range) } if name.as_str() == "f" && supertype.as_str() == "M" && &source[*range] == "f" && usize::from(range.start()) == source.find("class D : M() { override fun f").unwrap() + "class D : M() { override fun ".len()),
+                "{diagnostics:?}"
+            );
+        } else {
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        }
+    }
+}
+
+#[test]
 fn elvis_result_types_preserve_both_operands() {
     let (db, file) = kotlin_fixture(&[
         (
