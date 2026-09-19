@@ -201,6 +201,38 @@ fn ty_of(db: &TestDatabase, file: FileId, name: &str) -> Ty {
     panic!("no item named {name}")
 }
 
+#[test]
+fn elvis_result_types_preserve_both_operands() {
+    let (db, file) = kotlin_fixture(&[
+        (
+            "/src/main/kotlin/p/Probe.kt",
+            r#"package p
+fun choose(x: Any?) = x ?: "fallback"
+fun require(x: String?) = x ?: throw Exception()
+fun nullable(x: String?) = x ?: null
+fun empty() = null ?: "fallback"
+fun platform(p: Platform) = p.text() ?: "fallback"
+"#,
+        ),
+        (
+            "/src/main/java/p/Platform.java",
+            r#"package p; public class Platform { public String text() { return "x"; } }"#,
+        ),
+    ]);
+    for (name, expected) in [
+        ("choose", Ty::reference(&db, "kotlin.Any", vec![])),
+        ("require", Ty::reference(&db, "kotlin.String", vec![])),
+        (
+            "nullable",
+            Ty::nullable(&db, Ty::reference(&db, "kotlin.String", vec![])),
+        ),
+        ("empty", Ty::reference(&db, "kotlin.String", vec![])),
+        ("platform", Ty::reference(&db, "kotlin.String", vec![])),
+    ] {
+        assert_eq!(ty_of(&db, file, name), expected, "{name}");
+    }
+}
+
 /// The resolution scope of the fixture's file, for a subtyping question.
 fn scope(db: &TestDatabase, file: FileId) -> hir::ResolutionScope {
     hir::ResolutionScope::SourceSet(

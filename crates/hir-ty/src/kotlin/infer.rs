@@ -28,10 +28,8 @@
 //!
 //! # What is approximate, and why
 //!
-//! Recorded deviations, each visible in the snapshots: an `if`/`when`/`try`
-//! join is the first branch's type when the branches are not identical (KLS's
-//! least upper bound is the constraint solver's `lub`, which lands with the
-//! full inference); and `1..2` types as its endpoint's type, because
+//! `if`/`when`/`try` joins use the Kotlin least upper bound. A remaining
+//! approximation is that `1..2` types as its endpoint's type, because
 //! `kotlin.ranges.IntRange` is only reachable when the standard library is on
 //! the classpath — the fixtures that pin it ship one. A lambda's parameters and
 //! its `it` are typed from the function type the selected callable declares at
@@ -1127,8 +1125,15 @@ impl<'a> InferCtx<'a> {
             ExprData::Elvis { lhs, rhs } => {
                 let lhs_ty = self.infer_expr(lhs);
                 let rhs_ty = self.infer_expr(rhs);
-                let definite = lhs_ty.strip_nullability(self.db);
-                if definite == rhs_ty { definite } else { rhs_ty }
+                // KLS: the result is the LUB of the non-null LHS and RHS.
+                // https://kotlinlang.org/spec/expressions.html#elvis-operator-expressions
+                let definite = lhs_ty.flexible_lower(self.db).strip_nullability(self.db);
+                let definite = if definite.is_null(self.db) {
+                    self.builtin("Nothing")
+                } else {
+                    definite
+                };
+                super::subtyping::lub(self.db, &self.scope, &definite, &rhs_ty)
             }
             ExprData::Cast {
                 ty,

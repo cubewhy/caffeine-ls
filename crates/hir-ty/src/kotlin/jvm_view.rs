@@ -963,12 +963,10 @@ impl<'a> Shapes<'a> {
         }));
         let ret = match &function.ret {
             Some(ret) => self.ty_in_use_return(resolver, &ret.ty),
-            // An expression-bodied function without a written type, and a
-            // `Unit`-returning one, compile to `void` — the compiler's
-            // signature inference is what decides which (KLS
-            // `type-inference.html#function-signature-type-inference`), and
-            // until it lands the erased answer is `void`.
-            None => Ty::void(self.db),
+            None => ty_from_kotlin_return(
+                self.db,
+                self.instantiate(super::db::item_ty(self.db, self.file, item)),
+            ),
         };
         let varargs = function
             .params

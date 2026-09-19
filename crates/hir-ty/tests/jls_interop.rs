@@ -995,3 +995,86 @@ public class UseLegacy {
         "a Java declaration type naming a deprecated Kotlin class is reported: {decls:?}"
     );
 }
+
+#[test]
+fn java_reads_elvis_inferred_return_types() {
+    let kotlin = r#"package p
+class Probe {
+    fun choose(x: Any?) = x ?: "fallback"
+    fun require(x: String?) = x ?: throw Exception()
+    fun answer() = 42
+    fun action() { }
+    fun unitValue(): Unit? = null
+}
+"#;
+    let java = r#"package p;
+class Use {
+    void run(Probe p, Object x) {
+        Object chosen = p.choose(x);
+        String required = p.require("ok");
+        int answer = p.answer();
+        p.action();
+        kotlin.Unit unit = p.unitValue();
+        String invalid = p.choose(x);
+    }
+}"#;
+    let (db, source_set) = interop_fixture(&[
+        ("/src/main/kotlin/p/Probe.kt", kotlin),
+        ("/src/main/java/p/Use.java", java),
+    ]);
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+    let ctx = hir_ty::InvocationContext::external(&scope);
+    let probe = Ty::reference(&db, "p.Probe", vec![]);
+    let expected = [
+        ("choose", Ty::reference(&db, "java.lang.Object", vec![])),
+        ("require", Ty::reference(&db, "java.lang.String", vec![])),
+        (
+            "answer",
+            Ty::primitive(&db, syntax::stub::PrimitiveType::Int),
+        ),
+        ("action", Ty::void(&db)),
+        ("unitValue", Ty::reference(&db, "kotlin.Unit", vec![])),
+    ];
+    for (name, ret) in &expected {
+        let methods = hir_ty::member_set(&db, &scope, &probe, name, &ctx);
+        assert_eq!(methods.len(), 1, "{name}");
+        assert_eq!(methods[0].ret, *ret, "{name}");
+    }
+    let file = FileId::from_raw(2);
+    let tree = hir_def::java::plugin::tree(&db, file);
+    let bodies = hir::file_body_tree(&db, file);
+    let (item, _) = common::all_items(&tree).into_iter().find(|(_, data)| {
+        matches!(data, hir_def::java::item_tree::ItemData::Method(m) if m.name.as_str() == "run")
+    }).unwrap();
+    let types = hir_ty::body_types(&db, file, item).unwrap();
+    assert_eq!(types.diagnostics.len(), 1, "{:?}", types.diagnostics);
+    let diagnostic = &types.diagnostics[0];
+    assert!(matches!(
+        diagnostic,
+        hir_ty::TypeError::IncompatibleTypes { .. }
+    ));
+    let range = diagnostic.range(&bodies).unwrap();
+    assert_eq!(
+        usize::from(range.start()),
+        java.rfind("p.choose(x)").unwrap()
+    );
+    assert_eq!(&java[range], "p.choose(x)");
+    for (name, ret) in expected {
+        let call = match name {
+            "choose" => "p.choose(x)",
+            "require" => "p.require(\"ok\")",
+            "answer" => "p.answer()",
+            "action" => "p.action()",
+            _ => "p.unitValue()",
+        };
+        let actual = types
+            .exprs
+            .iter()
+            .find_map(|(expr, ty)| {
+                let range = bodies.expr_range(*expr)?;
+                (&java[range] == call).then_some(*ty)
+            })
+            .expect(call);
+        assert_eq!(actual, ret, "{call}");
+    }
+}
