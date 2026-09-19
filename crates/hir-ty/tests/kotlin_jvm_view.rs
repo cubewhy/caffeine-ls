@@ -90,6 +90,11 @@ fn fixture(files: &[(&str, &str)]) -> (TestDatabase, FileId) {
     );
     data.source_root_to_source_set
         .insert(SourceRootId(0), source_set.clone());
+    // The compilation module's name — the build systems pass the project's own
+    // name as kotlinc's `-module-name`, which an `internal` member's JVM name
+    // is mangled with.
+    data.module_names
+        .insert(source_set.clone(), hir_expand::name::Name::new("m"));
     data.source_root_dirs.insert(
         SourceRootId(0),
         AbsPathBuf::assert_utf8(dir.path().to_string_lossy().to_string().into()),
@@ -1129,5 +1134,155 @@ class Plain {
     assert!(
         fields(&db, file, "Factory", &["K"]).is_empty(),
         "the companion's class carries no field"
+    );
+}
+
+/// An `internal` member of a *classifier* has its JVM name mangled with the
+/// compilation module's name. kotlinc 2.4.20, `javap -p` for the fixture
+/// compiled with `-module-name m`:
+///
+/// ```text
+/// public final class m6.C {
+///   public static final m6.C$Companion Companion;
+///   private int v;
+///   private final boolean isOn;
+///   public m6.C();
+///   public final int plain$m();
+///   public final int renamed();
+///   public final int getV$m();
+///   public final void setV$m(int);
+///   public final boolean isOn$m();
+///   protected final int prot();
+///   private final int priv();
+///   public static final int s$m();
+///   static {};
+/// }
+/// public final class m6.C$Companion {
+///   private m6.C$Companion();
+///   public final int comp$m();
+///   public final int s$m();
+/// }
+/// public final class m6.O {
+///   public static final m6.O INSTANCE;
+///   private m6.O();
+///   public final int o$m();
+///   static {};
+/// }
+/// public final class m6.MgKt {
+///   public static final int topI();
+/// }
+/// ```
+///
+/// "Members of internal classes go through name mangling"
+/// (<https://kotlinlang.org/docs/java-interop.html#visibility>), so
+/// `internal fun plain()` is `plain$m()`, an `internal var v`'s accessors are
+/// `getV$m()`/`setV$m(int)`, an `is`-prefixed `internal val` keeps the name in
+/// its reader (`isOn$m()`), and a member of an `object` or of a companion — the
+/// `@JvmStatic` one in *both* places it is emitted — carries the same suffix,
+/// which makes the mangling a property of the declaration rather than of the
+/// walk that emits it. Three declarations keep their names: a `protected` or
+/// `private` member, whose access already restricts the reach; one `@JvmName`
+/// renamed (`renamed()`, not `renamed$m()`), the annotation replacing the
+/// mangled spelling outright; and a *top-level* `internal` declaration, whose
+/// facade static is `topI()`.
+#[test]
+fn an_internal_members_jvm_name_carries_the_module_name() {
+    const MG_KT: &str = r#"
+package m6
+
+class C {
+    internal fun plain(): Int = 1
+
+    @JvmName("renamed")
+    internal fun renamed(): Int = 2
+
+    internal var v: Int = 3
+
+    internal val isOn: Boolean = true
+
+    protected fun prot(): Int = 4
+
+    private fun priv(): Int = 5
+
+    companion object {
+        internal fun comp(): Int = 6
+
+        @JvmStatic
+        internal fun s(): Int = 7
+    }
+}
+
+object O {
+    internal fun o(): Int = 8
+}
+
+internal fun topI(): Int = 10
+"#;
+    let (db, file) = fixture(&[("/src/main/kotlin/m6/Mg.kt", MG_KT)]);
+    assert_eq!(
+        methods(
+            &db,
+            file,
+            "C",
+            &[
+                "plain$m", "renamed", "getV$m", "setV$m", "isOn$m", "prot", "priv", "s$m",
+            ]
+        ),
+        vec![
+            // `public final int plain$m();`
+            "public final int plain$m()",
+            // `public final int renamed();` — `@JvmName` gives the name.
+            "public final int renamed()",
+            // `public final int getV$m();`
+            "public final int getV$m()",
+            // `public final void setV$m(int);`
+            "public final void setV$m(int)",
+            // `public final boolean isOn$m();`
+            "public final boolean isOn$m()",
+            // `protected final int prot();`
+            "protected final int prot()",
+            // `private final int priv();`
+            "private final int priv()",
+            // `public static final int s$m();` — the `@JvmStatic` member of the
+            // companion, on the *enclosing* class, under its mangled name.
+            "public static final int s$m()",
+        ]
+    );
+    // The unmangled spellings are not members.
+    assert!(
+        methods(
+            &db,
+            file,
+            "C",
+            &["plain", "getV", "setV", "isOn", "renamed$m"]
+        )
+        .is_empty(),
+        "an `internal` member is not reachable under its declared name"
+    );
+    assert!(
+        methods(&db, file, "C", &["comp$m"]).is_empty(),
+        "a plain companion member stays on the companion's class"
+    );
+    // The companion's own class carries the same mangled names, as instance
+    // members — the suffix is the *declaration*'s.
+    assert_eq!(
+        methods(&db, file, "Companion", &["comp$m", "s$m"]),
+        vec![
+            // `public final int comp$m();`
+            "public final int comp$m()",
+            // `public final int s$m();`
+            "public final int s$m()",
+        ]
+    );
+    // An `object`'s member is mangled the same way.
+    assert_eq!(
+        methods(&db, file, "O", &["o$m"]),
+        vec!["public final int o$m()"]
+    );
+    // A *top-level* `internal` declaration is a static of the facade and keeps
+    // its name.
+    assert_eq!(
+        facade_methods(&db, file, &["topI"]),
+        vec!["public static final int topI()"]
     );
 }

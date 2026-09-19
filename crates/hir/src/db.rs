@@ -76,6 +76,14 @@ pub struct ProjectGraph {
     /// entries mean "unknown": no source-level check runs for those files.
     #[returns(ref)]
     pub language_levels: FxHashMap<SourceSetId, JavaLanguageLevel>,
+    /// source set → the name of the compilation module its files belong to
+    /// (Kotlin's `-module-name`, which the build systems set to the project's
+    /// name), which the JVM name of an `internal` member is mangled with
+    /// (<https://kotlinlang.org/docs/java-interop.html#visibility>). An absent
+    /// entry means the compilation was unnamed, whose compiler default is
+    /// `main` (see [`module_name`]).
+    #[returns(ref)]
+    pub module_names: FxHashMap<SourceSetId, Name>,
     /// source set → the release of the platform API its files compile against
     /// (`javac --release N`, [JEP 247](https://openjdk.org/jeps/247)). Absent
     /// entries mean "unknown": the release-view check runs for no file of
@@ -227,6 +235,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
         source_root_dirs,
         jdk_libraries,
         language_levels,
+        module_names,
         releases,
         library_sources,
         library_source_roots,
@@ -243,6 +252,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
             graph.set_source_root_dirs(db).to(source_root_dirs);
             graph.set_jdk_libraries(db).to(jdk_libraries);
             graph.set_language_levels(db).to(language_levels);
+            graph.set_module_names(db).to(module_names);
             graph.set_releases(db).to(releases);
             graph.set_library_sources(db).to(library_sources);
             graph.set_library_source_roots(db).to(library_source_roots);
@@ -260,6 +270,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
                 source_root_dirs,
                 jdk_libraries,
                 language_levels,
+                module_names,
                 releases,
                 library_sources,
                 library_source_roots,
@@ -303,6 +314,23 @@ pub fn source_set_for_file(db: &dyn HirDatabase, file_id: FileId) -> Option<Sour
     let root_id = db.source_root_for_file(file_id)?;
     let graph = ProjectGraph::try_get(db)?;
     graph.source_root_to_source_set(db).get(&root_id).cloned()
+}
+
+/// The name of the compilation module `source_set`'s files belong to — Kotlin's
+/// `-module-name`, which the build systems set to the project's name. `None`
+/// when the workspace declares none, which is the compiler's *unnamed*
+/// compilation (its default module name is `main`).
+///
+/// The name is what the JVM name of an `internal` member of a classifier is
+/// mangled with
+/// (<https://kotlinlang.org/docs/java-interop.html#visibility>), so it is read
+/// through the [`ProjectGraph`] input exactly as the classpath and the source
+/// level are.
+pub fn module_name(db: &dyn HirDatabase, source_set: &SourceSetId) -> Option<Name> {
+    ProjectGraph::try_get(db)?
+        .module_names(db)
+        .get(source_set)
+        .cloned()
 }
 
 /// The ordered classpath of a source set. Unknown source sets yield an empty

@@ -13,6 +13,7 @@ use rustc_hash::FxHashMap;
 use vfs::AbsPathBuf;
 
 use crate::db::LibraryKind;
+use hir_expand::name::Name;
 
 /// A compilation unit: one project's one source set (the analog of a Gradle
 /// `SourceSet`, a Maven scope, or an IntelliJ module). Every resolve/IDE
@@ -99,6 +100,13 @@ pub struct ProjectGraphData {
     /// source set → the Java source level its files are compiled at. Absent
     /// entries mean "unknown": no source-level check runs for those files.
     pub language_levels: FxHashMap<SourceSetId, JavaLanguageLevel>,
+    /// source set → the name of the compilation module its files belong to
+    /// (Kotlin's `-module-name`, which the build systems set to the project's
+    /// name), which the JVM name of an `internal` member is mangled with
+    /// (<https://kotlinlang.org/docs/java-interop.html#visibility>). An absent
+    /// entry means the compilation was unnamed, whose compiler default is
+    /// `main`.
+    pub module_names: FxHashMap<SourceSetId, Name>,
     /// source set → the release of the platform API its files compile against
     /// (`javac --release N`,
     /// [JEP 247](https://openjdk.org/jeps/247)). Absent entries mean

@@ -258,6 +258,7 @@ dependencies = [
  "crossbeam-channel",
  "directories",
  "gen-lsp-types",
+ "hir",
  "ide",
  "ide-db",
  "ignore",

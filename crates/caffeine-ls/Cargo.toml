@@ -41,6 +41,7 @@ zip.workspace = true
 
 ide.workspace = true
 ide-db.workspace = true
+hir.workspace = true
 project-model.workspace = true
 syntax.workspace = true
 vfs.workspace = true

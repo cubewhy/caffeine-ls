@@ -6,6 +6,7 @@ use std::{
 
 use camino::{Utf8Path, Utf8PathBuf};
 use crossbeam_channel::Receiver;
+use hir::hir_expand::name::Name;
 use ide::{
     Change, Classpath, ClasspathEntry as GraphClasspathEntry, LibraryId, LibraryInfo, LibraryKind,
     LibrarySources, ProjectGraphData, SourceSetId,
@@ -1277,6 +1278,12 @@ impl GlobalState {
             if let Some(level) = project.language_level {
                 data.language_levels.insert(source_set_id.clone(), level);
             }
+            // The compilers' `-module-name`: the build systems pass the
+            // project's own name, and it is what an `internal` declaration's
+            // JVM name is mangled with
+            // (<https://kotlinlang.org/docs/java-interop.html#visibility>).
+            data.module_names
+                .insert(source_set_id.clone(), Name::new(project.name.as_str()));
             if let Some(release) = project.release {
                 data.releases.insert(source_set_id.clone(), release);
             }

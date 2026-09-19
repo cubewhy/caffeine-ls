@@ -24,6 +24,7 @@
 //! | a top-level `fun f()` / `val x` | a static member of the file's facade `FooKt` |
 //! | `fun T.f()` (an extension) | a member whose **first** parameter is the receiver — a static of the facade when it is top-level |
 //! | `@JvmName("y")` on a function / `@get:JvmName("y")` on an accessor | the member is named `y`, whether the name is written `"y"` or a `const val` that holds it |
+//! | an `internal` member of a classifier | `public` in the classfile, with the compilation module's name mangled onto the JVM name (`plain$m`); a facade's `internal` declarations keep their names |
 //! | `@file:JvmName("Y")` | the facade is named `Y` |
 //! | `@JvmOverloads fun f(a: Int, b: Int = 0)` | one further method per parameter that declares a default |
 //! | `@Throws(IOException::class) fun f()` | the method declares `throws IOException` |
@@ -255,6 +256,29 @@ pub fn file_facade_fields(db: &dyn TyDatabase, file: FileId, name: &str) -> Vec<
     out
 }
 
+/// The compilation module's name as an `internal` member's JVM name carries it:
+/// the module name with every character a Kotlin identifier cannot hold spelled
+/// `_` — `-module-name my-app` compiles `internal fun m()` to `m$my_app()`, and
+/// `UPPER.Case` to `m$UPPER_Case()` (kotlinc 2.4.20) — the same normalization
+/// [`hir::kotlin::plugin`]'s facade naming applies to a file's stem.
+///
+/// The name is the source set's ([`hir::module_name`], which the build systems
+/// set to the project's name); a workspace that declares none compiles an
+/// *unnamed* module, whose compiler default is `main` (`m$main()`).
+fn module_suffix(db: &dyn TyDatabase, file: FileId) -> String {
+    let module = hir::source_set_for_file(db, file)
+        .and_then(|source_set| hir::module_name(db, &source_set))
+        .unwrap_or_else(|| Name::new("main"));
+    module
+        .as_str()
+        .chars()
+        .map(|ch| match ch.is_alphanumeric() || ch == '_' {
+            true => ch,
+            false => '_',
+        })
+        .collect()
+}
+
 /// The resolver of a declaration in `file` — its own type parameters and the
 /// enclosing classifiers'.
 fn resolver_of<'a>(
@@ -459,6 +483,9 @@ struct Shapes<'a> {
     class: Option<&'a ClassData>,
     /// The `ClassKey` of the owner — the classifier, or the facade.
     owner: ClassKey,
+    /// The compilation module's name, normalized — the suffix an `internal`
+    /// member's JVM name carries ([`module_suffix`]), computed once per view.
+    module_suffix: String,
 }
 
 impl<'a> Shapes<'a> {
@@ -485,6 +512,7 @@ impl<'a> Shapes<'a> {
             top_level,
             class: Some(class),
             owner,
+            module_suffix: module_suffix(db, file),
         }
     }
 
@@ -505,11 +533,60 @@ impl<'a> Shapes<'a> {
             top_level,
             class: None,
             owner: ClassKey::Named(facade),
+            module_suffix: module_suffix(db, file),
         }
     }
 
     fn kind(&self) -> Option<KotlinClassKind> {
         self.class.map(|class| class.kind)
+    }
+
+    /// The JVM name a member's own *declaration* gives it — as opposed to one
+    /// `@JvmName` writes into the classfile ([`Shapes::function_jvm_name`],
+    /// [`Shapes::property_reader_name`]).
+    ///
+    /// The name of an `internal` member of a **classifier** is mangled: the
+    /// declared name with the compilation module's name appended after `$`,
+    /// every character of the module name a Kotlin identifier cannot hold
+    /// spelled `_` ([`module_suffix`])
+    /// (<https://kotlinlang.org/docs/java-interop.html#visibility>: an internal
+    /// member "undergoes name mangling", so a same-named `public` member of
+    /// another module cannot collide with it). Observed with kotlinc 2.4.20:
+    /// `-module-name m` compiles `internal fun plain()` to `plain$m()`, a
+    /// compilation with no `-module-name` to `plain$main()`, and a member whose
+    /// JVM name `@JvmName` gives to that name with no suffix at all.
+    ///
+    /// Two declarations keep their name: a *facade*'s, because a top-level
+    /// declaration is a static of the file's facade and is not mangled
+    /// (`internal fun topI()` is `topI()`), and one `@JvmName` renamed, which
+    /// replaces the mangled spelling outright (`@JvmName("renamed") internal
+    /// fun renamed()` is `renamed()`) — hence `renamed` is a parameter rather
+    /// than something a caller decides afterwards. A `protected`/`private`
+    /// member is not mangled either, its access already restricting the reach.
+    fn declared_member_name(
+        &self,
+        name: &str,
+        visibility: KotlinVisibility,
+        renamed: bool,
+    ) -> String {
+        match renamed || self.class.is_none() || visibility != KotlinVisibility::Internal {
+            true => name.to_owned(),
+            false => format!("{name}${}", self.module_suffix),
+        }
+    }
+
+    /// The JVM name of a Kotlin function as the classfile carries it: the
+    /// `@JvmName` it declares, else its declared name at
+    /// [`Shapes::declared_member_name`]'s rule.
+    fn function_jvm_name(&self, resolver: &KotlinResolver<'_>, function: &FunctionData) -> String {
+        match annotation_name(self.db, resolver, &function.annotations) {
+            Some(name) => name.to_string(),
+            None => self.declared_member_name(
+                function.name.as_str(),
+                function.modifiers.visibility,
+                false,
+            ),
+        }
     }
 
     fn is_interface(&self) -> bool {
@@ -616,15 +693,35 @@ impl<'a> Shapes<'a> {
     /// (<https://kotlinlang.org/docs/annotations.html#constructors>). Every
     /// other kind's reader is the JavaBeans getter
     /// ([`property_getter_name`]).
+    ///
+    /// An `internal` property of a classifier has its reader *mangled*
+    /// ([`Shapes::declared_member_name`]) unless `@get:JvmName` wrote the name
+    /// — an accessor whose JVM name is its own is the `getV$m()` the module
+    /// mangles to (kotlinc 2.4.20, `-module-name m`).
     fn property_reader_name(
         &self,
         resolver: &KotlinResolver<'_>,
         property: &PropertyData,
     ) -> Option<String> {
-        if self.kind() == Some(KotlinClassKind::Annotation) {
-            return Some(property.name.to_string());
-        }
-        property_getter_name(self.db, resolver, property)
+        let renamed = targeted_name(self.db, resolver, &property.annotations, "get");
+        let name = match self.kind() == Some(KotlinClassKind::Annotation) {
+            true => property.name.to_string(),
+            false => property_getter_name(self.db, resolver, property)?,
+        };
+        Some(self.declared_member_name(&name, property.modifiers.visibility, renamed.is_some()))
+    }
+
+    /// The JVM name of the property's *writer* in this classifier — the
+    /// setter's twin of [`Shapes::property_reader_name`]
+    /// ([`property_setter_name`]).
+    fn property_writer_name(
+        &self,
+        resolver: &KotlinResolver<'_>,
+        property: &PropertyData,
+    ) -> Option<String> {
+        let renamed = targeted_name(self.db, resolver, &property.annotations, "set");
+        let name = property_setter_name(self.db, resolver, property)?;
+        Some(self.declared_member_name(&name, property.modifiers.visibility, renamed.is_some()))
     }
 
     /// Whether the property declares an accessor of `is_setter`'s direction
@@ -725,9 +822,7 @@ impl<'a> Shapes<'a> {
             force_static || (jvm_static && self.kind() != Some(KotlinClassKind::CompanionObject));
         match data {
             KotlinItemData::Function(function) => {
-                let jvm = annotation_name(self.db, resolver, &function.annotations)
-                    .map(|name| name.to_string())
-                    .unwrap_or_else(|| function.name.to_string());
+                let jvm = self.function_jvm_name(resolver, function);
                 if name.is_empty() || jvm == name {
                     self.push_function(resolver, item, function, is_static, out);
                 }
@@ -749,7 +844,7 @@ impl<'a> Shapes<'a> {
                     self.push_accessor(resolver, item, property, &getter, false, is_static, out);
                 }
                 if property.is_var
-                    && let Some(setter) = property_setter_name(self.db, resolver, property)
+                    && let Some(setter) = self.property_writer_name(resolver, property)
                     && (name.is_empty() || setter == name)
                 {
                     self.push_accessor(resolver, item, property, &setter, true, is_static, out);
@@ -835,9 +930,7 @@ impl<'a> Shapes<'a> {
         is_static: bool,
         out: &mut Vec<MethodData>,
     ) {
-        let jvm_name = annotation_name(self.db, resolver, &function.annotations)
-            .map(|name| name.to_string())
-            .unwrap_or_else(|| function.name.to_string());
+        let jvm_name = self.function_jvm_name(resolver, function);
         // A Kotlin *extension* compiles to a member whose **first** parameter
         // is the receiver: `fun String.twice(): String` is the facade's
         // `public static final java.lang.String twice(java.lang.String);`
@@ -1467,7 +1560,9 @@ fn overload_lists(params: &[Ty], defaulted: &[bool], jvm_overloads: bool) -> Vec
 
 /// The JVM access of a Kotlin visibility: `internal` is `public` in the
 /// classfile, which is why a Java caller can reach an internal declaration
-/// (<https://kotlinlang.org/docs/java-interop.html#visibility>).
+/// (<https://kotlinlang.org/docs/java-interop.html#visibility>) — under the
+/// *mangled* name a classifier's internal member carries
+/// ([`Shapes::declared_member_name`]).
 fn access(visibility: KotlinVisibility) -> Access {
     match visibility {
         KotlinVisibility::Public | KotlinVisibility::Internal => Access::Public,
