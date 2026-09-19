@@ -31,11 +31,15 @@
 //! | a constructor | `<init>`, and a parameterless `<init>()` for an all-defaults primary of a `class` |
 //! | an `interface` / `annotation class` | no constructor at all |
 //!
-//! Every type is *erased*: the classfile carries the erasure of a Kotlin type
-//! (`T` is its bound, `List<Int>` is `java.util.List`), so the type arguments a
-//! Kotlin receiver wrote never reach a Java caller — which is why nothing here
-//! takes the receiver's arguments. A property that writes no type carries the
-//! one its initializer gives it ([`Shapes::property_ty`]), since a classfile
+//! Every type is read at the *use* it is asked for: the arguments the use
+//! writes instantiate the declaring class's own type parameters
+//! ([`Shapes::ty_in_use`]), which is what the classfile's `Signature` attribute
+//! carries and what a caller of another language resolves against
+//! (`Box<String>.get()` is `String get()` where the declaration's erasure is
+//! `Object get()`). A type the use does not instantiate keeps its erasure: `T`
+//! is its bound, and `List<Int>` is the `java.util.List` the classfile's
+//! descriptor names. A property that writes no type carries the one its
+//! initializer gives it ([`Shapes::property_ty`]), since a classfile
 //! records no inferred types.
 //!
 //! The annotations of the table are recognized by the canonical name their
@@ -67,9 +71,11 @@ use hir_def::kotlin::annotations::JvmAnnotation;
 use hir_expand::body::Literal;
 use hir_expand::ids::ItemId;
 use hir_expand::name::Name;
+use syntax::stub::TypeRef;
 use vfs::FileId;
 
 use super::resolve::KotlinResolver;
+use super::subtyping::class_binding_args;
 use super::ty::{ty_from_kotlin, ty_from_type_ref};
 use crate::jvm::db::TyDatabase;
 use crate::jvm::member::{Access, ClassKey, FieldData, MethodData, MethodTypeParam};
@@ -81,6 +87,7 @@ use crate::ty::{Ty, TypeVarScope};
 pub fn java_view_members(
     db: &dyn TyDatabase,
     source: hir::SourceClass,
+    args: &[Ty],
     name: &str,
 ) -> Vec<MethodData> {
     let tree = hir::file_item_tree(db, source.file);
@@ -90,7 +97,15 @@ pub fn java_view_members(
     let KotlinItemData::Class(class) = tree.data(source.item) else {
         return Vec::new();
     };
-    let shapes = Shapes::of(db, tree, source.file, class, class_key(db, source));
+    let shapes = Shapes::of(
+        db,
+        tree,
+        source.file,
+        source.item,
+        class,
+        class_key(db, source),
+        args,
+    );
     let mut out = Vec::new();
     // The Java `new` path names a *source* class's constructor by the class
     // itself and a classfile one `<init>`
@@ -118,13 +133,11 @@ pub fn java_view_members(
     // its body — a `data class`'s `componentN`/`copy`
     // ([`Shapes::push_data_class`]) — under the same name filter its body's
     // are.
-    shapes.push_data_class(
-        &resolver_of(db, tree, source.file, source.item),
-        source.item,
-        class,
-        name,
-        &mut out,
-    );
+    let class_resolver = resolver_of(db, tree, source.file, source.item);
+    shapes.push_data_class(&class_resolver, source.item, class, name, &mut out);
+    // An `enum class` declares `values()`/`valueOf(String)` through the
+    // compiler, as its classfile's statics ([`Shapes::push_enum_statics`]).
+    shapes.push_enum_statics(source.item, class, name, &mut out);
     // `object Util` reaches its members through `Util.INSTANCE`, and a
     // companion object through the `Companion` field; the *field* is what
     // [`java_view_fields`] answers, the members stay instance members.
@@ -139,6 +152,7 @@ pub fn java_view_members(
 pub fn java_view_fields(
     db: &dyn TyDatabase,
     source: hir::SourceClass,
+    args: &[Ty],
     name: &str,
 ) -> Vec<FieldData> {
     let tree = hir::file_item_tree(db, source.file);
@@ -148,7 +162,15 @@ pub fn java_view_fields(
     let KotlinItemData::Class(class) = tree.data(source.item) else {
         return Vec::new();
     };
-    let shapes = Shapes::of(db, tree, source.file, class, class_key(db, source));
+    let shapes = Shapes::of(
+        db,
+        tree,
+        source.file,
+        source.item,
+        class,
+        class_key(db, source),
+        args,
+    );
     let mut out = Vec::new();
     // An `object` *is* the singleton: the compiler gives it the static final
     // field `INSTANCE` of its own type, which is what a Java caller reads
@@ -420,6 +442,13 @@ struct Shapes<'a> {
     db: &'a dyn TyDatabase,
     tree: &'a KotlinItemTree,
     file: FileId,
+    /// The classifier's declared type parameters bound to the arguments the
+    /// *use* this view answers for writes ([`class_binding_args`]): a Java
+    /// caller of `Box<String>` reads `Box`'s members at `String`, exactly as
+    /// the classfile's signature instantiates its declaring class's parameters.
+    /// Empty for the declaration's own view — a classfile's generic signature
+    /// read without a use — which leaves each parameter as its erasure.
+    binding: rustc_hash::FxHashMap<TypeVarScope, Ty>,
     /// The classifier's own package, for a member's declaring package.
     package: Option<String>,
     /// The canonical name of the *top-level* class the declaration belongs to
@@ -436,8 +465,10 @@ impl<'a> Shapes<'a> {
         db: &'a dyn TyDatabase,
         tree: &'a KotlinItemTree,
         file: FileId,
+        item: ItemId,
         class: &'a ClassData,
         owner: ClassKey,
+        args: &[Ty],
     ) -> Shapes<'a> {
         let package = tree.package.as_ref().map(|package| package.to_string());
         let top_level = match &owner {
@@ -448,6 +479,7 @@ impl<'a> Shapes<'a> {
             db,
             tree,
             file,
+            binding: class_binding_args(db, file, item, args),
             package,
             top_level,
             class: Some(class),
@@ -467,6 +499,7 @@ impl<'a> Shapes<'a> {
             db,
             tree,
             file,
+            binding: rustc_hash::FxHashMap::default(),
             package,
             top_level,
             class: None,
@@ -483,6 +516,29 @@ impl<'a> Shapes<'a> {
             self.kind(),
             Some(KotlinClassKind::Interface | KotlinClassKind::Annotation)
         )
+    }
+
+    /// The JVM shape of a declared Kotlin type, read at the use this view
+    /// answers for: the class's own type parameters are substituted with the
+    /// arguments that use writes before the JVM reading
+    /// ([`Shapes::instantiate`]), so a member of `Box<String>` reads its
+    /// `T` as `String` — and a view read at the *declaration*, with no
+    /// arguments, leaves `T` its erasure, exactly as the classfile's own
+    /// signature does.
+    fn ty_in_use(&self, resolver: &KotlinResolver<'_>, ty: &TypeRef<Name>) -> Ty {
+        ty_from_kotlin(
+            self.db,
+            self.instantiate(ty_from_type_ref(self.db, resolver, ty)),
+        )
+    }
+
+    /// The class's declared parameters substituted with the use's arguments
+    /// ([`class_binding_args`]) in a type the view already has.
+    fn instantiate(&self, ty: Ty) -> Ty {
+        match self.binding.is_empty() {
+            true => ty,
+            false => ty.substitute(self.db, &self.binding),
+        }
     }
 
     /// Whether the classfile member carries `ACC_ABSTRACT`, and whether it
@@ -588,8 +644,11 @@ impl<'a> Shapes<'a> {
         item: ItemId,
     ) -> Ty {
         match &property.ty {
-            Some(ty) => ty_from_kotlin(self.db, ty_from_type_ref(self.db, resolver, &ty.ty)),
-            None => ty_from_kotlin(self.db, super::db::item_ty(self.db, self.file, item)),
+            Some(ty) => self.ty_in_use(resolver, &ty.ty),
+            None => ty_from_kotlin(
+                self.db,
+                self.instantiate(super::db::item_ty(self.db, self.file, item)),
+            ),
         }
     }
 
@@ -779,16 +838,10 @@ impl<'a> Shapes<'a> {
         // 2.4.20).
         let mut params: Vec<Ty> = Vec::new();
         if let Some(receiver) = &function.receiver {
-            params.push(ty_from_kotlin(
-                self.db,
-                ty_from_type_ref(self.db, resolver, &receiver.ty),
-            ));
+            params.push(self.ty_in_use(resolver, &receiver.ty));
         }
         params.extend(function.params.iter().map(|param| {
-            let ty = ty_from_kotlin(
-                self.db,
-                ty_from_type_ref(self.db, resolver, &param.param.ty.ty),
-            );
+            let ty = self.ty_in_use(resolver, &param.param.ty.ty);
             // A `vararg` parameter is the array the classfile carries.
             if param.param.varargs {
                 Ty::array(self.db, ty)
@@ -797,7 +850,7 @@ impl<'a> Shapes<'a> {
             }
         }));
         let ret = match &function.ret {
-            Some(ret) => ty_from_kotlin(self.db, ty_from_type_ref(self.db, resolver, &ret.ty)),
+            Some(ret) => self.ty_in_use(resolver, &ret.ty),
             // An expression-bodied function without a written type, and a
             // `Unit`-returning one, compile to `void` — the compiler's
             // signature inference is what decides which (KLS
@@ -821,9 +874,7 @@ impl<'a> Shapes<'a> {
                 bounds: param
                     .bounds
                     .iter()
-                    .map(|bound| {
-                        ty_from_kotlin(self.db, ty_from_type_ref(self.db, resolver, &bound.ty))
-                    })
+                    .map(|bound| self.ty_in_use(resolver, &bound.ty))
                     .collect(),
             })
             .collect();
@@ -879,10 +930,7 @@ impl<'a> Shapes<'a> {
             .params
             .iter()
             .map(|param| {
-                let ty = ty_from_kotlin(
-                    self.db,
-                    ty_from_type_ref(self.db, resolver, &param.param.ty.ty),
-                );
+                let ty = self.ty_in_use(resolver, &param.param.ty.ty);
                 if param.param.varargs {
                     Ty::array(self.db, ty)
                 } else {
@@ -1035,8 +1083,12 @@ impl<'a> Shapes<'a> {
                 _ => Ty::void(self.db),
             })
             .collect();
-        // The class's own type, as the classfile names it.
-        let class_ty = ty_from_kotlin(self.db, self.owner.as_ty(self.db, Vec::new()));
+        // The class's own type, as the classfile names it — at the use, so
+        // `Box<String>.copy()` answers `Box<String>`.
+        let class_ty = ty_from_kotlin(
+            self.db,
+            self.instantiate(self.owner.as_ty(self.db, Vec::new())),
+        );
         for (index, ty) in component_types.iter().enumerate() {
             let component = format!("component{}", index + 1);
             if name == component {
@@ -1093,6 +1145,74 @@ impl<'a> Shapes<'a> {
             type_params: Vec::new(),
             raw_erased: false,
             descriptor: None,
+        }
+    }
+
+    /// The `values()` and `valueOf(String)` an `enum class` generates
+    /// (<https://kotlinlang.org/docs/enum-classes.html#find-enum-constants>).
+    ///
+    /// kotlinc 2.4.20's classfile for `enum class Color { RED, GREEN }` carries
+    ///
+    /// ```text
+    /// public static Color[] values();
+    /// public static Color valueOf(java.lang.String);
+    /// public static kotlin.enums.EnumEntries<Color> getEntries();
+    /// ```
+    ///
+    /// — both `static` at the class's own access, neither `final` (kotlinc
+    /// emits no `ACC_FINAL` on either), `values` returning the array of the
+    /// enum's own type and `valueOf` the type itself. `getEntries` is the
+    /// `entries` property's accessor and is pushed by the property walk where
+    /// the declaration writes one ([Kotlin's `entries` is a library member,
+    /// so no source declaration carries it here]).
+    fn push_enum_statics(
+        &self,
+        item: ItemId,
+        class: &ClassData,
+        name: &str,
+        out: &mut Vec<MethodData>,
+    ) {
+        if class.kind != KotlinClassKind::Enum {
+            return;
+        }
+        let enum_ty = ty_from_kotlin(
+            self.db,
+            self.instantiate(self.owner.as_ty(self.db, Vec::new())),
+        );
+        let mut push = |name: &str, params: Vec<Ty>, ret: Ty| {
+            out.push(MethodData {
+                name: name.to_owned(),
+                owner: self.owner.clone(),
+                owner_file: Some(self.file),
+                // The declaration the member is generated *for*: the enum
+                // itself, which is what a client navigates to.
+                decl_item: Some(item),
+                params,
+                param_names: None,
+                ret,
+                throws: Vec::new(),
+                varargs: false,
+                is_static: true,
+                abstract_: false,
+                is_final: false,
+                access: access(class.modifiers.visibility),
+                declaring_package: self.package.clone(),
+                declaring_top_level: Some(self.top_level.clone()),
+                declaring_interface: false,
+                type_params: Vec::new(),
+                raw_erased: false,
+                descriptor: None,
+            });
+        };
+        if name == "values" {
+            push("values", Vec::new(), Ty::array(self.db, enum_ty));
+        }
+        if name == "valueOf" {
+            push(
+                "valueOf",
+                vec![Ty::reference(self.db, "java.lang.String", Vec::new())],
+                enum_ty,
+            );
         }
     }
 

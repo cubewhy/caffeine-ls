@@ -946,6 +946,57 @@ class Use {
     );
 }
 
+/// A Kotlin source *constructs* a Java source generic class and reads it at the
+/// arguments it wrote: `Box<String>("x")` constructs a `Box<String>`, so
+/// `box.get()` — the Java class's `T get()` — is `String!`
+/// (<https://kotlinlang.org/docs/java-interop.html#generics-in-java-and-kotlin>:
+/// a Java type is a platform type in Kotlin). kotlinc 2.4.20 reports exactly
+/// one error for this fixture — `initializer type mismatch: expected 'Int',
+/// actual 'String!'.` — which is what shows the argument was bound.
+#[test]
+fn a_kotlin_constructor_call_binds_a_java_source_classs_type_parameter() {
+    const JAVA_BOX: &str = r#"
+package a;
+
+public class Box<T> {
+    public T value;
+
+    public Box(T value) {
+        this.value = value;
+    }
+
+    public T get() {
+        return value;
+    }
+}
+"#;
+    const KOTLIN_USE: &str = r#"
+package a
+
+fun use(): String {
+    val box = Box<String>("x")
+    val s: String = box.value
+    val wrong: Int = box.get()
+    return s
+}
+"#;
+    let (db, _) = kotlin_fixture(&[
+        ("/src/main/java/a/Box.java", JAVA_BOX),
+        ("/src/main/kotlin/a/Use.kt", KOTLIN_USE),
+    ]);
+    // File 1 is the Java source; the Kotlin one is file 2.
+    let rendered = render_bodies(&db, FileId::from_raw(2));
+    let diagnostics: Vec<&str> = rendered
+        .lines()
+        .filter(|line| line.contains("kotlin."))
+        .collect();
+    assert_eq!(
+        diagnostics,
+        vec!["kotlin.type-mismatch: initializer type mismatch: expected 'Int', actual 'String'."],
+        "the written `String` binds the Java class's `T`: {rendered}"
+    );
+}
+
 // -- platform types, mapped classifiers and the resolution gaps --------------
 
 /// The Java↔Kotlin boundary of the type model.
@@ -1871,6 +1922,40 @@ fun probe(point: Point): String {
         diagnostics,
         vec!["kotlin.type-mismatch: initializer type mismatch: expected 'Int', actual 'String'."],
         "the components and both `copy` calls resolve, and `y` is `String`: {rendered}"
+    );
+}
+
+/// An `enum class` declares `values()` and `valueOf(String)` through the
+/// compiler, not in its body
+/// (<https://kotlinlang.org/docs/enum-classes.html#find-enum-constants>): a
+/// Kotlin caller writes them on the enum's class exactly as a Java one does,
+/// and `values()` is the array of the enum's own type.
+///
+/// kotlinc 2.4.20 reports exactly one error for this fixture — `initializer
+/// type mismatch: expected 'Int', actual 'Color'.` for the deliberately wrong
+/// binding — which is what shows `valueOf` answers the enum, while `values()`
+/// and the `size` of its result resolve.
+#[test]
+fn an_enum_declares_its_values_and_value_of() {
+    let source = r#"
+enum class Color { RED, GREEN }
+
+fun probe(): Int {
+    val all = Color.values()
+    val wrong: Int = Color.valueOf("RED")
+    return all.size
+}
+"#;
+    let (db, file) = kotlin_fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    let rendered = render_bodies(&db, file);
+    let diagnostics: Vec<&str> = rendered
+        .lines()
+        .filter(|line| line.contains("kotlin."))
+        .collect();
+    assert_eq!(
+        diagnostics,
+        vec!["kotlin.type-mismatch: initializer type mismatch: expected 'Int', actual 'Color'."],
+        "`values()` and `valueOf` resolve, and `valueOf` answers the enum: {rendered}"
     );
 }
 
@@ -2812,4 +2897,122 @@ val okVal: String = ""
             );
         }
     }
+}
+
+/// The other direction of the generic bridge: a **Java** caller of a Kotlin
+/// source generic class reads the members at the arguments its use writes.
+///
+/// kotlinc 2.4.20's classfile for `class Box<T>(val value: T) { fun get(): T }`
+/// carries `public final T get();` — the *erasure* is
+/// `()Ljava/lang/Object;`, and the `Signature` attribute's `()TT;` is what
+/// instantiates the declaring class's parameter:
+///
+/// ```text
+/// public final class a.Box<T> {
+///   private final T value;
+///   public a.Box(T);
+///   public final T getValue();
+///   public final T get();
+/// }
+/// ```
+///
+/// A Java caller of `Box<String>` therefore reads `String get()`, which is what
+/// javac checks: `int wrong(Box<String> box) { return box.get(); }` is
+/// `incompatible types: String cannot be converted to int`.
+#[test]
+fn a_java_caller_reads_a_kotlin_generic_class_at_its_arguments() {
+    const KOTLIN_BOX: &str = r#"
+package a
+
+class Box<T>(val value: T) {
+    fun get(): T = value
+}
+"#;
+    const JAVA_USE: &str = r#"
+package a;
+
+class Use {
+    static String read(Box<String> box) {
+        return box.get();
+    }
+
+    static int wrong(Box<String> box) {
+        return box.get();
+    }
+
+    static String viaValue(Box<String> box) {
+        return box.getValue();
+    }
+}
+"#;
+    let files: &[(&str, &str)] = &[
+        ("/src/main/java/a/Use.java", JAVA_USE),
+        ("/src/main/kotlin/a/Box.kt", KOTLIN_BOX),
+    ];
+    let (db, _) = kotlin_fixture(files);
+    let rendered = common::render_body_types(&db, files);
+    assert!(
+        rendered.contains("e1: java.lang.String") && rendered.contains("e5: java.lang.String"),
+        "the member reads as the argument the use wrote: {rendered}"
+    );
+    assert_eq!(
+        rendered
+            .lines()
+            .filter(|line| line.contains("diags:"))
+            .count(),
+        1,
+        "`read` and `viaValue` are the `String` they return; only `wrong` reports: {rendered}"
+    );
+    assert!(
+        rendered.contains("Incompatible types. Found: 'String', required: 'int'"),
+        "`get()` is the `String` of `Box<String>`: {rendered}"
+    );
+}
+
+/// A **Java** caller resolves a Kotlin enum's generated statics: `values()` is
+/// the enum's array and `valueOf(String)` an entry of it, exactly as it is for
+/// a Java enum (the classfile's `public static Color[] values();` and
+/// `public static Color valueOf(java.lang.String);`,
+/// [`crate::kotlin::jvm_view`]). `red.name()` is `java.lang.Enum`'s own member,
+/// reached through the enum's supertype, which the same walk answers.
+#[test]
+fn a_java_caller_resolves_a_kotlin_enums_values_and_value_of() {
+    const KOTLIN_ENUM: &str = r#"
+package a
+
+enum class Color { RED, GREEN }
+"#;
+    const JAVA_USE: &str = r#"
+package a;
+
+class Use {
+    static String name() {
+        Color red = Color.valueOf("RED");
+        return red.name();
+    }
+
+    static int wrong() {
+        int all = Color.values();
+        return all;
+    }
+}
+"#;
+    let files: &[(&str, &str)] = &[
+        ("/src/main/java/a/Use.java", JAVA_USE),
+        ("/src/main/kotlin/a/Color.kt", KOTLIN_ENUM),
+    ];
+    let (db, _) = kotlin_fixture(files);
+    let rendered = common::render_body_types(&db, files);
+    assert_eq!(
+        rendered
+            .lines()
+            .filter(|line| line.contains("diags:"))
+            .count(),
+        1,
+        "`valueOf` and `name()` resolve; only the deliberately wrong binding reports: {rendered}"
+    );
+    assert!(
+        rendered.contains("Incompatible types. Found: 'Color[]', required: 'int'"),
+        "`values()` is the enum's array: {rendered}"
+    );
 }

@@ -83,11 +83,11 @@ impl JvmMemberSource for Kotlin {
         &self,
         db: &dyn TyDatabase,
         class: &hir::Resolved,
-        _args: &[Ty],
+        args: &[Ty],
         name: &str,
     ) -> Vec<MethodData> {
         match class {
-            hir::Resolved::Source(source) => java_view_members(db, *source, name),
+            hir::Resolved::Source(source) => java_view_members(db, *source, args, name),
             // A file's facade carries its top-level functions.
             hir::Resolved::Facade { file, .. } => file_facade_members(db, *file, name),
             hir::Resolved::Library(_) => Vec::new(),
@@ -98,11 +98,11 @@ impl JvmMemberSource for Kotlin {
         &self,
         db: &dyn TyDatabase,
         class: &hir::Resolved,
-        _args: &[Ty],
+        args: &[Ty],
         name: &str,
     ) -> Vec<FieldData> {
         match class {
-            hir::Resolved::Source(source) => java_view_fields(db, *source, name),
+            hir::Resolved::Source(source) => java_view_fields(db, *source, args, name),
             // A file's facade carries its top-level `const val`s.
             hir::Resolved::Facade { file, .. } => file_facade_fields(db, *file, name),
             hir::Resolved::Library(_) => Vec::new(),
@@ -121,12 +121,12 @@ impl JvmMemberSource for Kotlin {
         &self,
         db: &dyn TyDatabase,
         class: &hir::Resolved,
-        _args: &[Ty],
+        args: &[Ty],
     ) -> Vec<MethodData> {
         let hir::Resolved::Source(source) = class else {
             return Vec::new();
         };
-        java_view_members(db, *source, "")
+        java_view_members(db, *source, args, "")
             .into_iter()
             .filter(|method| method.abstract_ && !method.is_static)
             .collect()

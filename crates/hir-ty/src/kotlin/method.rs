@@ -37,6 +37,7 @@
 
 use triomphe::Arc;
 
+use hir::hir_def::java::item_tree::ItemData;
 use hir::hir_def::kotlin::item_tree::{KotlinItemData, KotlinItemTree};
 use hir_expand::ids::ItemId;
 use hir_expand::name::Name;
@@ -456,11 +457,62 @@ pub fn class_type_vars(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn: &
         Some(hir::Resolved::Source(class)) => {
             match hir_def::kotlin::plugin::model(&hir::file_item_tree(db, class.file)) {
                 Some(_) => super::db::type_params(db, class.file, class.item).to_vec(),
-                None => Vec::new(),
+                // A *Java* source class: its parameters are declared by the Java
+                // item tree, and their bounds resolve through the Java layer's
+                // own resolution — the same path its members' signatures take
+                // ([`crate::java::resolve::resolve_type_ref`]) — so a Kotlin
+                // source that writes `LinkedList<File>(…)` binds the Java
+                // class's parameter and constructs the instantiated type.
+                None => java_source_type_vars(db, &class),
             }
         }
         _ => Vec::new(),
     }
+}
+
+/// The type variables a **Java source** class declares, as the Kotlin layer
+/// reads them: one [`Ty::type_var`] per declared parameter, keyed by the
+/// declaring class's scope ([KLS
+/// `type-system.html#type-parameters`](https://kotlinlang.org/spec/type-system.html#type-parameters)
+/// gives a parameter its declaring classifier's scope) and bounded by the
+/// bounds its declaration writes, resolved through the Java layer's own path
+/// ([`crate::java::resolve::resolve_type_ref`] — a Java bound is a Java type
+/// reference, and a type parameter in a bound resolves against the Java
+/// resolver, `class Box<T extends Comparable<T>>` included).
+///
+/// A classfile class and a Kotlin source one are the other two answers of
+/// [`class_type_vars`].
+fn java_source_type_vars(db: &dyn TyDatabase, class: &hir::SourceClass) -> Vec<Ty> {
+    let tree = hir_def::java::plugin::tree(db, class.file);
+    let Some(data) = crate::java::resolve::item_data(&tree, class.item) else {
+        return Vec::new();
+    };
+    let declared: &[hir_def::java::item_tree::TypeParam] = match data {
+        ItemData::Class(d) | ItemData::Interface(d) => &d.type_params,
+        ItemData::Record(d) => &d.type_params,
+        _ => return Vec::new(),
+    };
+    let scope = crate::java::resolve::scope_for_file(db, class.file);
+    let resolver = crate::java::resolve::Resolver::for_item(db, class.file, &tree, class.item);
+    declared
+        .iter()
+        .map(|param| {
+            let bounds = param
+                .bounds
+                .iter()
+                .map(|bound| crate::java::resolve::resolve_type_ref(db, &scope, &resolver, bound))
+                .collect();
+            Ty::type_var(
+                db,
+                crate::ty::TypeVarScope::Class {
+                    file: class.file,
+                    item: class.item,
+                    name: param.name.clone(),
+                },
+                bounds,
+            )
+        })
+        .collect()
 }
 
 /// Whether `ty` is the classifier `kotlin.Array`, written with its element
@@ -1141,6 +1193,36 @@ fn kotlin_members(
             ),
         ));
     }
+    // An `enum class` also declares `values()` and `valueOf(String)` through the
+    // compiler, as the classfile's *statics*
+    // (<https://kotlinlang.org/docs/enum-classes.html#find-enum-constants>):
+    // `Color.values()` is the array of the enum and `Color.valueOf("RED")` the
+    // entry of that name, which a Kotlin caller writes on the enum's class
+    // exactly as a Java caller does ([`super::jvm_view`] pushes the pair for
+    // one). `valueOf`'s parameter is the one Kotlin names `value`.
+    if matches!(class, Some(class) if class.kind == hir::hir_def::kotlin::item_tree::KotlinClassKind::Enum)
+    {
+        if name.as_str() == "values" {
+            out.push(builtin_member(
+                name.clone(),
+                MemberKind::Function,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Ty::array(db, *receiver),
+            ));
+        }
+        if name.as_str() == "valueOf" {
+            out.push(builtin_member(
+                name.clone(),
+                MemberKind::Function,
+                vec![Ty::reference(db, "kotlin.String", Vec::new())],
+                vec![Name::new("value")],
+                vec![false],
+                *receiver,
+            ));
+        }
+    }
     // A `data class` declares `componentN` and `copy` through the compiler, not
     // in its body ([KLS
     // `declarations.html#data-class-declaration`](https://kotlinlang.org/spec/declarations.html#data-class-declaration),
@@ -1454,6 +1536,15 @@ fn java_members(
         }
     }
     for method in crate::jvm::member_set::member_set(db, scope, receiver, name.as_str(), ctx) {
+        // A Java *source* constructor is a method named after its class — the
+        // name a Kotlin `Box(…)` call writes — and it is the `Constructor`
+        // candidate the branch below pushes. Pushing it as a `Function` as well
+        // would let the call select a member that is not the construction, and
+        // a construction reads the *class's* type parameters to instantiate
+        // them ([`constructed_ty`]).
+        if is_java_source_constructor(db, &method) {
+            continue;
+        }
         out.push(member_of_method(
             db,
             name.clone(),
@@ -1504,6 +1595,26 @@ fn java_members(
             ));
         }
     }
+}
+
+/// Whether `method` is the constructor of a **Java source** class: the Java item
+/// tree records a constructor as a method with no return type
+/// ([JLS §8.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8)),
+/// and a source class names it after itself — which is why the member set
+/// answers it under the class's own name, the name a Kotlin `Box(…)` call
+/// writes. A classfile writes it `<init>`, so nothing is filtered for one.
+fn is_java_source_constructor(db: &dyn TyDatabase, method: &MethodData) -> bool {
+    let (Some(file), Some(item)) = (method.owner_file, method.decl_item) else {
+        return false;
+    };
+    if !crate::lang::is_java_file(db, file) {
+        return false;
+    }
+    let tree = hir_def::java::plugin::tree(db, file);
+    matches!(
+        crate::java::resolve::item_data(&tree, item),
+        Some(ItemData::Method(constructor)) if constructor.sig.ret.is_none()
+    )
 }
 
 /// One Java method as a Kotlin member: its parameter types are converted to the

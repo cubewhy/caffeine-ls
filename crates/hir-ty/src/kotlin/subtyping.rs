@@ -161,47 +161,26 @@ fn supertypes_of_another_language(
         .collect()
 }
 
-/// The binding of a *source* class's declared type parameters to the receiver's
-/// arguments ([KLS
+/// The binding of a *source* class's declared type parameters to the arguments
+/// a use of it writes ([KLS
 /// `type-system.html#type-containment`](https://kotlinlang.org/spec/type-system.html#type-containment)):
 /// `class C<T>` used at `C<Int>` substitutes `T → Int` in every supertype it
-/// declares. A receiver with no arguments — a raw or non-generic use — binds
-/// nothing, exactly as [`Ty::substitute`] leaves an unbound variable alone.
+/// declares, and in every member's declared types ([`crate::kotlin::jvm_view`]
+/// reads a use of a Kotlin class the same way). A use with no arguments — a
+/// raw or non-generic one — binds nothing, exactly as [`Ty::substitute`] leaves
+/// an unbound variable alone.
 fn class_binding(
     db: &dyn TyDatabase,
     class: &hir::SourceClass,
     ty: &Ty,
 ) -> rustc_hash::FxHashMap<crate::ty::TypeVarScope, Ty> {
-    let TyKind::Reference { args, .. } = ty.kind(db) else {
-        return rustc_hash::FxHashMap::default();
-    };
-    let tree = hir::file_item_tree(db, class.file);
-    let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
-        return rustc_hash::FxHashMap::default();
-    };
-    let KotlinItemData::Class(data) = tree.data(class.item) else {
-        return rustc_hash::FxHashMap::default();
-    };
-    data.type_params
-        .iter()
-        .zip(args.iter().copied())
-        .map(|(param, arg)| {
-            (
-                crate::ty::TypeVarScope::Class {
-                    file: class.file,
-                    item: class.item,
-                    name: param.name.clone(),
-                },
-                arg,
-            )
-        })
-        .collect()
+    class_binding_of(db, class.file, class.item, ty)
 }
 
-/// [`class_binding`] for a caller that has the classifier's file and item rather
-/// than a [`hir::SourceClass`] — the member walk, which substitutes the
-/// receiver's arguments into the members it is about to answer with. Public to
-/// this crate so the two stay one rule.
+/// The same binding for a caller that has the classifier's file and item rather
+/// than a [`hir::SourceClass`] — the member walk and the JVM view, which
+/// substitute the receiver's arguments into the members they are about to
+/// answer with.
 pub(crate) fn class_binding_of(
     db: &dyn TyDatabase,
     file: FileId,
@@ -211,6 +190,17 @@ pub(crate) fn class_binding_of(
     let TyKind::Reference { args, .. } = ty.kind(db) else {
         return rustc_hash::FxHashMap::default();
     };
+    class_binding_args(db, file, item, args)
+}
+
+/// [`class_binding_of`] for a caller that has the arguments themselves — a JVM
+/// view handed the type arguments of the use rather than the type it denotes.
+pub(crate) fn class_binding_args(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: hir_expand::ids::ItemId,
+    args: &[Ty],
+) -> rustc_hash::FxHashMap<crate::ty::TypeVarScope, Ty> {
     let tree = hir::file_item_tree(db, file);
     let Some(tree) = hir_def::kotlin::plugin::model(&tree) else {
         return rustc_hash::FxHashMap::default();

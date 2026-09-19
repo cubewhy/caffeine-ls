@@ -133,7 +133,7 @@ fn methods(db: &TestDatabase, file: FileId, class: &str, names: &[&str]) -> Vec<
     let mut out = Vec::new();
     for name in names {
         out.extend(
-            java_view_members(db, source, name)
+            java_view_members(db, source, &[], name)
                 .iter()
                 .map(|m| method_line(db, m)),
         );
@@ -217,7 +217,7 @@ fn fields(db: &TestDatabase, file: FileId, class: &str, names: &[&str]) -> Vec<S
     let mut out = Vec::new();
     for name in names {
         out.extend(
-            java_view_fields(db, source, name)
+            java_view_fields(db, source, &[], name)
                 .iter()
                 .map(|f| field_line(db, f)),
         );
@@ -398,7 +398,7 @@ fn a_classifiers_kind_is_the_kotlin_declaration() {
             file,
             item: class_item(&db, file, class),
         };
-        let found = java_view_members(&db, source, name);
+        let found = java_view_members(&db, source, &[], name);
         assert_eq!(
             found.first().map(|method| method.declaring_interface),
             Some(is_interface),
@@ -832,5 +832,49 @@ data class Point(val x: Int, var y: String) {
     assert!(
         methods(&db, file, "Point", &["equals", "hashCode", "toString"]).is_empty(),
         "the `Object` overrides come from `java.lang.Object`"
+    );
+}
+
+/// An `enum class` generates `values()` and `valueOf(String)` — the classfile's
+/// *statics*, which a Java caller writes as it writes any enum's.
+/// `kotlinc 2.4.20` + `javap -p` on
+///
+/// ```kotlin
+/// enum class Color { RED, GREEN }
+/// ```
+///
+/// ```text
+/// public final class Color extends java.lang.Enum<Color> {
+///   public static final Color RED;
+///   public static final Color GREEN;
+///   private static final Color[] $VALUES;
+///   private static final kotlin.enums.EnumEntries $ENTRIES;
+///   private Color();
+///   public static Color[] values();
+///   public static Color valueOf(java.lang.String);
+///   public static kotlin.enums.EnumEntries<Color> getEntries();
+///   private static final Color[] $values();
+///   static {};
+/// }
+/// ```
+///
+/// — `values` is the array of the enum's own type and `valueOf` the type, both
+/// `static` at the class's own access and neither `final`. `getEntries` is the
+/// `entries` property's accessor, which no source declaration carries (it is a
+/// standard-library member of `Enum`), so nothing pushes it.
+#[test]
+fn an_enum_carries_the_values_and_value_of_the_compiler_generates() {
+    let source = r#"
+enum class Color { RED, GREEN }
+"#;
+    let (db, file) = fixture(&[("/src/main/kotlin/Sample.kt", source)]);
+    assert_eq!(
+        methods(&db, file, "Color", &["values", "valueOf"]),
+        vec![
+            // `public static Color[] values();`
+            "public static Color[] values()",
+            // `public static Color valueOf(java.lang.String);`
+            "public static Color valueOf(java.lang.String)",
+        ]
     );
 }
