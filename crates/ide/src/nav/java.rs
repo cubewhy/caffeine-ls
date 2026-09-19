@@ -142,6 +142,12 @@ fn item_name_range(
 /// nothing resolves — a declaration's own name is not a reference ([JLS §6.3]),
 /// so `self_target` is not consulted here.
 fn resolutions(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
+    // A qualifier denotes its own type, not the full nested type or the
+    // constructor selected for `new Outer.Inner()`.
+    if let Some(qualifier) = type_qualifier_reference(db, file, offset) {
+        return qualifier;
+    }
+
     // §15.8.3/§15.8.4: a `this`/`super` keyword names a type, not a member —
     // and it is written *inside* the receiver of the enclosing `this.f` or
     // `super.m()` when it is not a receiver of its own, so the recorded
@@ -680,6 +686,60 @@ fn annotation_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Ve
         Some(hir_ty::AnnotationTarget::Type(fqn)) => class_resolution(db, file, &fqn),
         None => Vec::new(),
     }
+}
+
+/// Each qualifier in `Q.Id` denotes Q independently of the member Id
+/// ([JLS §6.5.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.2)).
+/// Read syntax tokens, not byte prefixes of the lowered name: comments,
+/// whitespace and Unicode escapes do not contribute name segments. Return
+/// `Some(empty)` for package qualifiers so the full-type fallback cannot
+/// incorrectly navigate to the final member. Leave the last identifier to
+/// normal resolution, particularly the overload-selected constructor (§15.9).
+fn type_qualifier_reference(
+    db: &RootDatabase,
+    file: FileId,
+    offset: TextSize,
+) -> Option<Vec<Resolution>> {
+    let syntax::SourceFile::Java(source) =
+        base_db::parse(db, file, LanguageKind::Java).syntax_node(LanguageKind::Java)
+    else {
+        return None;
+    };
+    let root = &source.syntax_node;
+    if !root.text_range().contains(offset) {
+        return None;
+    }
+    let token = root
+        .token_at_offset(offset)
+        .find(|token| token.kind() == J::IDENTIFIER && token.text_range().contains(offset))?;
+    let path = token.parent()?;
+    if path.kind() != J::QUALIFIED_NAME
+        || !matches!(
+            path.parent()?.kind(),
+            J::TYPE | J::NEW_EXPR | J::ANNOTATION | J::MARKER_ANNOTATION
+        )
+    {
+        return None;
+    }
+    let mut segments = path
+        .children_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == J::IDENTIFIER);
+    let mut prefix = String::new();
+    for segment in segments.by_ref() {
+        if !prefix.is_empty() {
+            prefix.push('.');
+        }
+        prefix.push_str(segment.text());
+        if segment == token {
+            break;
+        }
+    }
+    segments.next()?;
+    let tree = hir::hir_def::java::plugin::tree(db, file);
+    let item = items_at(db, file, &tree, offset).first().copied();
+    let name = Name::new(translate_unicode_escapes(&prefix).as_ref());
+    Some(type_resolution(db, file, item, &name, Some(offset)))
 }
 
 /// The declarations the type reference at `offset` denotes: the reference whose

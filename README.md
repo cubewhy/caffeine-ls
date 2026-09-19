@@ -20,6 +20,9 @@ caffeine-ls            # start the language server over stdio
 caffeine-ls serve      # same thing, explicitly
 ```
 
+Go-to-definition on a qualified Java type follows the identifier under the
+cursor: `Outer` in `pkg.Outer.Inner` navigates to `Outer`, not `Inner`.
+
 ### Headless diagnostics
 
 `diagnostics` analyzes a repository without an editor by driving the same

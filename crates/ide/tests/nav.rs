@@ -688,6 +688,44 @@ fn goto_type_qualifier_of_qualified_name() {
     );
 }
 
+#[test]
+fn qualified_type_segments_navigate_to_their_own_declarations() {
+    let declarations = "package com.google.protobuf; public class Descriptors { public static class Descriptor { public Descriptor() {} } }";
+    let usage = "class Use { com.google.protobuf.Descriptors.Descriptor field; Object make() { return new com.google.protobuf.Descriptors.Descriptor(); } }";
+    let fixture = test_files(&[
+        ("/src/com/google/protobuf/Descriptors.java", declarations),
+        ("/src/Use.java", usage),
+    ]);
+    let analysis = fixture.analysis();
+    let outer = declarations.find("Descriptors").unwrap();
+    let inner = declarations.find("class Descriptor ").unwrap() + "class ".len();
+    let constructor = declarations.find("Descriptor()").unwrap();
+    for (written, expected) in [
+        ("Descriptors.Descriptor field", outer),
+        ("Descriptor field", inner),
+        ("Descriptors.Descriptor()", outer),
+        ("Descriptor()", constructor),
+    ] {
+        let offset = fixture.offset_start(1, written) + TextSize::new(2);
+        let targets = analysis.goto_definition(fixture.file(1), offset).unwrap();
+        assert_eq!(targets.len(), 1, "{written}: {targets:?}");
+        assert_eq!(targets[0].file, fixture.file(0));
+        assert_eq!(
+            targets[0].range.start(),
+            TextSize::new(expected as u32),
+            "{written}"
+        );
+    }
+    // A package qualifier must not fall through to the full nested type.
+    let package = fixture.offset_start(1, "protobuf.Descriptors");
+    assert!(
+        analysis
+            .goto_definition(fixture.file(1), package)
+            .unwrap()
+            .is_empty()
+    );
+}
+
 // -- a single-file matrix of references and the declarations they denote -------------
 // The fixture's source set has an empty classpath, so only same-file names
 // resolve: every target below is a declaration of this file.
