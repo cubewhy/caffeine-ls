@@ -53,9 +53,9 @@ use crate::{db::LibraryId, stubs::DiskClassOrModuleRecord};
 /// Version of the on-disk layout; bumped on incompatible changes. Also
 /// selects the cache directory (`stubs/v{N}`).
 ///
-/// `5`: member-class access flags include their InnerClasses modifiers; old
-/// records lose private/protected visibility and must be reindexed.
-pub const CACHE_FORMAT_VERSION: u32 = 5;
+/// `6`: attached-source indexes include Kotlin classifiers; Java-only layouts
+/// and member-name misses derived from them must be reindexed.
+pub const CACHE_FORMAT_VERSION: u32 = 6;
 
 /// Libraries untouched for this long are eligible for pruning when they are
 /// no longer registered by the running session.
@@ -882,6 +882,23 @@ mod tests {
                 .read_source_index(library, &stamped(&other, "x.jar", 16))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn java_only_source_index_is_a_cache_miss() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = StubStore::default();
+        store.open_at(dir.path().to_owned());
+        let library = LibraryId(7);
+        let stamp = stamped(&dir, "kotlin-sources.jar", 16);
+        let mut old_index = source_index(&stamp);
+        old_index.format_version = 5;
+        store.write_source_index(library, &old_index).unwrap();
+
+        assert!(store.read_source_index(library, &stamp).is_none());
+        let current = source_index(&stamp);
+        store.write_source_index(library, &current).unwrap();
+        assert_eq!(store.read_source_index(library, &stamp), Some(current));
     }
 
     #[test]

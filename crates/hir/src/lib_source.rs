@@ -3,11 +3,11 @@
 //! location that declares it.
 //!
 //! A library's source archive is indexed once per library, on the first
-//! request that resolves into it, and only its **central directory** is read:
-//! entry names are collected, the ~250 MB of JDK `src.zip` text is never
-//! decompressed. The index holds `canonical top-level type name → entry name`
-//! (~1 MB for a JDK `src.zip`), so a class resolves to its compilation unit
-//! without the archive ever being resident.
+//! request that resolves into it. Java entries need only the **central
+//! directory**, so the ~250 MB of JDK `src.zip` text is never decompressed.
+//! Kotlin entries are parsed to recover their declared packages and top-level
+//! classifiers: neither has to match the entry's path. The index holds
+//! `canonical top-level type name → entry name`, not the source text.
 //!
 //! The merge is one-directional: the classfile stub stays the source of truth
 //! for resolution, typing and flags. Sources contribute exactly the
@@ -17,7 +17,7 @@
 //! in which case the class's decompiled output is that location instead (see
 //! [`LibrarySourceDecl::Decompiled`]).
 
-use std::fs::File;
+use std::{fs::File, io::Read as _};
 
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -25,8 +25,10 @@ use triomphe::Arc;
 use vfs::{AbsPath, AbsPathBuf, FileId, VfsPath};
 use zip::ZipArchive;
 
-use base_db::SourceRootId;
+use base_db::{LanguageKind, SourceRootId};
 use camino::Utf8Path;
+use hir_def::kotlin::{item_tree::KotlinItemData, lower::lower_kotlin_source};
+use hir_expand::ast_id_map::AstIdMap;
 
 use crate::{
     HirDatabase,
@@ -74,7 +76,7 @@ fn relative_entry(entry: &str) -> &str {
 }
 
 /// The source index of `library`: the persistent tier when a previous session
-/// indexed the *same* archive, the archive's central directory otherwise.
+/// indexed the *same* archive, an archive scan otherwise.
 /// `None` when the library has no attached sources or the archive cannot be
 /// read.
 #[salsa::tracked(returns(ref))]
@@ -252,30 +254,48 @@ pub fn library_decompiles(db: &dyn HirDatabase, library: LibraryId) -> bool {
 fn build_index(archive: &AbsPath) -> anyhow::Result<LibrarySourceIndex> {
     let path: &Utf8Path = archive.as_ref();
     let file = File::open(path).map_err(|e| anyhow::anyhow!("failed to open {path}: {e}"))?;
-    let zip =
+    let mut zip =
         ZipArchive::new(file).map_err(|e| anyhow::anyhow!("invalid source archive {path}: {e}"))?;
 
     let mut entries: FxHashMap<SmolStr, SmolStr> = FxHashMap::default();
-    // Only the central directory is read: `name_for_index` never decompresses
-    // an entry. Entries are visited in the archive's own order, so the first
-    // spelling of a name wins — deterministic, and a name repeated across JDK
-    // modules resolves to its first module.
+    let mut text = String::new();
+    // Entries are visited in archive order, so the first spelling wins —
+    // deterministic, including names repeated across JDK modules.
     for idx in 0..zip.len() {
         let Some(name) = zip.name_for_index(idx) else {
             continue;
         };
-        let Some(stem) = name.strip_suffix(".java") else {
-            continue;
-        };
-        // A JDK 9+ `src.zip` entry (`java.base/java/lang/String.java`) drops
-        // its module segment before the `module-info` check.
-        let stem = relative_entry(stem);
-        if stem == "module-info" {
-            continue;
+        if let Some(stem) = name.strip_suffix(".java") {
+            // Java/JDK indexing reads only the central directory: never
+            // decompress these entries, including a JDK's module-info files.
+            let stem = relative_entry(stem);
+            if stem != "module-info" {
+                entries
+                    .entry(SmolStr::new(stem.replace('/', ".")))
+                    .or_insert_with(|| SmolStr::new(name));
+            }
+        } else if name.ends_with(".kt") {
+            let name = SmolStr::new(name);
+            text.clear();
+            zip.by_index(idx)?.read_to_string(&mut text)?;
+            let source = syntax::SourceFile::parse(LanguageKind::Kotlin, &text)
+                .syntax_node(LanguageKind::Kotlin);
+            let map = AstIdMap::from_source_file(&source);
+            let (tree, _) = lower_kotlin_source(LanguageKind::Kotlin, &text, &map);
+            // Only top-level classifiers own compilation units. Nested
+            // classes and objects are looked up through their outermost type;
+            // aliases, functions and local classes declare no such class.
+            for &item in &tree.top {
+                let KotlinItemData::Class(class) = tree.data(item) else {
+                    continue;
+                };
+                let fqn = match &tree.package {
+                    Some(package) => SmolStr::new(format!("{package}.{}", class.name)),
+                    None => SmolStr::new(class.name.as_str()),
+                };
+                entries.entry(fqn).or_insert_with(|| name.clone());
+            }
         }
-        entries
-            .entry(SmolStr::new(stem.replace('/', ".")))
-            .or_insert_with(|| SmolStr::new(name));
     }
     Ok(LibrarySourceIndex { entries })
 }
@@ -350,12 +370,13 @@ pub fn library_source_decl(
 
 /// Where the library class `fqn` is declared in its library's source archive.
 ///
-/// A class is declared by the compilation unit of its *outermost* enclosing
-/// type: [JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)
-/// names a compilation unit after the top-level type it declares, and a nested
-/// type's binary name spells the enclosing types before the first `$`
-/// ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)).
-/// So the archive index — keyed by the top-level type each entry declares — is
+/// A class is declared in the same compilation unit as its *outermost*
+/// enclosing type. Java conventionally names the unit after that type ([JLS
+/// §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6));
+/// Kotlin's declared classifiers are indexed independently of the filename.
+/// A nested type's binary name spells the enclosing types before the first
+/// `$` ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)),
+/// so the archive index — keyed by each top-level classifier — is
 /// looked up by that prefix; a dotted spelling is never walked back segment by
 /// segment, which would let a package name answer for a nested type.
 fn source_decl(db: &dyn HirDatabase, library: LibraryId, fqn: &str) -> Option<LibrarySourceDecl> {
@@ -422,6 +443,7 @@ fn class_symbol(db: &dyn HirDatabase, file: FileId, fqn: &str) -> Option<ItemId>
                         | SourceSymbolKind::Enum
                         | SourceSymbolKind::Record
                         | SourceSymbolKind::Annotation
+                        | SourceSymbolKind::Object
                 )
         })
         .map(|symbol| symbol.item)

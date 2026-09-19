@@ -195,3 +195,103 @@ fn anonymous_class_spelling_has_no_declaration() {
         None
     );
 }
+
+#[test]
+fn kotlin_classifiers_in_unrelated_entry_are_pending_until_materialized() {
+    use base_db::{FileChange, SourceRoot};
+    use vfs::{VfsPath, file_set::FileSet};
+
+    const ENTRY: &str = "relocated/Declarations.kt";
+    const KOTLIN: &str = r#"
+package com.`example`
+
+class Outer {
+    class Nested
+    companion object {
+        class InCompanion
+    }
+}
+object Registry {
+    object Child
+}
+interface Contract
+enum class Choice { FIRST }
+annotation class Marker
+class `Other`
+typealias Alias = Outer
+fun factory() {
+    class Local
+}
+"#;
+    let (_dir, base) = fixture();
+    let library = LibraryId(10);
+    let root = base.join("kotlin-sources");
+    let sources = [LibrarySourcesFixture {
+        library,
+        archive: base.join("kotlin-sources.jar"),
+        root: root.clone(),
+        entries: vec![(ENTRY, KOTLIN)],
+        materialized: vec![],
+    }];
+    let mut db = build_with_library_sources(&[], &sources, &[]);
+    let classifiers = [
+        "com.example.Outer",
+        "com.example.Outer$Nested",
+        "com.example.Outer$Companion",
+        "com.example.Outer$Companion$InCompanion",
+        "com.example.Registry",
+        "com.example.Registry$Child",
+        "com.example.Contract",
+        "com.example.Choice",
+        "com.example.Marker",
+        "com.example.Other",
+    ];
+    let expected_path = common::abs_path(&root.join(ENTRY));
+    for fqn in classifiers {
+        match library_source_decl(&db, library, fqn) {
+            Some(LibrarySourceDecl::Pending { entry, path }) => {
+                assert_eq!(&*entry, ENTRY, "{fqn}");
+                assert_eq!(path, expected_path, "{fqn}");
+            }
+            other => panic!("expected pending Kotlin source for {fqn}, got {other:?}"),
+        }
+    }
+    // Neither the filename nor declarations that create no top-level JVM
+    // classifier may invent an attached class.
+    for fqn in [
+        "relocated.Declarations",
+        "com.example.Alias",
+        "com.example.Local",
+    ] {
+        assert_eq!(library_source_decl(&db, library, fqn), None, "{fqn}");
+    }
+
+    // Materialization updates the same database, invalidating the pending
+    // answer while preserving the already-built archive index.
+    let file = FileId::from_raw(1000);
+    let mut files = FileSet::default();
+    files.insert(file, VfsPath::from(expected_path));
+    let mut change = FileChange::default();
+    change.set_roots(vec![SourceRoot::library(files)]);
+    change.change_file(file, Some(KOTLIN.to_owned()));
+    change.apply(&mut db);
+
+    for fqn in classifiers {
+        match library_source_decl(&db, library, fqn) {
+            Some(LibrarySourceDecl::Loaded { file: target, item }) => {
+                assert_eq!(target, file, "{fqn}");
+                assert_eq!(library_source_for_file(&db, target), Some(library));
+                assert_eq!(
+                    hir::source_class_fqn(&db, target, item).unwrap().as_str(),
+                    fqn.replace('$', "."),
+                    "{fqn} must select its own declaration"
+                );
+            }
+            other => panic!("expected loaded Kotlin declaration for {fqn}, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        library_source_decl(&db, library, "com.example.Outer$1"),
+        None
+    );
+}
