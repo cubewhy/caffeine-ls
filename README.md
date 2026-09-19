@@ -89,6 +89,11 @@ location of a declaration and — when a classfile carries no `MethodParameters`
 attribute — the parameter names in a hovered signature. Library sources are
 read-only third-party code: they never appear in `workspace/diagnostic`.
 
+Java references to inherited member types resolve to the declaring class,
+including protected types named through a subclass. Member-class visibility is
+read from `InnerClasses`; versioned library caches are rebuilt when this
+metadata changes.
+
 The `caffeine_ls.downloadSources` setting (`download_sources` in the server's
 `initializationOptions`) lets the build system fetch missing dependency sources
 before the export: Gradle resolves each coordinate's `sources` classifier in a

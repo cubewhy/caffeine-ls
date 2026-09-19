@@ -3,7 +3,10 @@ use lasso::ThreadedRodeo;
 use rust_asm::{
     class_reader::{Annotation, AttributeInfo, ClassReader, ElementValue},
     constant_pool::{ConstantPoolExt, CpInfo},
-    constants::{ACC_MANDATED, ACC_STATIC, ACC_SYNTHETIC, ACC_VARARGS},
+    constants::{
+        ACC_MANDATED, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC, ACC_SYNTHETIC,
+        ACC_VARARGS,
+    },
     nodes::{ClassNode, FieldNode, MethodNode, ModuleNode},
 };
 
@@ -174,11 +177,24 @@ impl<'a> ClassParser<'a> {
             false
         };
         let component_count = node.record_components.len();
+        // JVMS §4.1 does not encode private/protected/static member-class
+        // modifiers in ClassFile.access_flags. Its own InnerClasses entry is
+        // authoritative for those modifiers (§4.7.6); retain the header's
+        // remaining flags, including ACC_SUPER.
+        // https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.7.6
+        let member_mask = ACC_PUBLIC | ACC_PRIVATE | ACC_PROTECTED | ACC_STATIC;
+        let flags = node
+            .inner_classes
+            .iter()
+            .find(|inner| inner.name == node.name && inner.outer_name.is_some())
+            .map_or(node.access_flags, |inner| {
+                (node.access_flags & !member_mask) | (inner.access_flags & member_mask)
+            });
 
         ClassStub {
             fqn: self.interner.get_or_intern(&fqn_str),
             name: self.interner.get_or_intern(simple_name),
-            flags: node.access_flags,
+            flags,
             is_record,
             deprecated,
             super_class,

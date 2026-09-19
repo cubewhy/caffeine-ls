@@ -19,6 +19,8 @@
 //! the candidates are probed with [`hir::fqn_resolve`] against that scope's
 //! classpath, and the first one that exists wins.
 
+mod member_type;
+
 use rowan::{SyntaxNode, TextRange};
 use rustc_hash::FxHashMap;
 use stacksafe::stacksafe;
@@ -975,6 +977,12 @@ fn resolve_reference_name(
                 return canonical;
             }
         }
+        for candidate in &candidates {
+            let members = member_type::resolve(db, scope, resolver, candidate);
+            if members.len() == 1 {
+                return members.into_iter().next().unwrap();
+            }
+        }
     } else {
         // §6.5.5.1: a simple name walks the candidate steps in order; an
         // on-demand import ([§7.5.2]) contributes only *accessible* types,
@@ -1521,6 +1529,18 @@ pub fn resolve_name_checked(
                 return NameResolution::Resolved(candidate.clone());
             }
             hidden.get_or_insert_with(|| candidate.clone());
+        }
+        for candidate in &candidates {
+            let members = member_type::resolve(db, scope, resolver, candidate);
+            if members.len() > 1 {
+                return NameResolution::Ambiguous(members);
+            }
+            if let Some(canonical) = members.into_iter().next() {
+                if fqn_visible(db, &module_ctx, canonical.as_str()) {
+                    return NameResolution::Resolved(canonical);
+                }
+                hidden.get_or_insert(canonical);
+            }
         }
         // §6.5.5.1: the prefix may name a member type *inherited* by an
         // enclosing declaration.

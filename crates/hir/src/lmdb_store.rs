@@ -53,9 +53,9 @@ use crate::{db::LibraryId, stubs::DiskClassOrModuleRecord};
 /// Version of the on-disk layout; bumped on incompatible changes. Also
 /// selects the cache directory (`stubs/v{N}`).
 ///
-/// `4`: `void` is its own stub type kind rather than a `PrimitiveType`
-/// variant, so a `V` result type no longer encodes as a primitive.
-pub const CACHE_FORMAT_VERSION: u32 = 4;
+/// `5`: member-class access flags include their InnerClasses modifiers; old
+/// records lose private/protected visibility and must be reindexed.
+pub const CACHE_FORMAT_VERSION: u32 = 5;
 
 /// Libraries untouched for this long are eligible for pruning when they are
 /// no longer registered by the running session.
