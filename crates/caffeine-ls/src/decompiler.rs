@@ -139,7 +139,15 @@ impl Backend for Vineflower {
     ) -> Vec<std::ffi::OsString> {
         use std::ffi::OsString;
 
-        let mut args: Vec<OsString> = vec!["-jar".into(), jar.into(), "--folder".into()];
+        // The library view is a JVM/Java declaration view, also for Kotlin
+        // bytecode. Vineflower's Kotlin plugin otherwise emits `.kt` files,
+        // which do not match the requested `.java` path or JVM member names.
+        let mut args: Vec<OsString> = vec![
+            "-jar".into(),
+            jar.into(),
+            "--folder".into(),
+            "--kt-enable=false".into(),
+        ];
         for external in externals {
             let mut flag = OsString::from("--add-external=");
             flag.push(external);
