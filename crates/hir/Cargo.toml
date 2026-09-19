@@ -27,6 +27,7 @@ smol_str.workspace = true
 syntax.workspace = true
 tracing.workspace = true
 triomphe.workspace = true
+unicode-general-category.workspace = true
 vfs.workspace = true
 zip.workspace = true
 

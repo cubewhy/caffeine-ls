@@ -34,6 +34,28 @@ class Foo
 "#,
 }
 
+#[test]
+fn escaped_identifiers_keep_semantic_names_and_source_ranges() {
+    let src = "package `p`\nclass `Box` { fun `when`(`value`: `String`) = `value` }";
+    let parse = syntax::SourceFile::parse(LanguageKind::Kotlin, src);
+    let source = parse.syntax_node(LanguageKind::Kotlin);
+    let map = hir_expand::ast_id_map::AstIdMap::from_source_file(&source);
+    let lowered = hir_def::lower_source(LanguageKind::Kotlin, src, &map);
+    let tree = hir_def::kotlin::plugin::model(&lowered.items).unwrap();
+    assert_eq!(tree.package.as_ref().unwrap().as_str(), "p");
+    let names: Vec<_> = tree
+        .items
+        .iter()
+        .filter_map(|(_, data)| data.name().map(|n| n.as_str()))
+        .collect();
+    assert!(names.contains(&"Box"));
+    assert!(names.contains(&"when"));
+    let body = &lowered.bodies;
+    let (expr, _) = body.exprs.iter().find(|(_, data)| matches!(data, hir_expand::body::ExprData::Var(name) if name.as_str() == "value")).unwrap();
+    let range = body.expr_range(hir_expand::body::ExprId(expr)).unwrap();
+    assert_eq!(&src[range], "`value`");
+}
+
 lower_snapshot_lang! {
     kotlin_file_annotations,
     LanguageKind::Kotlin,

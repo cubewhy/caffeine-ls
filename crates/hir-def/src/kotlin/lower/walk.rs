@@ -121,7 +121,7 @@ fn lower_import(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) {
                         .children_with_tokens()
                         .filter_map(NodeOrToken::into_token)
                         .find(|token| is_token(token, K::IDENTIFIER))
-                        .map(|token| Name::new(token.text()));
+                        .map(|token| Name::new(super::identifier_text(token.text())));
                 }
                 _ => {}
             },
@@ -263,7 +263,9 @@ fn class_name(node: &SyntaxNode<Lang>, kind: KotlinClassKind) -> Option<Name> {
         };
         match token.kind() {
             K::CLASS_KW | K::INTERFACE_KW | K::OBJECT_KW => after_keyword = true,
-            K::IDENTIFIER if after_keyword => return Some(Name::new(token.text())),
+            K::IDENTIFIER if after_keyword => {
+                return Some(Name::new(super::identifier_text(token.text())));
+            }
             _ => {}
         }
     }
@@ -597,7 +599,7 @@ fn lower_enum_entry(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .find(|token| is_token(token, K::IDENTIFIER))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
         .unwrap_or_else(missing_name);
     let body = node
         .children()
@@ -1405,7 +1407,7 @@ fn annotation_use_site_target(node: &SyntaxNode<Lang>) -> Option<Name> {
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .find(|token| is_token(token, K::IDENTIFIER))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
 }
 
 /// `valueArgument`: [annotation] {NL} [simpleIdentifier {NL} '=' {NL}] ['*']
@@ -1426,7 +1428,7 @@ fn lower_annotation_args(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Ite
                 .children_with_tokens()
                 .filter_map(NodeOrToken::into_token)
                 .find(|token| is_token(token, K::IDENTIFIER))
-                .map(|token| Name::new(token.text()))
+                .map(|token| Name::new(super::identifier_text(token.text())))
                 .unwrap_or_else(|| Name::new("value"));
             let value = argument.children().find(|child| !is(child, K::ANNOTATION));
             ItemAnnotationArg {
@@ -1472,7 +1474,7 @@ fn lower_annotation_value(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemAn
             Some(token) if is_literal_token(&token) => literal_value(ctx, node),
             Some(token) if is_token(&token, K::IDENTIFIER) => ItemAnnotationValue::EnumConstant {
                 qualifier: None,
-                member: Name::new(token.text()),
+                member: Name::new(super::identifier_text(token.text())),
             },
             _ => unresolved(node),
         },
@@ -1545,7 +1547,7 @@ fn enum_constant(node: &SyntaxNode<Lang>) -> Option<(Option<Name>, Name)> {
                 .filter_map(NodeOrToken::into_token)
                 .find(|token| is_token(token, K::IDENTIFIER))
         })
-        .map(|token| Name::new(token.text()))?;
+        .map(|token| Name::new(super::identifier_text(token.text())))?;
     // Exactly one access: `Foo.BAR` and not `Foo.BAR.baz`.
     if node
         .children()
@@ -1583,7 +1585,7 @@ fn qualified_class_literal(ctx: &LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Optio
             .filter_map(NodeOrToken::into_token)
             .find(|token| is_token(token, K::IDENTIFIER))?;
         name.push('.');
-        name.push_str(member.text());
+        name.push_str(super::identifier_text(member.text()));
     }
     let mut tokens = last
         .children_with_tokens()
@@ -1618,7 +1620,7 @@ fn base_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
                 .filter_map(NodeOrToken::into_token)
                 .find(|token| is_token(token, K::IDENTIFIER))
         })
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
 }
 
 /// Whether a token is one of the literal tokens an annotation element value may
@@ -1705,7 +1707,9 @@ fn function_name(node: &SyntaxNode<Lang>) -> Option<Name> {
         };
         match token.kind() {
             K::FUN_KW => after_fun = true,
-            K::IDENTIFIER if after_fun => return Some(Name::new(token.text())),
+            K::IDENTIFIER if after_fun => {
+                return Some(Name::new(super::identifier_text(token.text())));
+            }
             _ => {}
         }
     }
@@ -1720,7 +1724,7 @@ fn parameter_name(node: &SyntaxNode<Lang>) -> Option<Name> {
         .filter_map(NodeOrToken::into_token)
         .filter(|token| is_token(token, K::IDENTIFIER))
         .find(|token| !matches!(token.text(), "vararg" | "noinline" | "crossinline"))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
 }
 
 /// The name of a `typeParameter`: the identifier token that is not one of its
@@ -1730,7 +1734,7 @@ fn type_parameter_name(node: &SyntaxNode<Lang>) -> Option<Name> {
         .filter_map(NodeOrToken::into_token)
         .filter(|token| is_token(token, K::IDENTIFIER))
         .find(|token| !matches!(token.text(), "reified" | "in" | "out"))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
 }
 
 /// The name of a `variableDeclaration`: its identifier, or `_` for a
@@ -1739,7 +1743,7 @@ fn variable_declaration_name(node: &SyntaxNode<Lang>) -> Option<Name> {
     node.children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .find(|token| matches!(token.kind(), K::IDENTIFIER | K::UNDERSCORE))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
 }
 
 /// The declared type of a `variableDeclaration`, if it writes one.
@@ -1760,7 +1764,7 @@ pub(super) fn dotted_segments(node: &SyntaxNode<Lang>) -> Vec<String> {
     node.children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .filter(|token| is_token(token, K::IDENTIFIER))
-        .map(|token| token.text().to_owned())
+        .map(|token| super::identifier_text(token.text()).to_owned())
         .collect()
 }
 
@@ -1787,7 +1791,7 @@ fn first_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
     node.children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .find(|token| is_token(token, K::IDENTIFIER))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
 }
 
 /// The first child of `node` that is a type node — the type a `TYPE`-family

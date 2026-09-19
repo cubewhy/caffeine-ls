@@ -773,7 +773,7 @@ fn alloc_label(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> hir_expand::b
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .find(|token| is_token(token, K::IDENTIFIER))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
         .unwrap_or_else(|| Name::new("<missing>"));
     hir_expand::body::LabelId(ctx.bodies.labels.alloc(hir_expand::body::Label(name)))
 }
@@ -928,7 +928,7 @@ fn expr_data(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> 
                 .children_with_tokens()
                 .filter_map(NodeOrToken::into_token)
                 .find(|token| is_token(token, K::IDENTIFIER))
-                .map(|token| Name::new(token.text()))
+                .map(|token| Name::new(super::identifier_text(token.text())))
                 .unwrap_or_else(|| Name::new("<missing>"));
             ExprData::InfixCall {
                 receiver: expr(ctx, owner, &receiver),
@@ -970,7 +970,7 @@ fn primary(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
             .next();
         return match token {
             Some(token) if is_token(&token, K::IDENTIFIER) => {
-                ExprData::Var(Name::new(token.text()))
+                ExprData::Var(Name::new(super::identifier_text(token.text())))
             }
             Some(token) => literal(ctx, &token, false),
             None => ExprData::Missing,
@@ -1184,7 +1184,9 @@ fn template_entry(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>
         .filter_map(NodeOrToken::into_token)
         .find(|token| !token.kind().is_trivia());
     let data = match token {
-        Some(token) if is_token(&token, K::IDENTIFIER) => ExprData::Var(Name::new(token.text())),
+        Some(token) if is_token(&token, K::IDENTIFIER) => {
+            ExprData::Var(Name::new(super::identifier_text(token.text())))
+        }
         Some(token) if is_token(&token, K::THIS_KW) => ExprData::This { qualifier: None },
         Some(token) if is_token(&token, K::SUPER_KW) => ExprData::Super { qualifier: None },
         _ => ExprData::Missing,
@@ -1493,7 +1495,7 @@ fn navigation(
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .find(|token| is_token(token, K::IDENTIFIER))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
         .or_else(|| {
             node.children_with_tokens()
                 .filter_map(NodeOrToken::into_token)
@@ -1879,7 +1881,7 @@ fn catch_clause(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) 
             }
             after_paren && matches!(token.kind(), K::IDENTIFIER | K::UNDERSCORE)
         })
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
         .unwrap_or_else(|| Name::new("<missing>"));
     let ty = declared_type(ctx, node);
     let local = alloc_local(ctx, param, ty.clone(), node.text_range(), name_range(node));
@@ -2025,10 +2027,13 @@ fn label_qualifier(node: &SyntaxNode<Lang>) -> Option<SpannedTypeRef> {
         .find(|token| is_token(token, K::IDENTIFIER))?;
     Some(SpannedTypeRef::new(
         syntax::stub::TypeRef::Reference {
-            name: Name::new(name.text()),
+            name: Name::new(super::identifier_text(name.text())),
             generic_args: Vec::new(),
         },
-        vec![NameRef::new(Name::new(name.text()), name.text_range())],
+        vec![NameRef::new(
+            Name::new(super::identifier_text(name.text())),
+            name.text_range(),
+        )],
     ))
 }
 
@@ -2084,7 +2089,7 @@ fn callable_reference(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<L
         .children_with_tokens()
         .filter_map(NodeOrToken::into_token)
         .find(|token| is_token(token, K::IDENTIFIER))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
         .unwrap_or_else(|| Name::new("<missing>"));
     ExprData::CallableReference { receiver, name }
 }
@@ -2167,7 +2172,7 @@ fn value_arguments(
                 .filter_map(NodeOrToken::into_token)
                 .take_while(|token| !is_token(token, K::EQUAL))
                 .find(|token| is_token(token, K::IDENTIFIER))
-                .map(|token| Name::new(token.text()));
+                .map(|token| Name::new(super::identifier_text(token.text())));
             let named = argument
                 .children_with_tokens()
                 .filter_map(NodeOrToken::into_token)
@@ -2227,7 +2232,7 @@ fn variable_name(node: &SyntaxNode<Lang>) -> Option<Name> {
             .children_with_tokens()
             .filter_map(NodeOrToken::into_token)
             .find(|token| matches!(token.kind(), K::IDENTIFIER | K::UNDERSCORE))
-            .map(|token| Name::new(token.text()));
+            .map(|token| Name::new(super::identifier_text(token.text())));
     }
     node.children()
         .find(|child| is(child, K::VARIABLE_DECLARATION))
@@ -2241,7 +2246,7 @@ fn parameter_name(node: &SyntaxNode<Lang>) -> Option<Name> {
         .filter_map(NodeOrToken::into_token)
         .filter(|token| is_token(token, K::IDENTIFIER))
         .find(|token| !matches!(token.text(), "vararg" | "noinline" | "crossinline"))
-        .map(|token| Name::new(token.text()))
+        .map(|token| Name::new(super::identifier_text(token.text())))
 }
 
 /// The source range of a declaration's own name token.

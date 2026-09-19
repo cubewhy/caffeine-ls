@@ -132,6 +132,71 @@ fn interop_fixture(files: &[(&str, &str)]) -> (TestDatabase, hir::SourceSetId) {
     (db, source_set)
 }
 
+#[test]
+fn java_resolves_canonical_kotlin_names() {
+    let kotlin = "package `p`\nclass `Box` { fun `when`(): Int = 1; fun ordinary(): Int = 2; fun use() = ordinary() + `ordinary`() }\nfun answer() = 42";
+    let java = "package p; class Use { int run(Box b) { return b.when() + b.ordinary() + AppKt.answer(); } }";
+    let (db, source_set) = interop_fixture(&[
+        ("/src/main/kotlin/p/app.kt", kotlin),
+        ("/src/main/java/p/Use.java", java),
+    ]);
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+    assert!(matches!(
+        hir::fqn_resolve(&db, &scope, "p.Box"),
+        Some(hir::Resolved::Source(_))
+    ));
+    assert!(matches!(
+        hir::fqn_resolve(&db, &scope, "p.AppKt"),
+        Some(hir::Resolved::Facade { .. })
+    ));
+    assert!(hir::fqn_resolve(&db, &scope, "p.appKt").is_none());
+    let file = FileId::from_raw(2);
+    let tree = hir_def::java::plugin::tree(&db, file);
+    for (item, _) in common::all_items(&tree) {
+        if let Some(types) = hir_ty::body_types(&db, file, item) {
+            assert!(types.diagnostics.is_empty(), "{:?}", types.diagnostics);
+        }
+    }
+    let file = FileId::from_raw(1);
+    let tree = hir_def::kotlin::plugin::tree(&db, file).unwrap();
+    let item = tree
+        .items
+        .iter()
+        .find(|(_, data)| data.name().is_some_and(|n| n.as_str() == "use"))
+        .unwrap()
+        .0;
+    let types = hir_ty::kotlin_body_types(&db, file, hir_expand::ids::ItemId(item));
+    assert!(types.diagnostics.is_empty(), "{:?}", types.diagnostics);
+    assert_eq!(
+        hir_ty::kotlin_item_ty(&db, file, hir_expand::ids::ItemId(item)),
+        Ty::reference(&db, "kotlin.Int", vec![])
+    );
+    let ordinary = tree
+        .items
+        .iter()
+        .find(|(_, data)| data.name().is_some_and(|n| n.as_str() == "ordinary"))
+        .unwrap()
+        .0;
+    let bodies = hir::file_body_tree(&db, file);
+    for spelling in ["ordinary()", "`ordinary`()"] {
+        let target = types
+            .resolved
+            .iter()
+            .find_map(|(expr, target)| {
+                let range = bodies.expr_range(*expr)?;
+                (&kotlin[range] == spelling).then_some(target)
+            })
+            .expect(spelling);
+        assert_eq!(
+            target,
+            &hir_ty::KotlinResolvedMember::Kotlin {
+                file,
+                item: hir_expand::ids::ItemId(ordinary)
+            }
+        );
+    }
+}
+
 /// A name that Kotlin declares is resolvable from Java, through the JVM shape
 /// the compiler gives it: `point.getX()`, `point.setY(2)`, `Util.INSTANCE` and
 /// the `@file:JvmName("Facade")` facade's statics.

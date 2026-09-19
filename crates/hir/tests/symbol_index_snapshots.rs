@@ -73,6 +73,47 @@ fn render_resolved(db: &common::TestDatabase, resolved: Option<&Resolved>) -> St
     }
 }
 
+#[test]
+fn default_facade_names_match_kotlinc() {
+    for (path, expected) in [
+        ("/src/app.kt", "AppKt"),
+        ("/src/App.kt", "AppKt"),
+        ("/src/foo-bar.kt", "Foo_barKt"),
+        ("/src/123.kt", "_123Kt"),
+        ("/src/éclair.kt", "ÉclairKt"),
+        ("/src/ßeta.kt", "SSetaKt"),
+        ("/src/_util.kt", "_utilKt"),
+        ("/src/.kt", "_Kt"),
+        ("/src/foo.bar.kt", "Foo_barKt"),
+        ("/src/dollar$.kt", "Dollar_Kt"),
+        ("/src/١.kt", "_Kt"),
+        ("/src/Ⅳ.kt", "_Kt"),
+        ("/src/á.kt", "A_Kt"),
+        ("/src/𐐨.kt", "_𐐨Kt"),
+    ] {
+        let db = build(
+            &[Root {
+                source_set: main_source_set(),
+                files: vec![file(1, path, "package p\nfun answer() = 42")],
+                classpath: vec![],
+            }],
+            &[],
+        );
+        let scope = ResolutionScope::SourceSet(main_source_set());
+        let fqn = format!("p.{expected}");
+        assert!(
+            matches!(
+                fqn_resolve(&db, &scope, &fqn),
+                Some(Resolved::Facade { .. })
+            ),
+            "{path} → {fqn}"
+        );
+        if path == "/src/app.kt" {
+            assert!(fqn_resolve(&db, &scope, "p.appKt").is_none());
+        }
+    }
+}
+
 /// A Kotlin file's declarations: the qualified name a nested classifier, a
 /// member, a class-parameter property and a constructor are indexed under.
 /// Confirmed against the compiler with `javap -p`: the same members the index

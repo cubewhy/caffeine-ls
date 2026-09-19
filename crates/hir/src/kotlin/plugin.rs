@@ -72,10 +72,9 @@ impl crate::lang::LanguageFileIndex for Kotlin {
 }
 
 /// The JVM facade class the compiler synthesizes for `file`'s top-level
-/// declarations: the file's stem with `Kt` appended — every character that is
-/// not a Kotlin identifier spelled `_` — or the `@file:JvmName("Y")` the file
-/// writes
-/// (<https://kotlinlang.org/docs/java-interop.html#package-level-functions>).
+/// declarations, using the compiler's filename normalization, or the resolved
+/// `@file:JvmName("Y")` override.
+/// <https://kotlinlang.org/docs/java-to-kotlin-interop.html#package-level-functions>
 ///
 /// `@file:JvmName` is the `kotlin.jvm.JvmName` *library* annotation
 /// ([`JvmAnnotation::Name`]), so the application is read through the name it
@@ -107,13 +106,39 @@ fn facade_class(db: &dyn HirDatabase, file: FileId, tree: &KotlinItemTree) -> Op
     let stem = name
         .strip_suffix(".kt")
         .or_else(|| name.strip_suffix(".kts"))?;
-    let mut facade = String::with_capacity(stem.len() + 2);
-    for ch in stem.chars() {
-        if ch.is_alphanumeric() || ch == '_' {
-            facade.push(ch);
+    // NameUtils.getPackagePartClassNamePrefix (kotlinc 2.4.20): Unicode
+    // Letter categories and ASCII digits survive. The initial-character test
+    // uses a UTF-16 code unit, so supplementary letters require an underscore.
+    // https://kotlinlang.org/docs/java-to-kotlin-interop.html#package-level-functions
+    use unicode_general_category::{GeneralCategory, get_general_category};
+    let mut facade = String::with_capacity(stem.len() + 3);
+    for (index, ch) in stem.chars().enumerate() {
+        let letter = matches!(
+            get_general_category(ch),
+            GeneralCategory::UppercaseLetter
+                | GeneralCategory::LowercaseLetter
+                | GeneralCategory::TitlecaseLetter
+                | GeneralCategory::ModifierLetter
+                | GeneralCategory::OtherLetter
+        );
+        let ch = if letter || ch.is_ascii_digit() {
+            ch
         } else {
-            facade.push('_');
+            '_'
+        };
+        if index == 0 {
+            if ch.is_ascii_digit() || ch.len_utf16() == 2 {
+                facade.push('_');
+                facade.push(ch);
+            } else {
+                facade.extend(ch.to_uppercase());
+            }
+        } else {
+            facade.push(ch);
         }
+    }
+    if facade.is_empty() {
+        facade.push('_');
     }
     facade.push_str("Kt");
     Some(Name::new(&facade))

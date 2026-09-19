@@ -31,6 +31,14 @@ use crate::kotlin::item_tree::{ItemId, KotlinItemData, KotlinItemTree};
 pub(super) mod body;
 pub(super) mod walk;
 
+/// Escaped and ordinary identifiers denote the same name; syntax ranges stay raw.
+/// https://kotlinlang.org/spec/syntax-and-grammar.html#identifiers
+pub(super) fn identifier_text(text: &str) -> &str {
+    text.strip_prefix('`')
+        .and_then(|inner| inner.strip_suffix('`'))
+        .unwrap_or(text)
+}
+
 /// The per-file lowering context of the Kotlin walker: owns the
 /// [`KotlinItemTree`] and [`BodyTree`] being built, and the file's
 /// [`AstIdMap`], from which every declaration's

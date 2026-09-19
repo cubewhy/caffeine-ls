@@ -1000,6 +1000,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "triomphe",
+ "unicode-general-category",
  "zip",
 ]
 
