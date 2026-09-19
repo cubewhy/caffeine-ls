@@ -339,7 +339,11 @@ pub(crate) fn enclosing_type_chain(tree: &ItemTree, item_id: ItemId) -> Vec<Name
         current = tree.parent_of(id);
     }
 
-    // Accumulate FQNs from the outside in; the result is innermost first.
+    // Accumulate canonical names from the outside in, then search inside out:
+    // JLS §6.4.1 gives the nearer declaration precedence; §15.12.1 applies
+    // the same order to unqualified method receivers.
+    // https://docs.oracle.com/javase/specs/jls/se25/html/jls-6.html#jls-6.4.1
+    // https://docs.oracle.com/javase/specs/jls/se25/html/jls-15.html#jls-15.12.1
     let mut acc = tree.package.clone();
     let mut out = Vec::with_capacity(names.len());
     for name in names.iter().rev() {
@@ -350,6 +354,7 @@ pub(crate) fn enclosing_type_chain(tree: &ItemTree, item_id: ItemId) -> Vec<Name
         let fqn = acc.clone().unwrap();
         out.push(fqn);
     }
+    out.reverse();
     out
 }
 

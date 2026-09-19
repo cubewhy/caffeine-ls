@@ -98,6 +98,10 @@ read from `InnerClasses`; versioned library caches are rebuilt when this
 metadata changes. Raw generic instance members erase type variables to their
 declared leftmost bounds, while static members retain their generic signatures.
 
+Nested Java scopes resolve type, method, and field names from the innermost
+enclosing declaration outward. Same-named nested types keep distinct identities;
+private access and deprecation exemptions still use the outermost class.
+
 The `caffeine_ls.downloadSources` setting (`download_sources` in the server's
 `initializationOptions`) lets the build system fetch missing dependency sources
 before the export: Gradle resolves each coordinate's `sources` classifier in a

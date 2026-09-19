@@ -197,10 +197,10 @@ pub(crate) fn body_types_impl(
     // the reverse).
     let captured = capture_site(db, file, &tree, item);
     // §6.3/[§8.1.3]: the chain of enclosing class-like declarations of `item`,
-    // outermost first; the first element is the *outermost* one, which
+    // innermost first; the last element is the *outermost* one, which
     // [JLS §9.6.4.6]'s same-outermost-class exemption compares.
     let enclosing_names = crate::java::resolve::enclosing_type_chain(&tree, item);
-    let use_site_outermost = enclosing_names.first().cloned();
+    let use_site_outermost = enclosing_names.last().cloned();
     let mut ctx = InferCtx {
         db,
         file,
