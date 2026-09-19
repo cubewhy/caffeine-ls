@@ -321,7 +321,7 @@ fn class_key(db: &dyn TyDatabase, source: hir::SourceClass) -> ClassKey {
 /// `import kotlin.jvm.JvmName as JN` are both the library's annotation, while a
 /// `JvmName` that the file's own package, an import or an enclosing classifier
 /// declares is a different annotation that merely shares the last segment.
-fn annotation_fqn(
+pub(crate) fn annotation_fqn(
     resolver: &KotlinResolver<'_>,
     application: &KotlinAnnotationRef,
 ) -> Option<Name> {

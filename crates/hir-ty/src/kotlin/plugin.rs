@@ -76,6 +76,19 @@ impl LanguageTypes for Kotlin {
     fn file_dependency_refs(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<Name>> {
         crate::kotlin::dep_index::file_dependency_refs(db, file)
     }
+
+    /// A Kotlin declaration is deprecated by the `kotlin.Deprecated`
+    /// annotation, which the compiler writes into the classfile as the
+    /// `Deprecated` attribute javac reads
+    /// ([`crate::kotlin::deprecation::item_deprecation`]).
+    fn deprecation(
+        &self,
+        db: &dyn TyDatabase,
+        file: FileId,
+        item: hir_expand::ids::ItemId,
+    ) -> Option<crate::java::deprecation::Deprecation> {
+        crate::kotlin::deprecation::item_deprecation(db, file, item)
+    }
 }
 
 impl JvmMemberSource for Kotlin {

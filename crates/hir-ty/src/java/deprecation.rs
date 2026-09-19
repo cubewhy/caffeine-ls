@@ -182,7 +182,13 @@ pub(crate) fn member_deprecation(
     descriptor: Option<&str>,
 ) -> Option<Deprecation> {
     match declaration {
-        Some((file, item)) => source_item(db, file, item),
+        // The *declaring* language answers whether its declaration is
+        // deprecated: a Java one through its `@Deprecated`, a Kotlin one
+        // through the `kotlin.Deprecated` the compiler writes into the
+        // classfile as the same `Deprecated` attribute
+        // ([`crate::lang::LanguageTypes::deprecation`]).
+        Some((file, item)) => crate::lang::for_file(db, file)
+            .and_then(|language| language.deprecation(db, file, item)),
         None => library_member(db, scope, owner, name, descriptor),
     }
 }
@@ -257,7 +263,11 @@ pub(crate) fn class_deprecation(
     match hir::fqn_resolve(db, scope, fqn.as_str())? {
         // A Kotlin file's facade declares nothing to deprecate.
         hir::Resolved::Facade { .. } => None,
-        hir::Resolved::Source(class) => source_item(db, class.file, class.item),
+        // The class's own language answers
+        // ([`crate::lang::LanguageTypes::deprecation`]): a Java declaration
+        // through its `@Deprecated`, a Kotlin one through `kotlin.Deprecated`.
+        hir::Resolved::Source(class) => crate::lang::for_file(db, class.file)
+            .and_then(|language| language.deprecation(db, class.file, class.item)),
         hir::Resolved::Library(class) => {
             let record = hir::class_record(db, &class)?;
             let hir::ClassOrModuleRecord::Class(stub) = record.as_ref() else {

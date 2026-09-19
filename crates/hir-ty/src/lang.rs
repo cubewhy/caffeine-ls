@@ -117,6 +117,25 @@ pub trait LanguageTypes: Sync {
     /// The resolution-relevant names of the file, the sound name-level fallback
     /// of the cross-file dependency index.
     fn file_dependency_refs(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<Name>>;
+
+    /// Whether the declaration `item` of `file` is deprecated, for a *Java*
+    /// caller ([JLS §9.6.4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.6)):
+    /// the `@java.lang.Deprecated` a Java declaration carries, and the
+    /// `@kotlin.Deprecated` a Kotlin one does — which kotlinc 2.4.20 compiles
+    /// to the classfile's `Deprecated` attribute
+    /// ([JVMS §4.7.15](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.15)),
+    /// so javac reports a use of it and this layer must too
+    /// (<https://kotlinlang.org/docs/java-interop.html>).
+    ///
+    /// `None` for a file whose language did not lower `item`, which is what
+    /// keeps a declaration of another language from being read through the
+    /// wrong model.
+    fn deprecation(
+        &self,
+        db: &dyn TyDatabase,
+        file: FileId,
+        item: hir_expand::ids::ItemId,
+    ) -> Option<crate::java::deprecation::Deprecation>;
 }
 
 /// Every registered language, in lookup order.

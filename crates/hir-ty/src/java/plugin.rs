@@ -66,6 +66,15 @@ impl LanguageTypes for Java {
     fn file_dependency_refs(&self, db: &dyn TyDatabase, file: FileId) -> Arc<FxHashSet<Name>> {
         crate::java::db::file_dependency_refs(db, file)
     }
+
+    fn deprecation(
+        &self,
+        db: &dyn TyDatabase,
+        file: FileId,
+        item: hir_expand::ids::ItemId,
+    ) -> Option<crate::java::deprecation::Deprecation> {
+        crate::java::deprecation::source_item(db, file, item)
+    }
 }
 
 impl JvmMemberSource for Java {

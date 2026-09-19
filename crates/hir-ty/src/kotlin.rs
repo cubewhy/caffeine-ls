@@ -33,6 +33,7 @@ pub mod builtins;
 pub mod db;
 pub mod decl_check;
 pub mod dep_index;
+pub mod deprecation;
 pub mod diagnostics;
 pub mod infer;
 pub mod jvm_view;

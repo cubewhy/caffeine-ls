@@ -908,3 +908,90 @@ public class UseThrows {
         "a declared or caught liability is discharged: {diagnostics}"
     );
 }
+
+/// A Java caller of a Kotlin `@Deprecated` declaration reads it as deprecated:
+/// kotlinc 2.4.20 writes the classfile's `Deprecated` attribute
+/// ([JVMS §4.7.15](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.15))
+/// *and* the runtime-visible annotation, at every level —
+///
+/// ```text
+///   public final int f();
+///     Deprecated: true
+///         kotlin.Deprecated(
+///           message="use g"
+/// ```
+///
+/// (`javap -v -p` for `class Legacy { @Deprecated("use g") fun f(): Int = 1 }`)
+/// — so javac reports a Java call of it ([JLS §9.6.4.6]) and this layer must
+/// too, with the same sentence it renders for a deprecated Java member. The
+/// exempt cases of the section apply unchanged: a use inside a declaration
+/// that is itself deprecated is not reported.
+#[test]
+fn a_java_caller_reads_a_kotlin_declarations_deprecation() {
+    const LEGACY_KT: &str = r#"
+package a
+
+class Legacy {
+    @Deprecated("use g")
+    fun f(): Int = 1
+
+    fun g(): Int = 2
+}
+
+@Deprecated("use Fresh")
+class Old {
+    fun n(): Int = 3
+}
+"#;
+    const USE_LEGACY_JAVA: &str = r#"
+package a;
+
+public class UseLegacy {
+    int run() {
+        return new Legacy().f();
+    }
+
+    int fine() {
+        return new Legacy().g();
+    }
+
+    @Deprecated
+    int exempt() {
+        return new Legacy().f();
+    }
+
+    int older(Old old) {
+        return old.n();
+    }
+}
+"#;
+    let files = [
+        ("/src/main/kotlin/a/Legacy.kt", LEGACY_KT),
+        ("/src/main/java/a/UseLegacy.java", USE_LEGACY_JAVA),
+    ];
+    let (db, _) = interop_fixture(&files);
+    let diagnostics = render_body_diagnostic_spans(&db, &files);
+    assert!(
+        diagnostics.contains("deprecated-use: f() in Legacy has been deprecated"),
+        "a Java call to a deprecated Kotlin member is reported: {diagnostics}"
+    );
+    assert!(
+        !diagnostics.contains("method fine") && !diagnostics.contains("method exempt"),
+        "a Kotlin member that declares no `@Deprecated` reports nothing, and a use inside a \
+         deprecated declaration is exempt: {diagnostics}"
+    );
+    // The *class*'s own deprecation reaches the declaration-position reference
+    // too — the parameter's type is a reference javac reports, which is a
+    // declaration diagnostic rather than a body one.
+    let decls = hir_ty::class_diagnostics(&db, FileId::from_raw(2));
+    assert!(
+        decls.iter().any(|diag| matches!(
+            diag,
+            hir_ty::DeclDiagnostic::DeprecatedUse {
+                api: hir_ty::java::deprecation::DeprecatedApi::Class { name, .. },
+                ..
+            } if name.as_str() == "Old"
+        )),
+        "a Java declaration type naming a deprecated Kotlin class is reported: {decls:?}"
+    );
+}

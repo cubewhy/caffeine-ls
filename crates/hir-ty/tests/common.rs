@@ -562,6 +562,11 @@ pub fn kotlin_stdlib_classes() -> Vec<ClassSpec<'static>> {
         annotation("kotlin/jvm/JvmField"),
         annotation("kotlin/jvm/JvmOverloads"),
         annotation("kotlin/jvm/Throws"),
+        // The standard library's deprecation annotation, whose applications
+        // the compiler turns into the classfile's `Deprecated` attribute
+        // ([JVMS §4.7.15]) — the Kotlin declaration a Java caller reads as
+        // deprecated (`kotlin/Deprecated.class` is in kotlin-stdlib-2.2.0).
+        annotation("kotlin/Deprecated"),
     ]
 }
 
