@@ -112,6 +112,7 @@ pub const BUILTIN_JVM_CLASSES: &[(&str, &str)] = &[
 /// types.
 pub fn is_builtin(name: &str) -> bool {
     is_primitive(name)
+        || primitive_array_element(name).is_some()
         || matches!(
             name,
             "kotlin.Any"
@@ -172,6 +173,31 @@ pub fn primitive_of(name: &str) -> Option<PrimitiveType> {
         "kotlin.Double" => PrimitiveType::Double,
         _ => return None,
     })
+}
+
+const PRIMITIVE_ARRAYS: &[(PrimitiveType, &str)] = &[
+    (PrimitiveType::Boolean, "kotlin.BooleanArray"),
+    (PrimitiveType::Char, "kotlin.CharArray"),
+    (PrimitiveType::Byte, "kotlin.ByteArray"),
+    (PrimitiveType::Short, "kotlin.ShortArray"),
+    (PrimitiveType::Int, "kotlin.IntArray"),
+    (PrimitiveType::Long, "kotlin.LongArray"),
+    (PrimitiveType::Float, "kotlin.FloatArray"),
+    (PrimitiveType::Double, "kotlin.DoubleArray"),
+];
+
+pub(crate) fn primitive_array_element(name: &str) -> Option<PrimitiveType> {
+    PRIMITIVE_ARRAYS
+        .iter()
+        .find_map(|&(element, array)| (array == name).then_some(element))
+}
+
+pub(crate) fn primitive_array_name(element: PrimitiveType) -> &'static str {
+    PRIMITIVE_ARRAYS
+        .iter()
+        .find(|(primitive, _)| *primitive == element)
+        .expect("all JVM primitives have specialized arrays")
+        .1
 }
 
 /// The JVM class of a built-in Kotlin classifier, when a classpath can be
@@ -348,6 +374,9 @@ pub fn declared_supertypes(name: &str) -> Vec<&'static str> {
 /// the conversion functions for every built-in numeric type; the compiler
 /// implements them as conversions, so no classfile carries them.
 pub fn member_return(receiver: &str, member: &str) -> Option<&'static str> {
+    if member_is_property(receiver, member) {
+        return Some("kotlin.Int");
+    }
     let numeric = [
         "kotlin.Byte",
         "kotlin.Short",
@@ -520,7 +549,7 @@ pub fn is_collection_property(receiver: &str, member: &str) -> bool {
 /// Whether the member the *language* declares for `(receiver, member)` is a
 /// *property* (read with no argument list) rather than a function.
 pub fn member_is_property(receiver: &str, member: &str) -> bool {
-    matches!((receiver, member), ("kotlin.Array", "size"))
+    member == "size" && (receiver == "kotlin.Array" || primitive_array_element(receiver).is_some())
 }
 
 /// The JVM type a built-in Kotlin classifier is looked up through: its mapped
@@ -535,6 +564,9 @@ pub fn jvm_ty(db: &dyn TyDatabase, ty: Ty) -> Option<Ty> {
     let TyKind::Reference { name, args, .. } = ty.kind(db) else {
         return None;
     };
+    if let Some(element) = primitive_array_element(name.as_str()) {
+        return Some(Ty::array(db, Ty::primitive(db, element)));
+    }
     if name.as_str() == "kotlin.Array" {
         let element = args.first().copied()?;
         return Some(Ty::array(db, element));

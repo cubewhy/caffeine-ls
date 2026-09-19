@@ -233,6 +233,66 @@ fun platform(p: Platform) = p.text() ?: "fallback"
     }
 }
 
+#[test]
+fn constructor_vararg_properties_are_arrays() {
+    let src = r#"package p
+class Words(vararg var words: String)
+class Numbers(vararg val numbers: Int)
+class Boxed(vararg val boxed: Int?)
+class Bounded<T : Number>(vararg val bounded: T)
+fun word(w: Words) = w.words[0]
+fun number(n: Numbers) = n.numbers[0]
+fun wordCount(w: Words) = w.words.size
+fun numberCount(n: Numbers) = n.numbers.size
+fun sum() = Platform.sum(1, 2)
+fun misuse(w: Words): String { return w.words }
+"#;
+    let (db, file) = kotlin_fixture(&[
+        ("/src/main/kotlin/p/Arrays.kt", src),
+        (
+            "/src/main/java/p/Platform.java",
+            "package p; public class Platform { public static int sum(int... values) { return 0; } }",
+        ),
+    ]);
+    for (name, expected) in [
+        ("words", "Array<out String>"),
+        ("numbers", "IntArray"),
+        ("boxed", "Array<out Int?>"),
+        ("bounded", "Array<out T>"),
+        ("word", "String"),
+        ("number", "Int"),
+        ("wordCount", "Int"),
+        ("numberCount", "Int"),
+        ("sum", "Int"),
+    ] {
+        assert_eq!(
+            hir_ty::display_kotlin(&db, ty_of(&db, file, name)).to_string(),
+            expected,
+            "{name}"
+        );
+    }
+    let tree = hir_def::kotlin::plugin::tree(&db, file).unwrap();
+    for (id, data) in tree.items.iter() {
+        if !matches!(
+            data,
+            hir_def::kotlin::item_tree::KotlinItemData::Function(_)
+        ) {
+            continue;
+        }
+        let types = hir_ty::kotlin_body_types(&db, file, hir_expand::ids::ItemId(id));
+        if data.name().unwrap().as_str() == "misuse" {
+            assert!(
+                types
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, hir_ty::KotlinTypeError::TypeMismatch { .. }))
+            );
+        } else {
+            assert!(types.diagnostics.is_empty(), "{:?}", types.diagnostics);
+        }
+    }
+}
+
 /// The resolution scope of the fixture's file, for a subtyping question.
 fn scope(db: &TestDatabase, file: FileId) -> hir::ResolutionScope {
     hir::ResolutionScope::SourceSet(

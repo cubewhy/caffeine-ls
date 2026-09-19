@@ -753,19 +753,11 @@ impl<'a> Shapes<'a> {
     /// `var v = 0` to a `public final int getV();`, so a property that writes
     /// no type is typed by its initializer exactly as any other expression is
     /// ([`super::db::item_ty`]).
-    fn property_ty(
-        &self,
-        resolver: &KotlinResolver<'_>,
-        property: &PropertyData,
-        item: ItemId,
-    ) -> Ty {
-        match &property.ty {
-            Some(ty) => self.ty_in_use(resolver, &ty.ty),
-            None => ty_from_kotlin(
-                self.db,
-                self.instantiate(super::db::item_ty(self.db, self.file, item)),
-            ),
-        }
+    fn property_ty(&self, item: ItemId) -> Ty {
+        ty_from_kotlin(
+            self.db,
+            self.instantiate(super::db::item_ty(self.db, self.file, item)),
+        )
     }
 
     /// The JVM access of the constructors the compiler emits for this
@@ -1092,7 +1084,7 @@ impl<'a> Shapes<'a> {
         is_static: bool,
         out: &mut Vec<MethodData>,
     ) {
-        let ty = self.property_ty(resolver, property, item);
+        let ty = self.property_ty(item);
         // The accessor's body decides its abstractness where the property's
         // modality does not: a `val`/`var` member of an `interface` is
         // `abstract` unless an accessor declares a body, while a `class`'s
@@ -1183,9 +1175,7 @@ impl<'a> Shapes<'a> {
         let component_types: Vec<Ty> = components
             .iter()
             .map(|&component| match self.tree.data(component) {
-                KotlinItemData::Property(property) => {
-                    self.property_ty(resolver, property, component)
-                }
+                KotlinItemData::Property(_) => self.property_ty(component),
                 // Unreachable: a component *is* a property
                 // ([`KotlinItemTree::data_class_components`] found it by
                 // that shape), and a `void` return is the shape that
@@ -1374,7 +1364,7 @@ impl<'a> Shapes<'a> {
                 if jvm_name != name {
                     return;
                 }
-                let ty = self.property_ty(resolver, property, item);
+                let ty = self.property_ty(item);
                 out.push(FieldData {
                     name: jvm_name,
                     owner: self.owner.clone(),

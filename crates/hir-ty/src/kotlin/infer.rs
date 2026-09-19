@@ -770,6 +770,9 @@ impl<'a> InferCtx<'a> {
     /// (`Iterator<T>`, `Iterable<T>`, `List<T>`, `Set<T>`), or `None` when it
     /// takes none.
     fn element_of(&self, ty: &Ty) -> Option<Ty> {
+        if let Some(element) = super::ty::array_element_ty(self.db, *ty) {
+            return Some(element);
+        }
         match ty.kind(self.db) {
             TyKind::Reference { args, .. } => args.first().copied(),
             TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => self.element_of(inner),

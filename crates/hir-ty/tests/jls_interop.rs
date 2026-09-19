@@ -133,6 +133,54 @@ fn interop_fixture(files: &[(&str, &str)]) -> (TestDatabase, hir::SourceSetId) {
 }
 
 #[test]
+fn java_reads_vararg_property_arrays() {
+    let kotlin = r#"package p
+class Words(vararg var values: String)
+class Numbers(vararg val values: Int)
+class Boxed(vararg val values: Int?)
+class Bounded<T : Number>(vararg val values: T)
+class Exposed(@JvmField vararg val values: String)
+"#;
+    let java = r#"package p; class Use {
+void good(Words w, Numbers n, Boxed b, Bounded raw, Exposed e) {
+    String[] words = w.getValues(); int[] numbers = n.getValues();
+    Integer[] boxed = b.getValues(); Number[] bounded = raw.getValues();
+    String[] exposed = e.values; w.setValues(words);
+    Words fresh = new Words("a", "b"); Numbers ints = new Numbers(1, 2);
+}
+void bad(Words w, Numbers n) { String word = w.getValues(); int number = n.getValues(); }
+}"#;
+    let (db, _) = interop_fixture(&[
+        ("/src/main/kotlin/p/Arrays.kt", kotlin),
+        ("/src/main/java/p/Use.java", java),
+    ]);
+    let file = FileId::from_raw(2);
+    let tree = hir_def::java::plugin::tree(&db, file);
+    let bodies = hir::file_body_tree(&db, file);
+    for (item, data) in common::all_items(&tree) {
+        let hir_def::java::item_tree::ItemData::Method(method) = data else {
+            continue;
+        };
+        let types = hir_ty::body_types(&db, file, item).unwrap();
+        if method.name.as_str() == "bad" {
+            assert_eq!(types.diagnostics.len(), 2, "{:?}", types.diagnostics);
+            for diagnostic in &types.diagnostics {
+                assert!(matches!(
+                    diagnostic,
+                    hir_ty::TypeError::IncompatibleTypes { .. }
+                ));
+                assert!(
+                    ["w.getValues()", "n.getValues()"]
+                        .contains(&&java[diagnostic.range(&bodies).unwrap()])
+                );
+            }
+        } else {
+            assert!(types.diagnostics.is_empty(), "{:?}", types.diagnostics);
+        }
+    }
+}
+
+#[test]
 fn java_resolves_canonical_kotlin_names() {
     let kotlin = "package `p`\nclass `Box` { fun `when`(): Int = 1; fun ordinary(): Int = 2; fun use() = ordinary() + `ordinary`() }\nfun answer() = 42";
     let java = "package p; class Use { int run(Box b) { return b.when() + b.ordinary() + AppKt.answer(); } }";

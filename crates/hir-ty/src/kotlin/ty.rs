@@ -82,6 +82,64 @@ pub fn ty_from_type_ref(
     }
 }
 
+/// A constructor vararg property stores the specialized array, not its written element.
+/// https://kotlinlang.org/spec/declarations.html#constructor-declaration
+/// https://kotlinlang.org/spec/type-system.html#array-types
+pub(crate) fn vararg_array_ty(db: &dyn TyDatabase, element: Ty) -> Ty {
+    if element.is_error(db) {
+        return element;
+    }
+    if let TyKind::Reference { name, .. } = element.kind(db)
+        && let Some(primitive) = super::builtins::primitive_of(name.as_str())
+    {
+        return Ty::reference(
+            db,
+            super::builtins::primitive_array_name(primitive),
+            Vec::new(),
+        );
+    }
+    Ty::reference(
+        db,
+        "kotlin.Array",
+        vec![Ty::wildcard(
+            db,
+            Some(Box::new(WildcardBound {
+                kind: BoundKind::Upper,
+                ty: element,
+            })),
+        )],
+    )
+}
+
+/// The readable component of an array; an `in`/star projection reads as `Any?`.
+/// https://kotlinlang.org/spec/type-system.html#array-types
+pub(crate) fn array_element_ty(db: &dyn TyDatabase, array: Ty) -> Option<Ty> {
+    match array.kind(db) {
+        TyKind::Nullable(inner) | TyKind::DefinitelyNonNull(inner) => array_element_ty(db, *inner),
+        TyKind::Flexible { lower, .. } => array_element_ty(db, *lower),
+        TyKind::Array(inner) => Some(**inner),
+        TyKind::Reference { name, args, .. } => {
+            if let Some(primitive) = super::builtins::primitive_array_element(name.as_str()) {
+                return Some(ty_from_java(db, Ty::primitive(db, primitive)));
+            }
+            if name.as_str() != "kotlin.Array" {
+                return None;
+            }
+            let [element] = args.as_slice() else {
+                return None;
+            };
+            Some(match element.kind(db) {
+                TyKind::Wildcard(Some(bound)) if bound.kind == BoundKind::Upper => bound.ty,
+                TyKind::Wildcard(_) => {
+                    Ty::nullable(db, Ty::reference(db, "kotlin.Any", Vec::new()))
+                }
+                _ => *element,
+            })
+        }
+        _ => None,
+    }
+}
+
 /// The Kotlin type a Java or classfile type denotes ([KLS
 /// `built-in-types-and-their-semantics.html`](https://kotlinlang.org/spec/built-in-types-and-their-semantics.html)
 /// for the mapped classifiers,
@@ -198,7 +256,20 @@ fn read_jvm_type(db: &dyn TyDatabase, ty: Ty, reading: JvmReading) -> Ty {
                 kotlin
             }
         }
-        TyKind::Array(inner) => Ty::array(db, read_jvm_type(db, **inner, reading)),
+        TyKind::Array(inner) => {
+            if let TyKind::Primitive(element) = inner.kind(db) {
+                let array = Ty::reference(
+                    db,
+                    super::builtins::primitive_array_name(*element),
+                    Vec::new(),
+                );
+                return match reading {
+                    JvmReading::Java => Ty::flexible(db, array, Ty::nullable(db, array)),
+                    JvmReading::KotlinDeclaration => array,
+                };
+            }
+            Ty::array(db, read_jvm_type(db, **inner, reading))
+        }
         TyKind::TypeVar { .. } => ty,
         // Everything else is either a Kotlin-only form (which a Java type
         // cannot be) or already Kotlin\'s.
@@ -265,14 +336,6 @@ enum JvmPosition {
 /// as its *erasure* ([JLS §4.6]): its first bound, or `java.lang.Object` when
 /// it has none, because a generic Kotlin declaration compiles to the erased
 /// signature.
-///
-/// A recorded deviation: a primitive *array* classifier (`kotlin.IntArray`,
-/// `kotlin.LongArray`, …) is projected as its own name rather than as the JVM
-/// primitive array it compiles to, and the Java→Kotlin reading of `int[]` is
-/// `Array<Int>` for the same reason — the classifier's member surface (`size`,
-/// indexing) is the builtins layer's and is keyed on the array kind
-/// (<https://kotlinlang.org/docs/java-interop.html#mapped-types>: the arrays
-/// are `int[]` ↔ `IntArray`, which this projection leaves to that layer).
 pub fn ty_from_kotlin(db: &dyn TyDatabase, ty: Ty) -> Ty {
     ty_from_kotlin_in(db, ty, JvmPosition::Value)
 }
@@ -288,6 +351,9 @@ pub fn ty_from_kotlin_return(db: &dyn TyDatabase, ty: Ty) -> Ty {
 fn ty_from_kotlin_in(db: &dyn TyDatabase, ty: Ty, position: JvmPosition) -> Ty {
     match ty.kind(db) {
         TyKind::Reference { name, args, local } => {
+            if let Some(element) = super::builtins::primitive_array_element(name.as_str()) {
+                return Ty::array(db, Ty::primitive(db, element));
+            }
             // Kotlin's `Array<T>` is the JVM array `T[]`, and its element
             // carries the box a type argument does. An `Array` written with no
             // argument is an error the declaration checker already reports, and
@@ -295,7 +361,12 @@ fn ty_from_kotlin_in(db: &dyn TyDatabase, ty: Ty, position: JvmPosition) -> Ty {
             if name.as_str() == "kotlin.Array"
                 && let [element] = args.as_slice()
             {
-                return Ty::array(db, ty_from_kotlin_in(db, *element, JvmPosition::Argument));
+                let element = match element.kind(db) {
+                    TyKind::Wildcard(Some(bound)) if bound.kind == BoundKind::Upper => bound.ty,
+                    TyKind::Wildcard(_) => Ty::reference(db, "kotlin.Any", Vec::new()),
+                    _ => *element,
+                };
+                return Ty::array(db, ty_from_kotlin_in(db, element, JvmPosition::Argument));
             }
             if let Some((primitive, boxed)) = primitive_of_mapped(name) {
                 return match position {

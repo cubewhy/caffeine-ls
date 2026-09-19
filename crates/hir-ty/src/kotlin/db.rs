@@ -124,10 +124,21 @@ pub(crate) fn kotlin_item_ty_query<'db>(db: &'db dyn TyDatabase, key: KotlinItem
         None => Ty::error(db),
     };
     match tree.data(item_id) {
-        KotlinItemData::Property(data) => match &data.ty {
-            Some(ty) => ty_from_type_ref(db, &resolver, &ty.ty),
-            None => inferred_property_ty(db, file_id, item_id, tree, &resolver, data),
-        },
+        KotlinItemData::Property(data) => {
+            let ty = match &data.ty {
+                Some(ty) => ty_from_type_ref(db, &resolver, &ty.ty),
+                None => inferred_property_ty(db, file_id, item_id, tree, &resolver, data),
+            };
+            if data
+                .modifiers
+                .flags
+                .contains(hir_def::kotlin::modifiers::KotlinModifierFlags::VARARG)
+            {
+                super::ty::vararg_array_ty(db, ty)
+            } else {
+                ty
+            }
+        }
         KotlinItemData::Function(data) => match &data.ret {
             Some(ret) => ty_from_type_ref(db, &resolver, &ret.ty),
             // No written return type: an *expression* body is the type that

@@ -146,6 +146,47 @@ fn methods(db: &TestDatabase, file: FileId, class: &str, names: &[&str]) -> Vec<
     out
 }
 
+#[test]
+fn vararg_property_jvm_signatures() {
+    let (db, file) = fixture(&[(
+        "/src/main/kotlin/p/Arrays.kt",
+        r#"package p
+class Words(vararg var values: String)
+class Numbers(vararg val values: Int)
+class Boxed(vararg val values: Int?)
+class Bounded<T : Number>(vararg val values: T)
+class Exposed(@JvmField vararg val values: String)
+"#,
+    )]);
+    for (class, component) in [
+        ("Words", "java.lang.String"),
+        ("Numbers", "int"),
+        ("Boxed", "java.lang.Integer"),
+        ("Bounded", "java.lang.Number"),
+    ] {
+        assert_eq!(
+            methods(&db, file, class, &["getValues"]),
+            vec![format!("public final {component}[] getValues()")]
+        );
+    }
+    assert_eq!(
+        methods(&db, file, "Words", &["setValues"]),
+        vec!["public final void setValues(java.lang.String[])"]
+    );
+    let source = hir::SourceClass {
+        file,
+        item: class_item(&db, file, "Exposed"),
+    };
+    let fields = java_view_fields(&db, source, &[], "values");
+    assert_eq!(fields[0].ty.display(&db).to_string(), "java.lang.String[]");
+    let source = hir::SourceClass {
+        file,
+        item: class_item(&db, file, "Numbers"),
+    };
+    let constructors = java_view_members(&db, source, &[], "<init>");
+    assert_eq!(constructors[0].params[0].display(&db).to_string(), "int[]");
+}
+
 /// [`methods`] for a file's facade class.
 fn facade_methods(db: &TestDatabase, file: FileId, names: &[&str]) -> Vec<String> {
     let mut out = Vec::new();

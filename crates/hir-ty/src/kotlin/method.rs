@@ -155,10 +155,7 @@ impl Member {
             return None;
         }
         let param = self.params.last().copied()?;
-        Some(match param.kind(db) {
-            TyKind::Array(inner) => **inner,
-            _ => param,
-        })
+        Some(super::ty::array_element_ty(db, param).unwrap_or(param))
     }
 
     /// The type of a *call* to this member with the written argument types: its
