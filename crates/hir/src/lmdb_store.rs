@@ -52,10 +52,7 @@ use crate::{db::LibraryId, stubs::DiskClassOrModuleRecord};
 
 /// Version of the on-disk layout; bumped on incompatible changes. Also
 /// selects the cache directory (`stubs/v{N}`).
-///
-/// `6`: attached-source indexes include Kotlin classifiers; Java-only layouts
-/// and member-name misses derived from them must be reindexed.
-pub const CACHE_FORMAT_VERSION: u32 = 6;
+pub const CACHE_FORMAT_VERSION: u32 = 1;
 
 /// Libraries untouched for this long are eligible for pruning when they are
 /// no longer registered by the running session.
