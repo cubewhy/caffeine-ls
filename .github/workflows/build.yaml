@@ -18,14 +18,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux and Windows are both built on Linux, cross-compiled:
-          # `cross` builds the Linux binary inside its glibc container, and
-          # `cargo-xwin` builds the MSVC Windows binary against the Microsoft
-          # CRT/SDK it downloads (cross-rs has no MSVC image, so it cannot build
-          # that target itself).
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             vsce_target: linux-x64
+            bin_name: caffeine-ls
+            builder: cross
+
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            vsce_target: linux-arm64
             bin_name: caffeine-ls
             builder: cross
 
@@ -35,9 +36,12 @@ jobs:
             bin_name: caffeine-ls.exe
             builder: cargo-xwin
 
-          # The Darwin binaries link against the macOS SDK, so they are built on
-          # real macOS runners: arm64 on an Apple Silicon image, x64 on an Intel
-          # one.
+          - os: ubuntu-latest
+            target: aarch64-pc-windows-msvc
+            vsce_target: win32-arm64
+            bin_name: caffeine-ls.exe
+            builder: cargo-xwin
+
           - os: macos-latest
             target: aarch64-apple-darwin
             vsce_target: darwin-arm64
